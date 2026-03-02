@@ -141,7 +141,7 @@ var Languages = language.Languages{
 	"Rust": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".rs", ".rlib"},
+		Extensions:        []string{".rs"},
 	},
 	"Scala": {
 		LineComments:      []string{"//"},
