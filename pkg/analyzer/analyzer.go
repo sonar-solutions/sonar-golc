@@ -48,12 +48,12 @@ func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 			return nil
 		}
 
-		fileExtension := a.getFileExtension(path)
-		if a.canAdd(path, fileExtension) {
+		languageKey := a.getLanguageKey(path)
+		if a.canAdd(path, languageKey) {
 			fm := FileMetadata{
 				FilePath:  path,
-				Extension: fileExtension,
-				Language:  a.SupportedExtensions[fileExtension],
+				Extension: languageKey,
+				Language:  a.SupportedExtensions[languageKey],
 			}
 			files = append(files, fm)
 		}
@@ -62,6 +62,34 @@ func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 	})
 
 	return files, err
+}
+
+// getLanguageKey returns the key for SupportedExtensions lookup.
+// It checks path patterns first (e.g., .github/workflows/*.yml), then specific filenames, then extension.
+func (a *Analyzer) getLanguageKey(path string) string {
+	base := filepath.Base(path)
+	ext := filepath.Ext(path)
+
+	// Check path patterns: path:.github/workflows/.yml, path:charts/.yaml, etc.
+	if ext == ".yml" || ext == ".yaml" {
+		if strings.Contains(path, ".github/workflows/") {
+			return "path:.github/workflows/" + ext
+		}
+		if strings.Contains(path, string(filepath.Separator)+"charts"+string(filepath.Separator)) {
+			return "path:charts/" + ext
+		}
+	}
+
+	// Check specific filenames (basename match)
+	if _, ok := a.SupportedExtensions[base]; ok {
+		return base
+	}
+
+	// Fall back to extension
+	if ext == "" {
+		return base
+	}
+	return ext
 }
 
 func (a *Analyzer) getFileExtension(path string) string {
@@ -74,7 +102,7 @@ func (a *Analyzer) getFileExtension(path string) string {
 	return extension
 }
 
-func (a *Analyzer) canAdd(path string, extension string) bool {
+func (a *Analyzer) canAdd(path string, languageKey string) bool {
 	for _, pathToExclude := range a.excludePaths {
 		if strings.HasPrefix(path, pathToExclude) {
 			return false
@@ -90,6 +118,6 @@ func (a *Analyzer) canAdd(path string, extension string) bool {
 		return false
 	}
 
-	_, ok := a.SupportedExtensions[extension]
+	_, ok := a.SupportedExtensions[languageKey]
 	return ok
 }
