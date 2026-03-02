@@ -13,25 +13,10 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".abap", ".ab4", ".flow", ".asprog"},
 	},
-	"Ansible": {
-		LineComments:      []string{"#"},
-		MultiLineComments: [][]string{},
-		Filenames:         []string{"playbook.yml", "playbook.yaml", "site.yml", "site.yaml", "ansible.yml", "ansible.yaml"},
-	},
 	"Apex": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".cls", ".trigger"},
-	},
-	"ARM Template": {
-		LineComments:      []string{"//"},
-		MultiLineComments: [][]string{{"/*", "*/"}},
-		Filenames:         []string{"azuredeploy.json", "mainTemplate.json"},
-	},
-	"Bash": {
-		LineComments:      []string{"#"},
-		MultiLineComments: [][]string{},
-		Extensions:        []string{".sh", ".bash", ".zsh", ".fish", ".ksh"},
 	},
 	"C": {
 		LineComments:      []string{"//"},
@@ -73,40 +58,27 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".dart"},
 	},
-	"Dockerfile": {
+	"Docker": {
 		LineComments:      []string{"#"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".dockerfile"},
-		Filenames:         []string{"Dockerfile", "dockerfile"},
+		Extensions:        []string{"Dockerfile", "dockerfile", ".dockerfile"},
 	},
 	"Flex": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".as"},
 	},
-	"GitHub Actions": {
-		LineComments:      []string{"#"},
-		MultiLineComments: [][]string{},
-		Filenames:         []string{"workflow.yml", "workflow.yaml"},
-		PathPatterns:      []language.PathPattern{{Prefix: ".github/workflows/", Extensions: []string{".yml", ".yaml"}}},
-	},
 	"Golang": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".go"},
-	},
-	"Helm Chart": {
-		LineComments:      []string{"#"},
-		MultiLineComments: [][]string{},
-		Filenames:         []string{"values.yaml", "Chart.yaml"},
-		PathPatterns:      []language.PathPattern{{Prefix: "charts/", Extensions: []string{".yml", ".yaml"}}},
 	},
 	"HTML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
 		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp"},
 	},
-	"IBM JCL": {
+	"JCL": {
 		LineComments:      []string{"*", "//*"},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".jcl", ".jjob", ".job"},
@@ -180,6 +152,11 @@ var Languages = language.Languages{
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".scss"},
+	},
+	"Shell": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{".sh", ".bash", ".zsh", ".fish", ".ksh"},
 	},
 	"SQL": {
 		LineComments:      []string{"--"},

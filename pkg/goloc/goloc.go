@@ -278,17 +278,9 @@ func (gc *GCloc) generateReports(sortedSummary *sorter.SortedSummary) error {
 func getExtensionsMap(languages language.Languages) map[string]string {
 	extensions := map[string]string{}
 
-	for lang, languageInfo := range languages {
+	for language, languageInfo := range languages {
 		for _, extension := range languageInfo.Extensions {
-			extensions[extension] = lang
-		}
-		for _, filename := range languageInfo.Filenames {
-			extensions[filename] = lang
-		}
-		for _, pattern := range languageInfo.PathPatterns {
-			for _, ext := range pattern.Extensions {
-				extensions["path:"+pattern.Prefix+ext] = lang
-			}
+			extensions[extension] = language
 		}
 	}
 
