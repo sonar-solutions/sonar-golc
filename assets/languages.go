@@ -41,7 +41,7 @@ var Languages = language.Languages{
 	"COBOL": {
 		LineComments:      []string{"*"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".cbl", ".ccp", ".cob", ".cobol", ".cpy"},
+		Extensions:        []string{".cbl", ".CBL", ".ccp", ".cob", ".COB", ".cobol", ".cpy"},
 	},
 	"C#": {
 		LineComments:      []string{"//"},
@@ -58,6 +58,16 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".dart"},
 	},
+	"Docker": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{"Dockerfile", "dockerfile", ".dockerfile"},
+	},
+	"Flex": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".as"},
+	},
 	"Golang": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
@@ -67,6 +77,11 @@ var Languages = language.Languages{
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
 		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp"},
+	},
+	"JCL": {
+		LineComments:      []string{"*", "//*"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{".jcl", ".JCL", ".jjob", ".job"},
 	},
 	"Java": {
 		LineComments:      []string{"//"},
@@ -78,45 +93,30 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".js", ".jsx", ".jsp", ".jspf"},
 	},
+	"JSON": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{".json"},
+	},
 	"Kotlin": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".kt", ".kts"},
-	},
-	"Flex": {
-		LineComments:      []string{"//"},
-		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".as"},
-	},
-	"PHP": {
-		LineComments:      []string{"//", "#"},
-		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".php", ".php3", ".php4", ".php5", ".phtml", ".inc"},
 	},
 	"Objective-C": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".m", ".mm"},
 	},
-	"JSON": {
-		LineComments:      []string{},
-		MultiLineComments: [][]string{},
-		Extensions:        []string{".json"},
-	},
-	"Shell": {
-		LineComments:      []string{"#"},
-		MultiLineComments: [][]string{},
-		Extensions:        []string{".sh", ".bash", ".zsh", ".ksh"},
-	},
-	"Docker": {
-		LineComments:      []string{"#"},
-		MultiLineComments: [][]string{},
-		Extensions:        []string{"Dockerfile", "dockerfile"},
-	},
 	"Oracle PL/SQL": {
 		LineComments:      []string{"--"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".pkb"},
+	},
+	"PHP": {
+		LineComments:      []string{"//", "#"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".php", ".php3", ".php4", ".php5", ".phtml", ".inc"},
 	},
 	"PL/I": {
 		LineComments:      []string{},
@@ -128,7 +128,6 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"\"\"\"", "\"\"\""}, {"'''", "'''"}},
 		Extensions:        []string{".py"},
 	},
-
 	"RPG": {
 		LineComments:      []string{"*"},
 		MultiLineComments: [][]string{},
@@ -139,20 +138,25 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"=begin", "=end"}},
 		Extensions:        []string{".rb"},
 	},
-	"Scala": {
-		LineComments:      []string{"//"},
-		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".scala"},
-	},
 	"Rust": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".rs"},
 	},
+	"Scala": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".scala"},
+	},
 	"Scss": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".scss"},
+	},
+	"Shell": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{".sh", ".bash", ".zsh", ".fish", ".ksh"},
 	},
 	"SQL": {
 		LineComments:      []string{"--"},
@@ -164,30 +168,35 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".swift"},
 	},
-	"TypeScript": {
-		LineComments:      []string{"//"},
+	"Terraform": {
+		LineComments:      []string{"#", "//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".ts", ".tsx"},
+		Extensions:        []string{".tf"},
 	},
 	"T-SQL": {
 		LineComments:      []string{"--"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".tsql"},
 	},
-	"Vue": {
-		LineComments:      []string{},
-		MultiLineComments: [][]string{{"<!--", "-->"}},
-		Extensions:        []string{".vue"},
+	"TypeScript": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".ts", ".tsx"},
+	},
+	"VB6": {
+		LineComments:      []string{"'"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{".bas", ".frm", ".cls"},
 	},
 	"Visual Basic .NET": {
 		LineComments:      []string{"'"},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".vb"},
 	},
-	"VB6": {
-		LineComments:      []string{"'"},
-		MultiLineComments: [][]string{},
-		Extensions:        []string{".bas", ".frm", ".cls"},
+	"Vue": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{{"<!--", "-->"}},
+		Extensions:        []string{".vue"},
 	},
 	"XML": {
 		LineComments:      []string{},
@@ -203,15 +212,5 @@ var Languages = language.Languages{
 		LineComments:      []string{"#"},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".yaml", ".yml"},
-	},
-	"Terraform": {
-		LineComments:      []string{"#", "//"},
-		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".tf"},
-	},
-	"JCL": {
-		LineComments:      []string{"//*"},
-		MultiLineComments: [][]string{},
-		Extensions:        []string{".jcl", ".JCL"},
 	},
 }
