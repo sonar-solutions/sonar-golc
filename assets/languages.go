@@ -81,7 +81,7 @@ var Languages = language.Languages{
 	"JCL": {
 		LineComments:      []string{"*", "//*"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".jcl", ".jjob", ".job"},
+		Extensions:        []string{".jcl", ".JCL", ".jjob", ".job"},
 	},
 	"Java": {
 		LineComments:      []string{"//"},
