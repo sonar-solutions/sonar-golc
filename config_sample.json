@@ -167,8 +167,8 @@
         "ExtExclusion":[""],
         "FileLoad":".cloc_file_load",
         "ResultByFile": false,
-        "ResultAll": true
-
+        "ResultAll": true,
+        "UseGitignore": true
       }
     },
     "Logging": {

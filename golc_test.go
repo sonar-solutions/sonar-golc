@@ -590,7 +590,7 @@ func TestAnalysisListFunctions(t *testing.T) {
 					t.Errorf("AnalyseReposListFile panicked: %v", r)
 				}
 			}()
-			AnalyseReposListFile(emptyDirs, emptyExclusions, emptyExtensions, false, false)
+			AnalyseReposListFile(emptyDirs, emptyExclusions, emptyExtensions, false, false, false)
 		}()
 	})
 }

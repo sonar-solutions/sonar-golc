@@ -558,10 +558,10 @@ YAML               | .yaml, .yml                              | #               
 
 ## Execution Log
 
-The application generates a log file named `Logs.log` in the current directory. This log file records all the steps of the GoLC execution process, providing detailed information about the application's runtime behavior.
+The application generates a log file named `Logs.log` that records all the steps of the GoLC execution process, providing detailed information about the application's runtime behavior.
 
 ### Location
-The log file is created in directory `Logs`, is placed in the following path:  `<GoLCHome/Logs>`.
+The log file is created in the `Logs` directory at path `<GoLCHome>/Logs/Logs.log` (relative to the application working directory).
 
 ### Usage
 You can refer to this log file to troubleshoot issues, monitor the application's execution, and understand its internal processes.

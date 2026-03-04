@@ -4,11 +4,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 )
+
+// Log path constants: compliant with README "Execution Log" (log file at <GoLCHome/Logs>/Logs.log).
+// LogDir is the directory name; LogFileName is the file name; DefaultLogPath is the full relative path.
+const (
+	LogDir      = "Logs"
+	LogFileName = "Logs.log"
+)
+
+var DefaultLogPath = filepath.Join(LogDir, LogFileName)
 
 type CustomFormatter struct{}
 
@@ -40,7 +50,7 @@ func NewLogger() *logrus.Logger {
 
 	logger.SetLevel(logrus.DebugLevel)
 
-	logFile, err := os.OpenFile("Logs/Logs.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile(DefaultLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		// Fallback to stdout only when log file cannot be created (e.g. read-only fs, Docker)
 		logger.SetOutput(os.Stdout)

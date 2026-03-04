@@ -1,10 +1,11 @@
 module github.com/SonarSource-Demos/sonar-golc
 
-go 1.24.0
+go 1.25.5
 
 require (
 	github.com/briandowns/spinner v1.23.0
 	github.com/fatih/color v1.17.0
+	github.com/git-pkgs/gitignore v1.1.0
 	github.com/go-git/go-git/v5 v5.13.0
 	github.com/google/go-github/v62 v62.0.0
 	github.com/hashicorp/go-getter v1.7.9

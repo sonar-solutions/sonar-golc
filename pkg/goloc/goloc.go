@@ -2,9 +2,12 @@ package goloc
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/analyzer"
+	"github.com/git-pkgs/gitignore"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/filesystem"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/getter"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/gogit"
@@ -18,6 +21,16 @@ import (
 	"github.com/SonarSource-Demos/sonar-golc/pkg/sorter"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
+
+// Logger is the application logger interface supporting multiple levels (debug, info, warn, error).
+// When set on Params, Run() uses it for debug output (file list, LOC per file) and info (e.g. .gitignore).
+// The logger level controls what is emitted; the main app configures level via config (e.g. Logging.Level).
+type Logger interface {
+	Debugf(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Warnf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+}
 
 type Params struct {
 	Path              string
@@ -40,6 +53,12 @@ type Params struct {
 	Token             string
 	Cloned            bool
 	Repopath          string
+	// Logger is the application logger; when set, Run() logs at Debug (file list, LOC) and Info (e.g. .gitignore).
+	Logger Logger
+	// UseGitignore, when true, excludes files and directories matching the repository's
+	// .gitignore (and .git/info/exclude) during local directory analysis. Only applies when
+	// Path is a local directory (file analysis). Has no effect when cloning from a remote.
+	UseGitignore bool
 }
 
 type GCloc struct {
@@ -150,7 +169,11 @@ func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
 		if lastPart := filepath.Base(path); lastPart != "" {
 			params.OutputName = fmt.Sprintf("%s%s", params.OutputName, lastPart)
 		} else {
-			utils.NewLogger().Errorf("❌ Failed to create OutputName")
+			if params.Logger != nil {
+				params.Logger.Errorf("❌ Failed to create OutputName")
+			} else {
+				utils.NewLogger().Errorf("❌ Failed to create OutputName")
+			}
 		}
 	}
 
@@ -160,6 +183,15 @@ func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
 	}
 
 	analyzer, scanner, reporters := initAnalyzerScannerReporters(path, params, excludePaths, languages)
+
+	if params.UseGitignore {
+		if ignoreFunc := buildGitignoreFunc(path); ignoreFunc != nil {
+			analyzer.SetIgnoreFunc(ignoreFunc)
+			if params.Logger != nil {
+				params.Logger.Infof("[goloc] using repository .gitignore for path %s", path)
+			}
+		}
+	}
 
 	params.Cloned = true
 
@@ -184,6 +216,55 @@ func getRepoPath(params Params) (string, error) {
 	return getter.Getter(params.Path)
 }
 
+// findGitRoot returns the repository root directory (containing .git) for the given path,
+// or empty string if not inside a git repository.
+func findGitRoot(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	dir := abs
+	if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+		dir = filepath.Dir(abs)
+	}
+	for {
+		gitPath := filepath.Join(dir, ".git")
+		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// buildGitignoreFunc returns an IgnoreFunc that skips paths matching the repo's .gitignore,
+// or nil if path is not in a git repo or the matcher cannot be built.
+func buildGitignoreFunc(scanPath string) analyzer.IgnoreFunc {
+	repoRoot := findGitRoot(scanPath)
+	if repoRoot == "" {
+		return nil
+	}
+	m := gitignore.NewFromDirectory(repoRoot)
+	if m == nil {
+		return nil
+	}
+	return func(absolutePath string, isDir bool) bool {
+		clean := filepath.Clean(absolutePath)
+		if !strings.HasPrefix(clean, repoRoot) {
+			return false
+		}
+		rel := strings.TrimPrefix(clean, repoRoot)
+		rel = strings.TrimPrefix(filepath.ToSlash(rel), "/")
+		if rel == "" {
+			return false
+		}
+		return m.MatchPath(rel, isDir)
+	}
+}
+
 func initAnalyzerScannerReporters(path string, params Params, excludePaths []string, languages language.Languages) (*analyzer.Analyzer, *scanner.Scanner, []reporter.Reporter) {
 	analyzer := analyzer.NewAnalyzer(
 		path,
@@ -206,12 +287,28 @@ func (gc *GCloc) Run() error {
 		return err
 	}
 
+	if gc.Params.Logger != nil {
+		gc.Params.Logger.Debugf("[goloc] matched files count: %d", len(files))
+		for i, f := range files {
+			gc.Params.Logger.Debugf("[goloc] file[%d] path=%q ext=%s lang=%s", i+1, f.FilePath, f.Extension, f.Language)
+		}
+	}
+
 	scanResult, err := gc.scanner.Scan(files)
 	if err != nil {
 		return err
 	}
 
 	summary := gc.scanner.Summary(scanResult)
+
+	if gc.Params.Logger != nil {
+		gc.Params.Logger.Debugf("[goloc] scan summary: files=%d total_lines=%d total_code=%d total_blank=%d total_comments=%d",
+			summary.TotalFiles, summary.TotalLines, summary.TotalCodeLines, summary.TotalBlankLines, summary.TotalComments)
+		for i, fr := range summary.Files {
+			gc.Params.Logger.Debugf("[goloc] loc[%d] path=%q lines=%d code=%d blank=%d comments=%d",
+				i+1, fr.Path, fr.Lines, fr.CodeLines, fr.BlankLines, fr.Comments)
+		}
+	}
 
 	sortedSummary := gc.sortSummary(summary)
 

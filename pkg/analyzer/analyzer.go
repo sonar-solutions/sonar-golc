@@ -6,12 +6,17 @@ import (
 	"strings"
 )
 
+// IgnoreFunc returns true if the given path (absolute) should be excluded from analysis.
+// It is used for .gitignore-style exclusion when scanning local directories.
+type IgnoreFunc func(absolutePath string, isDir bool) bool
+
 type Analyzer struct {
 	SupportedExtensions map[string]string
 	path                string
 	excludePaths        []string
 	excludeExtensions   map[string]bool
 	includeExtensions   map[string]bool
+	ignoreFunc          IgnoreFunc
 }
 
 type FileMetadata struct {
@@ -36,12 +41,27 @@ func NewAnalyzer(
 	}
 }
 
+// SetIgnoreFunc sets the optional function used to skip ignored paths (e.g. from .gitignore).
+// When set, MatchingFiles() will skip files and directories for which it returns true.
+func (a *Analyzer) SetIgnoreFunc(f IgnoreFunc) {
+	a.ignoreFunc = f
+}
+
 func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 	var files []FileMetadata
 
 	err := filepath.Walk(a.path, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+
+		if a.ignoreFunc != nil {
+			if a.ignoreFunc(path, info.IsDir()) {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 
 		if info.IsDir() {

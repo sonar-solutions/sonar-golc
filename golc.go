@@ -540,6 +540,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		Branch:            params.MainBranch,
 		Cloned:            false,
 		Repopath:          "",
+		Logger:            logger,
 	}
 	if ResultAll {
 		golocParams.ByFile = true
@@ -675,7 +676,7 @@ func AnalyseReposListAzure(DestinationResult string, platformConfig map[string]i
 
 /* ---------------- Analyse Directory ---------------- */
 
-func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool) {
+func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool, useGitignore bool) {
 
 	type Configuration struct {
 		ExcludeExtensions []string
@@ -722,6 +723,8 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 				Token:             "",
 				Cloned:            false,
 				Repopath:          "",
+				Logger:            logger,
+				UseGitignore:      useGitignore,
 			}
 
 			gc, err := goloc.NewGCloc(params, assets.Languages)
@@ -741,9 +744,9 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 
 					// Second call to Run with ByFile = false
 					params.ByFile = true
-
 					params.Cloned = false
 					params.Repopath = gc.Repopath
+					params.UseGitignore = useGitignore
 
 					gc, err = goloc.NewGCloc(params, assets.Languages)
 					if err != nil {
@@ -818,6 +821,7 @@ func AnalyseRepo(DestinationResult string, Users string, AccessToken string, Dev
 		Token:             "",
 		Cloned:            true,
 		Repopath:          "",
+		Logger:            logger,
 	}
 	gc, err := goloc.NewGCloc(params, assets.Languages)
 	if err != nil {
@@ -912,16 +916,15 @@ func init() {
 
 	logrus.Info("✅ Configuration loaded successfully and version matched!")
 
-	// Create Logs Directory
-	logDir := "Logs"
-	if _, err := os.Stat(logDir); os.IsNotExist(err) {
-		err = os.MkdirAll(logDir, 0755)
+	// Create Logs directory (README: Execution Log at <GoLCHome/Logs>/Logs.log)
+	if _, err := os.Stat(utils.LogDir); os.IsNotExist(err) {
+		err = os.MkdirAll(utils.LogDir, 0755)
 		if err != nil {
 			logrus.Fatalf("❌ Failed to create log directory: %v", err)
 		}
 	}
-	// Remove Log file
-	if err := os.Remove("Logs/Logs.log"); err != nil && !os.IsNotExist(err) {
+	// Remove previous run's log file (README: at each execution the file is deleted)
+	if err := os.Remove(utils.DefaultLogPath); err != nil && !os.IsNotExist(err) {
 		logrus.Fatalf("❌ Failed to delete old log file: %v", err)
 	}
 
@@ -1268,8 +1271,13 @@ func main() {
 				ListDirectory = append(ListDirectory, platformConfig["Directory"].(string))
 			}
 		}
+		// Default true: when doing local file analysis, respect .gitignore unless explicitly disabled.
+		useGitignore := true
+		if v, ok := platformConfig["UseGitignore"].(bool); ok {
+			useGitignore = v
+		}
 		startTime = time.Now()
-		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool), useGitignore)
 	}
 
 	/*---------------------------------- End Select type of DevOps Platform ----------------------------------------------------*/
