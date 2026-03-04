@@ -79,7 +79,7 @@ var Languages = language.Languages{
 		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp"},
 	},
 	"JCL": {
-		LineComments:      []string{"*", "//*"},
+		LineComments:      []string{"//*"},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".jcl", ".JCL", ".jjob", ".job"},
 	},
