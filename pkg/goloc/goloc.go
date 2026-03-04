@@ -256,6 +256,14 @@ func buildGitignoreFunc(scanPath string) analyzer.IgnoreFunc {
 		if !strings.HasPrefix(clean, repoRoot) {
 			return false
 		}
+		// Ensure path is exactly repoRoot or has a path separator immediately after the prefix,
+		// so that "/home/user/proj" does not match "/home/user/project/file.go" (would yield "ect/file.go").
+		if len(clean) > len(repoRoot) {
+			next := clean[len(repoRoot)]
+			if next != filepath.Separator && next != '/' {
+				return false
+			}
+		}
 		rel := strings.TrimPrefix(clean, repoRoot)
 		rel = strings.TrimPrefix(filepath.ToSlash(rel), "/")
 		if rel == "" {

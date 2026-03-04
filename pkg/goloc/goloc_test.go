@@ -178,6 +178,40 @@ func TestBuildGitignoreFunc_RespectsNestedGitignore(t *testing.T) {
 	}
 }
 
+// TestBuildGitignoreFunc_PrefixEdgeCase ensures that a path that only shares a prefix with the repo root
+// (e.g. repo at .../proj, path .../project/file.go) is not considered under the repo.
+func TestBuildGitignoreFunc_PrefixEdgeCase(t *testing.T) {
+	tmp := t.TempDir()
+	// Repo root at .../proj
+	repoRoot := filepath.Join(tmp, "proj")
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".git"), 0755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".gitignore"), []byte("*.log\n"), 0644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	// Sibling directory "project" (not under "proj")
+	projectDir := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	fileInProject := filepath.Join(projectDir, "file.go")
+	if err := os.WriteFile(fileInProject, []byte("package main"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ignoreFunc := buildGitignoreFunc(repoRoot)
+	if ignoreFunc == nil {
+		t.Fatal("buildGitignoreFunc should not return nil")
+	}
+
+	// Path .../project/file.go must not be treated as under repo .../proj (no separator after "proj")
+	ignored := ignoreFunc(fileInProject, false)
+	if ignored {
+		t.Errorf("path %q (under project/) should not be considered under repo %q; ignoreFunc should return false", fileInProject, repoRoot)
+	}
+}
+
 func TestMatchingFiles_WithoutIgnoreFunc_IncludesAllSupported(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, ".git"), 0755); err != nil {
