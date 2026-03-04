@@ -573,6 +573,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			golocParams.ByFile = false
 			golocParams.Cloned = true
 			golocParams.Repopath = gc.Repopath
+			golocParams.RepopathDisposable = gc.RepopathDisposable
 
 			gc, err = goloc.NewGCloc(golocParams, assets.Languages)
 			if err != nil {
@@ -601,10 +602,12 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			}
 		}
 
-		// Remove Repository Directory
-		err1 := os.RemoveAll(gc.Repopath)
-		if err1 != nil {
-			logger.Errorf(errorMessageDi, err1)
+		// Remove repository directory only if it is a temp clone, not the user's source directory
+		if gc.RepopathDisposable && gc.Repopath != "" {
+			err1 := os.RemoveAll(gc.Repopath)
+			if err1 != nil {
+				logger.Errorf(errorMessageDi, err1)
+			}
 		}
 		golocParams.Cloned = false
 		spin.Stop()
@@ -744,6 +747,7 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 
 					params.Cloned = false
 					params.Repopath = gc.Repopath
+					params.RepopathDisposable = gc.RepopathDisposable
 
 					gc, err = goloc.NewGCloc(params, assets.Languages)
 					if err != nil {
@@ -828,11 +832,13 @@ func AnalyseRepo(DestinationResult string, Users string, AccessToken string, Dev
 	gc.Run()
 	cpt++
 
-	// Remove Repository Directory
-	err1 := os.RemoveAll(gc.Repopath)
-	if err != nil {
-		fmt.Printf(errorMessageDi, err1)
-		return
+	// Remove repository directory only if it is a temp clone, not the user's source directory
+	if gc.RepopathDisposable && gc.Repopath != "" {
+		err1 := os.RemoveAll(gc.Repopath)
+		if err1 != nil {
+			fmt.Printf(errorMessageDi, err1)
+			return
+		}
 	}
 
 	return cpt
