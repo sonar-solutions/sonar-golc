@@ -41,15 +41,17 @@ type Params struct {
 	Token             string
 	Cloned            bool
 	Repopath          string
+	RepopathDisposable bool // if true, Repopath is a temp clone safe to delete; if false, it is the user's directory and must not be removed
 }
 
 type GCloc struct {
-	Params    Params
-	analyzer  *analyzer.Analyzer
-	scanner   *scanner.Scanner
-	sorter    sorter.Sorter
-	reporters []reporter.Reporter
-	Repopath  string
+	Params              Params
+	analyzer            *analyzer.Analyzer
+	scanner             *scanner.Scanner
+	sorter              sorter.Sorter
+	reporters           []reporter.Reporter
+	Repopath            string
+	RepopathDisposable  bool // if true, Repopath is safe to delete (temp clone); if false, do not remove (user's directory)
 }
 
 /* func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
@@ -142,7 +144,7 @@ type GCloc struct {
 }*/
 
 func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
-	path, err := getRepoPath(params)
+	path, disposable, err := getRepoPath(params)
 	if err != nil {
 		return nil, err
 	}
@@ -163,39 +165,47 @@ func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
 	analyzer, scanner, reporters := initAnalyzerScannerReporters(path, params, excludePaths, languages)
 
 	params.Cloned = true
+	params.Repopath = path
+	params.RepopathDisposable = disposable
 
 	return &GCloc{
-		Params:    params,
-		analyzer:  analyzer,
-		scanner:   scanner,
-		sorter:    getSorter(params.ByFile, params.Order),
-		reporters: reporters,
-		Repopath:  path,
+		Params:             params,
+		analyzer:           analyzer,
+		scanner:            scanner,
+		sorter:             getSorter(params.ByFile, params.Order),
+		reporters:          reporters,
+		Repopath:           path,
+		RepopathDisposable: disposable,
 	}, nil
 }
 
-func getRepoPath(params Params) (string, error) {
+// getRepoPath returns the path to analyze and whether that path is disposable (safe to delete).
+// When disposable is true, the path is a temp clone from getter/gogit; when false, it is the user's directory.
+func getRepoPath(params Params) (path string, disposable bool, err error) {
 	if params.Cloned {
-		return params.Repopath, nil
+		return params.Repopath, params.RepopathDisposable, nil
 	}
 
 	if len(params.Branch) != 0 {
-		return gogit.Getrepos(params.Path, params.Branch, params.Token)
+		p, e := gogit.Getrepos(params.Path, params.Branch, params.Token)
+		return p, true, e
 	}
 	// Use local path directly when it is an existing directory (Directory / file analysis).
 	// The getter copies to temp, which can yield 0 files on some systems (e.g. Windows) or when
 	// the copy is a symlink and we then apply the wrong .gitignore; using the path as-is fixes that.
 	absPath, err := filepath.Abs(params.Path)
 	if err != nil {
-		return getter.Getter(params.Path)
+		p, e := getter.Getter(params.Path)
+		return p, true, e
 	}
 	// Normalize for trailing slash / "." so Stat works (e.g. "repo/." -> "repo")
 	absPath = filepath.Clean(absPath)
 	info, err := os.Stat(absPath)
 	if err == nil && info.IsDir() {
-		return absPath, nil
+		return absPath, false, nil
 	}
-	return getter.Getter(params.Path)
+	p, e := getter.Getter(params.Path)
+	return p, true, e
 }
 
 func initAnalyzerScannerReporters(path string, params Params, excludePaths []string, languages language.Languages) (*analyzer.Analyzer, *scanner.Scanner, []reporter.Reporter) {
