@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/analyzer"
@@ -213,7 +214,13 @@ func getRepoPath(params Params) (string, error) {
 	if len(params.Branch) != 0 {
 		return gogit.Getrepos(params.Path, params.Branch, params.Token)
 	}
-	return getter.Getter(params.Path)
+	// Resolve to absolute path so local directories work on Windows (relative and absolute
+	// paths are handled consistently by the getter and downstream path comparison).
+	absPath, err := filepath.Abs(params.Path)
+	if err != nil {
+		return "", err
+	}
+	return getter.Getter(absPath)
 }
 
 // findGitRoot returns the repository root directory (containing .git) for the given path,
@@ -240,8 +247,41 @@ func findGitRoot(path string) string {
 	}
 }
 
+// pathUnderRoot reports whether path is under root (path equals root or is a descendant).
+// On Windows, comparison is case-insensitive. Paths are normalized (absolute, clean, slash form).
+func pathUnderRoot(path, root string) (under bool, rel string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false, ""
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false, ""
+	}
+	normPath := filepath.ToSlash(filepath.Clean(absPath))
+	normRoot := filepath.ToSlash(filepath.Clean(absRoot))
+	if runtime.GOOS == "windows" {
+		normPath = strings.ToLower(normPath)
+		normRoot = strings.ToLower(normRoot)
+	}
+	if normRoot != "" && normRoot[len(normRoot)-1] == '/' {
+		normRoot = strings.TrimSuffix(normRoot, "/")
+	}
+	if !strings.HasPrefix(normPath, normRoot) {
+		return false, ""
+	}
+	if len(normPath) > len(normRoot) && normPath[len(normRoot)] != '/' {
+		return false, ""
+	}
+	rel = strings.TrimPrefix(normPath, normRoot)
+	rel = strings.TrimPrefix(rel, "/")
+	return true, rel
+}
+
 // buildGitignoreFunc returns an IgnoreFunc that skips paths matching the repo's .gitignore,
 // or nil if path is not in a git repo or the matcher cannot be built.
+// Path comparison is cross-platform: paths are normalized to absolute form and on Windows
+// comparison is case-insensitive so that local analysis works with any path casing.
 func buildGitignoreFunc(scanPath string) analyzer.IgnoreFunc {
 	repoRoot := findGitRoot(scanPath)
 	if repoRoot == "" {
@@ -252,21 +292,8 @@ func buildGitignoreFunc(scanPath string) analyzer.IgnoreFunc {
 		return nil
 	}
 	return func(absolutePath string, isDir bool) bool {
-		clean := filepath.Clean(absolutePath)
-		if !strings.HasPrefix(clean, repoRoot) {
-			return false
-		}
-		// Ensure path is exactly repoRoot or has a path separator immediately after the prefix,
-		// so that "/home/user/proj" does not match "/home/user/project/file.go" (would yield "ect/file.go").
-		if len(clean) > len(repoRoot) {
-			next := clean[len(repoRoot)]
-			if next != filepath.Separator && next != '/' {
-				return false
-			}
-		}
-		rel := strings.TrimPrefix(clean, repoRoot)
-		rel = strings.TrimPrefix(filepath.ToSlash(rel), "/")
-		if rel == "" {
+		under, rel := pathUnderRoot(absolutePath, repoRoot)
+		if !under || rel == "" {
 			return false
 		}
 		return m.MatchPath(rel, isDir)
