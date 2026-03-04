@@ -742,11 +742,10 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 						return
 					}
 
-					// Second call to Run with ByFile = false
+					// Second call: reuse already-resolved path so getRepoPath returns Repopath instead of re-downloading
 					params.ByFile = true
-					params.Cloned = false
+					params.Cloned = true
 					params.Repopath = gc.Repopath
-					params.UseGitignore = useGitignore
 
 					gc, err = goloc.NewGCloc(params, assets.Languages)
 					if err != nil {
