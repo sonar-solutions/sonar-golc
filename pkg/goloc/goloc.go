@@ -214,13 +214,20 @@ func getRepoPath(params Params) (string, error) {
 	if len(params.Branch) != 0 {
 		return gogit.Getrepos(params.Path, params.Branch, params.Token)
 	}
-	// Resolve to absolute path so local directories work on Windows (relative and absolute
-	// paths are handled consistently by the getter and downstream path comparison).
+	// Use local path directly when it is an existing directory (Directory / file analysis).
+	// The getter copies to temp, which can yield 0 files on some systems (e.g. Windows) or when
+	// the copy is a symlink and we then apply the wrong .gitignore; using the path as-is fixes that.
 	absPath, err := filepath.Abs(params.Path)
 	if err != nil {
-		return "", err
+		return getter.Getter(params.Path)
 	}
-	return getter.Getter(absPath)
+	// Normalize for trailing slash / "." so Stat works (e.g. "repo/." -> "repo")
+	absPath = filepath.Clean(absPath)
+	info, err := os.Stat(absPath)
+	if err == nil && info.IsDir() {
+		return absPath, nil
+	}
+	return getter.Getter(params.Path)
 }
 
 // findGitRoot returns the repository root directory (containing .git) for the given path,
