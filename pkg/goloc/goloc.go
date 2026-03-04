@@ -2,6 +2,7 @@ package goloc
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/analyzer"
