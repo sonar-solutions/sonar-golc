@@ -3,6 +3,7 @@ package analyzer
 import (
 	"io/fs"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -94,9 +95,28 @@ func (a *Analyzer) getFileExtension(path string) string {
 	return extension
 }
 
+// pathHasPrefix reports whether path is under prefix (path equals prefix or is a descendant).
+// On Windows, comparison is case-insensitive. Paths are normalized so that relative/absolute
+// and different separators do not break exclusion (e.g. config with forward slashes on Windows).
+func pathHasPrefix(path, prefix string) bool {
+	normPath := filepath.ToSlash(filepath.Clean(path))
+	normPrefix := filepath.ToSlash(filepath.Clean(prefix))
+	if runtime.GOOS == "windows" {
+		normPath = strings.ToLower(normPath)
+		normPrefix = strings.ToLower(normPrefix)
+	}
+	if !strings.HasPrefix(normPath, normPrefix) {
+		return false
+	}
+	if len(normPath) == len(normPrefix) {
+		return true
+	}
+	return normPath[len(normPrefix)] == '/'
+}
+
 func (a *Analyzer) canAdd(path string, extension string) bool {
 	for _, pathToExclude := range a.excludePaths {
-		if strings.HasPrefix(path, pathToExclude) {
+		if pathHasPrefix(path, pathToExclude) {
 			return false
 		}
 	}

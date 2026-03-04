@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/briandowns/spinner"
@@ -19,7 +21,26 @@ func extractLastString(url string) string {
 	return filepath.Base(url)
 }
 
+// toFileURL converts an absolute local path to a file:// URL so that go-getter
+// reliably recognizes it on all platforms. On Windows, paths like C:\repo are
+// converted to file:///C:/repo.
+func toFileURL(absPath string) string {
+	if runtime.GOOS != "windows" {
+		return absPath
+	}
+	// Windows: file:///C:/path or file:///C:/ (drive root)
+	slash := filepath.ToSlash(absPath)
+	if len(slash) >= 2 && slash[1] == ':' {
+		return "file:///" + slash
+	}
+	return absPath
+}
+
 func Getter(src string) (string, error) {
+	// On Windows, pass local absolute paths as file:// URLs so the getter accepts them.
+	if runtime.GOOS == "windows" && len(src) >= 2 && src[1] == ':' && !strings.HasPrefix(src, "file://") {
+		src = toFileURL(src)
+	}
 	RepoString := extractLastString(src)
 
 	spinner := newSpinner(fmt.Sprintf("\r Extracting files from %s \n", RepoString))
