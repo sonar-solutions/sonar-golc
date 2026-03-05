@@ -12,8 +12,10 @@ import (
 )
 
 var (
-	globalLevel   = logrus.InfoLevel
-	globalLevelMu sync.RWMutex
+	globalLevel     = logrus.InfoLevel
+	globalLevelMu   sync.RWMutex
+	sharedLogger    *logrus.Logger
+	sharedLoggerOnce sync.Once
 )
 
 // SetGlobalLevel sets the log level used by all loggers returned from NewLogger().
@@ -56,22 +58,29 @@ func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	return []byte(msg), nil
 }
 
+// NewLogger returns a shared logger that writes to stdout and Logs/Logs.log.
+// The log file is opened once per process to avoid file descriptor leaks when
+// NewLogger() is called in hot paths (e.g. per-repository analysis).
 func NewLogger() *logrus.Logger {
-	logger := logrus.New()
-	logger.SetFormatter(&CustomFormatter{})
+	sharedLoggerOnce.Do(func() {
+		logger := logrus.New()
+		logger.SetFormatter(&CustomFormatter{})
 
-	globalLevelMu.RLock()
-	level := globalLevel
-	globalLevelMu.RUnlock()
-	logger.SetLevel(level)
+		globalLevelMu.RLock()
+		level := globalLevel
+		globalLevelMu.RUnlock()
+		logger.SetLevel(level)
 
-	logFile, err := os.OpenFile("Logs/Logs.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		// Fallback to stdout only when log file cannot be created (e.g. read-only fs, Docker)
-		logger.SetOutput(os.Stdout)
-		return logger
-	}
+		logFile, err := os.OpenFile("Logs/Logs.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			// Fallback to stdout only when log file cannot be created (e.g. read-only fs, Docker)
+			logger.SetOutput(os.Stdout)
+			sharedLogger = logger
+			return
+		}
 
-	logger.SetOutput(io.MultiWriter(os.Stdout, logFile))
-	return logger
+		logger.SetOutput(io.MultiWriter(os.Stdout, logFile))
+		sharedLogger = logger
+	})
+	return sharedLogger
 }
