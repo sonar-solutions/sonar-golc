@@ -1036,15 +1036,17 @@ func parseAndValidateFlags() (ApplicationFlags, map[string]interface{}) {
 }
 
 // resolveLogLevel returns the effective log level from CLI flags; if no override, returns the current global level.
+// Invalid -log-level is treated as no override, so -verbose still applies (e.g. -verbose -log-level=typo → debug).
 func resolveLogLevel(flags ApplicationFlags) logrus.Level {
 	if flags.LogLevel != "" {
 		s := strings.ToLower(flags.LogLevel)
 		level, err := logrus.ParseLevel(s)
 		if err != nil {
-			logger.Warnf("Invalid -log-level=%q, using config default: %v", flags.LogLevel, err)
-			return utils.GetGlobalLevel()
+			logger.Warnf("Invalid -log-level=%q, ignoring and using other flags/config: %v", flags.LogLevel, err)
+			// Fall through to consider -verbose and then config default
+		} else {
+			return level
 		}
-		return level
 	}
 	if flags.Verbose {
 		return logrus.DebugLevel
