@@ -106,6 +106,7 @@ func (j JsonReporter) writeJson(jsonReport *report) error {
 	}
 
 	loggers.Infof("\t✅ json report exported to %s", path)
+	loggers.Debugf("json report metrics: path=%s total_loc=%d total_files=%d", path, jsonReport.TotalCodeLines, jsonReport.TotalFiles)
 
 	return nil
 }

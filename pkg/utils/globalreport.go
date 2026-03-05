@@ -69,16 +69,25 @@ func CreateGlobalReport(directory string) error {
 		loggers.Errorf("❌ Error reading files : %v", err)
 		return err
 	}
+	totalLOC := 0
+	for _, n := range totals {
+		totalLOC += n
+	}
+	loggers.Debugf("global report: %d language(s) in totals, total LOC=%d; output paths: %s, %s",
+		len(totals), totalLOC,
+		filepath.Join(directory, "code_lines_by_language.json"),
+		filepath.Join(directory, "GlobalReport.pdf"))
 
 	// Persist code_lines_by_language.json and keep marshaled bytes for later
-	outputData, err := writeLanguageTotalsJSON(totals)
+	outputData, err := writeLanguageTotalsJSON(directory, totals)
 	if err != nil {
 		loggers.Errorf("❌ Error creating output JSON file : %v", err)
 		return err
 	}
 
-	// Reading data from the GlobalReport JSON file
-	ginfo, err := readGlobalInfoFromFile("Results/GlobalReport.json")
+	// Reading data from the GlobalReport JSON file (use directory for Windows-safe path)
+	globalReportPath := filepath.Join(directory, "GlobalReport.json")
+	ginfo, err := readGlobalInfoFromFile(globalReportPath)
 	if err != nil {
 		return err
 	}
@@ -91,12 +100,12 @@ func CreateGlobalReport(directory string) error {
 		return err
 	}
 
-	// Create a PDF
-	if err := renderGlobalPDF(languages, ginfo); err != nil {
+	// Create a PDF (output path under directory for Windows-safe path)
+	if err := renderGlobalPDF(filepath.Join(directory, "GlobalReport.pdf"), languages, ginfo); err != nil {
 		return err
 	}
 
-	loggers.Infof("✅ Global PDF report exported to %s", "Results/GlobalReport.pdf")
+	loggers.Infof("✅ Global PDF report exported to %s", filepath.Join(directory, "GlobalReport.pdf"))
 	return nil
 }
 
@@ -118,16 +127,14 @@ func collectLanguageTotals(directory string) (map[string]int, error) {
 	return ligneDeCodeParLangage, nil
 }
 
-// isEligibleResultFile returns true for top-level Result_*.json files that are not _byfile.
+// isEligibleResultFile returns true for Result_*.json files (by-language or by-file).
+// Including _byfile.json ensures language totals are populated when only byfile-report exists.
 func isEligibleResultFile(info os.FileInfo, path string) bool {
 	if info.IsDir() {
 		return false
 	}
 	name := info.Name()
 	if !strings.HasPrefix(name, "Result_") {
-		return false
-	}
-	if strings.Contains(name, "_byfile") {
 		return false
 	}
 	return filepath.Ext(path) == ".json"
@@ -151,8 +158,8 @@ func accumulateLanguageTotalsFromFile(path string, totals map[string]int) error 
 	return nil
 }
 
-// writeLanguageTotalsJSON writes Results/code_lines_by_language.json and returns the serialized bytes.
-func writeLanguageTotalsJSON(totals map[string]int) ([]byte, error) {
+// writeLanguageTotalsJSON writes code_lines_by_language.json under directory and returns the serialized bytes.
+func writeLanguageTotalsJSON(directory string, totals map[string]int) ([]byte, error) {
 	loggers := NewLogger()
 	var resultats []LanguageData1
 	for lang, total := range totals {
@@ -165,11 +172,16 @@ func writeLanguageTotalsJSON(totals map[string]int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	const outputFile = "Results/code_lines_by_language.json"
+	outputFile := filepath.Join(directory, "code_lines_by_language.json")
 	if err := os.WriteFile(outputFile, outputData, 0644); err != nil {
 		return nil, err
 	}
+	totalLOC := 0
+	for _, n := range totals {
+		totalLOC += n
+	}
 	loggers.Infof("✅ Results analysis recorded in %s", outputFile)
+	loggers.Debugf("code_lines_by_language.json: path=%s languages=%d total_loc=%d", outputFile, len(totals), totalLOC)
 	return outputData, nil
 }
 
@@ -190,7 +202,7 @@ func readGlobalInfoFromFile(path string) (Globalinfo, error) {
 }
 
 // renderGlobalPDF generates the GlobalReport.pdf from languages and global info.
-func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo) error {
+func renderGlobalPDF(outputPath string, languages []LanguageData, ginfo Globalinfo) error {
 	var unit = "%"
 	loggers := NewLogger()
 	Org := "Organization : " + ginfo.Organization
@@ -264,7 +276,7 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo) error {
 		rowCount++
 	}
 
-	if err := pdf.OutputFileAndClose("Results/GlobalReport.pdf"); err != nil {
+	if err := pdf.OutputFileAndClose(outputPath); err != nil {
 		loggers.Errorf("❌ Error saving PDF file: %v", err)
 		return err
 	}

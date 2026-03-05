@@ -25,7 +25,7 @@ const (
 	testLogsDir              = "Logs"
 	testExclusionFile        = "test_exclusion.txt"
 	sampleExclusionContent   = "repo1\nrepo2\n"
-	validConfigContent       = `{"platforms": {"test": {}}, "logging": {"level": "info"}, "release": {"version": "1.0.9"}}`
+	validConfigContent       = `{"platforms": {"test": {}}, "Logging": {"level": "info"}, "release": {"version": "1.0.9"}}`
 	invalidConfigContent     = `{"invalid": "json"`
 	testBackupSource         = "test_backup_source"
 	testBackupTarget         = "test_backup.zip"
@@ -590,7 +590,7 @@ func TestAnalysisListFunctions(t *testing.T) {
 					t.Errorf("AnalyseReposListFile panicked: %v", r)
 				}
 			}()
-			AnalyseReposListFile(emptyDirs, emptyExclusions, emptyExtensions, false, false)
+			AnalyseReposListFile("Results", emptyDirs, emptyExclusions, emptyExtensions, false, false)
 		}()
 	})
 }

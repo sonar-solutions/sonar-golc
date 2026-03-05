@@ -230,6 +230,7 @@ func (p PdfReporter) writePdf(pdfReport *report) error {
 	}
 
 	loggers.Infof("\t✅ PDF report exported to %s", path)
+	loggers.Debugf("PDF report metrics: path=%s total_loc=%d total_lines=%d", path, pdfReport.TotalCodeLines, pdfReport.TotalLines)
 	return nil
 }
 

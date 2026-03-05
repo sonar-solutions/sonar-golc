@@ -5,10 +5,32 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 )
+
+var (
+	globalLevel   = logrus.InfoLevel
+	globalLevelMu sync.RWMutex
+)
+
+// SetGlobalLevel sets the log level used by all loggers returned from NewLogger().
+// Call this early (e.g. from main after loading config and parsing CLI) so that
+// every package respects the same level.
+func SetGlobalLevel(level logrus.Level) {
+	globalLevelMu.Lock()
+	defer globalLevelMu.Unlock()
+	globalLevel = level
+}
+
+// GetGlobalLevel returns the current global log level.
+func GetGlobalLevel() logrus.Level {
+	globalLevelMu.RLock()
+	defer globalLevelMu.RUnlock()
+	return globalLevel
+}
 
 type CustomFormatter struct{}
 
@@ -38,7 +60,10 @@ func NewLogger() *logrus.Logger {
 	logger := logrus.New()
 	logger.SetFormatter(&CustomFormatter{})
 
-	logger.SetLevel(logrus.DebugLevel)
+	globalLevelMu.RLock()
+	level := globalLevel
+	globalLevelMu.RUnlock()
+	logger.SetLevel(level)
 
 	logFile, err := os.OpenFile("Logs/Logs.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {

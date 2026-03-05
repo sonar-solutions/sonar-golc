@@ -4,6 +4,8 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
 type Analyzer struct {
@@ -38,6 +40,7 @@ func NewAnalyzer(
 
 func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 	var files []FileMetadata
+	log := utils.NewLogger()
 
 	err := filepath.Walk(a.path, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
@@ -49,18 +52,23 @@ func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 		}
 
 		fileExtension := a.getFileExtension(path)
-		if a.canAdd(path, fileExtension) {
+		ok, excludeReason := a.canAddWithReason(path, fileExtension)
+		if ok {
 			fm := FileMetadata{
 				FilePath:  path,
 				Extension: fileExtension,
 				Language:  a.SupportedExtensions[fileExtension],
 			}
 			files = append(files, fm)
+			log.Debugf("file included: path=%s extension=%s language=%s", path, fileExtension, fm.Language)
+		} else {
+			log.Debugf("file excluded: path=%s reason=%s", path, excludeReason)
 		}
 
 		return nil
 	})
 
+	log.Debugf("matching files: %d found under %s", len(files), a.path)
 	return files, err
 }
 
@@ -74,22 +82,29 @@ func (a *Analyzer) getFileExtension(path string) string {
 	return extension
 }
 
-func (a *Analyzer) canAdd(path string, extension string) bool {
+// canAddWithReason returns whether the file should be included and, if not, a short reason for troubleshooting.
+func (a *Analyzer) canAddWithReason(path string, extension string) (bool, string) {
 	for _, pathToExclude := range a.excludePaths {
 		if strings.HasPrefix(path, pathToExclude) {
-			return false
+			return false, "excluded path"
 		}
 	}
 
 	if len(a.includeExtensions) > 0 {
 		_, ok := a.includeExtensions[a.getFileExtension(path)]
-		return ok
+		if !ok {
+			return false, "not in include list"
+		}
+		return true, ""
 	}
 
 	if _, ok := a.excludeExtensions[a.getFileExtension(path)]; ok {
-		return false
+		return false, "excluded extension"
 	}
 
 	_, ok := a.SupportedExtensions[extension]
-	return ok
+	if !ok {
+		return false, "unsupported extension"
+	}
+	return true, ""
 }

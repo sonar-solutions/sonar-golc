@@ -327,6 +327,8 @@ To exclude directories from your repository from the analysis, initialize the va
 ```
 ❗️ The '**Projects**' entry is supported exclusively on the BitBucket and AzureDevops platform.
 
+❗️ **Log level.** You can control output verbosity for troubleshooting. In **config.json**, set `"Logging": { "Level": "info" }` to one of `trace`, `debug`, `info`, `warn`, or `error` (default is `info`). From the command line, use **`-log-level=<level>`** to override the config (e.g. `-log-level=debug`), or **`-verbose`** / **`-v`** to set the level to debug. Use `debug` or `trace` for file-level and report-level troubleshooting (files found, excluded, scanned; reports created with metrics).
+
  ## Run GoLC
 
  To launch GoLC with the following command, you must specify your DevOps platform. In this example, we analyze repositories hosted on Bitbucket Cloud. The supported flags for -devops are :
@@ -334,6 +336,8 @@ To exclude directories from your repository from the analysis, initialize the va
 flag : <BitBucketSRV>||<BitBucket>||<Github>||<GithubEnterprise>||<Gitlab>||<Azure>||<File>
 
  ```
+ You can fine-tune log output with **`-log-level=debug`** (or `trace`, `info`, `warn`, `error`) or **`-verbose`** / **`-v`** for debug-level logging. Run **`golc -help`** to see all flags.
+
  ❗️ GoLC runs on Windows, Linux, and OSX, but the preferred platforms are OSX or Linux.
 
 ```bash

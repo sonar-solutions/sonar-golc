@@ -139,5 +139,6 @@ func (c CsvReporter) writeCsv(csvReport *report) error {
 	}
 
 	loggers.Infof("\t✅ CSV report exported to %s", path)
+	loggers.Debugf("CSV report metrics: path=%s total_loc=%d total_files=%d", path, csvReport.TotalCodeLines, csvReport.TotalFiles)
 	return nil
 }

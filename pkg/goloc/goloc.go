@@ -224,11 +224,13 @@ func initAnalyzerScannerReporters(path string, params Params, excludePaths []str
 }
 
 func (gc *GCloc) Run() error {
+	log := utils.NewLogger()
 
 	files, err := gc.analyzer.MatchingFiles()
 	if err != nil {
 		return err
 	}
+	log.Debugf("files to scan: %d (path=%s)", len(files), gc.Params.Path)
 
 	scanResult, err := gc.scanner.Scan(files)
 	if err != nil {
@@ -236,6 +238,8 @@ func (gc *GCloc) Run() error {
 	}
 
 	summary := gc.scanner.Summary(scanResult)
+	log.Debugf("scan complete: files=%d total_lines=%d total_loc=%d blanks=%d comments=%d",
+		summary.TotalFiles, summary.TotalLines, summary.TotalCodeLines, summary.TotalBlankLines, summary.TotalComments)
 
 	sortedSummary := gc.sortSummary(summary)
 
@@ -332,19 +336,19 @@ func getReporters(reportFormats []string, outputName, outputPath string, byfile 
 
 			if byfile {
 
-				typereportPath := "/byfile-report"
+				byfileReportPath := filepath.Join(outputPath, "byfile-report")
 				reporters = append(reporters, json.JsonReporter{
 					OutputName: outputName + indicemode,
-					OutputPath: outputPath + typereportPath,
+					OutputPath: byfileReportPath,
 				})
 
 				reporters = append(reporters, csv.CsvReporter{
 					OutputName: outputName + indicemode,
-					OutputPath: outputPath + typereportPath + "/csv-report",
+					OutputPath: filepath.Join(byfileReportPath, "csv-report"),
 				})
 				reporters = append(reporters, pdf.PdfReporter{
 					OutputName: outputName + indicemode,
-					OutputPath: outputPath + typereportPath + "/pdf-report",
+					OutputPath: filepath.Join(byfileReportPath, "pdf-report"),
 				})
 
 				/*reporterG := pdf.PdfReporter{
@@ -357,10 +361,10 @@ func getReporters(reportFormats []string, outputName, outputPath string, byfile 
 				}*/
 			} else {
 
-				typereportPath := "/bylanguage-report"
+				bylanguageReportPath := filepath.Join(outputPath, "bylanguage-report")
 				reporters = append(reporters, json.JsonReporter{
 					OutputName: outputName,
-					OutputPath: outputPath + typereportPath,
+					OutputPath: bylanguageReportPath,
 				})
 			}
 

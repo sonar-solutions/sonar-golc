@@ -67,12 +67,31 @@ type SelfLink struct {
 
 type Config struct {
 	Platforms map[string]interface{} `json:"platforms"`
-	Logging   LoggingConfig          `json:"logging"`
+	Logging   LoggingConfig          `json:"Logging"`
 	Release   ReleaseConfig          `json:"release"`
 }
 
+// LogLevel unmarshals from JSON string (e.g. "info", "debug") so config files can use readable values.
+type LogLevel logrus.Level
+
+// UnmarshalJSON parses level from a JSON string (e.g. "Info", "debug") using logrus.ParseLevel.
+func (l *LogLevel) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	level, err := logrus.ParseLevel(strings.ToLower(s))
+	if err != nil {
+		return err
+	}
+	*l = LogLevel(level)
+	return nil
+}
+
+func (l LogLevel) ToLogrus() logrus.Level { return logrus.Level(l) }
+
 type LoggingConfig struct {
-	Level logrus.Level `json:"level"`
+	Level LogLevel `json:"level"`
 }
 
 type ReleaseConfig struct {
@@ -678,7 +697,7 @@ func AnalyseReposListAzure(DestinationResult string, platformConfig map[string]i
 
 /* ---------------- Analyse Directory ---------------- */
 
-func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool) {
+func AnalyseReposListFile(resultsDir string, Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool) {
 
 	type Configuration struct {
 		ExcludeExtensions []string
@@ -719,7 +738,7 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 				OrderByComment:    false,
 				Order:             "DESC",
 				OutputName:        outputFileName,
-				OutputPath:        "Results",
+				OutputPath:        resultsDir,
 				ReportFormats:     []string{"json"},
 				Branch:            "",
 				Token:             "",
@@ -931,11 +950,10 @@ func init() {
 		logrus.Fatalf("❌ Failed to delete old log file: %v", err)
 	}
 
-	// Set Loggin
-	// Create a new logger instance
-
+	// Set global log level so all packages (via utils.NewLogger()) respect config
+	utils.SetGlobalLevel(AppConfig.Logging.Level.ToLogrus())
+	// Create a new logger instance for main
 	logger = utils.NewLogger()
-	logger.SetLevel(AppConfig.Logging.Level)
 }
 
 // ApplicationFlags holds command line arguments
@@ -946,6 +964,8 @@ type ApplicationFlags struct {
 	Help        bool
 	Languages   bool
 	Version     bool
+	LogLevel    string // e.g. "trace", "debug", "info", "warn", "error"; empty = use config
+	Verbose     bool   // -verbose or -v sets level to debug
 }
 
 // parseAndValidateFlags processes command line arguments and validates them
@@ -957,6 +977,9 @@ func parseAndValidateFlags() (ApplicationFlags, map[string]interface{}) {
 	helpFlag := flag.Bool("help", false, "Show help message")
 	languagesFlag := flag.Bool("languages", false, "Show all supported languages")
 	versionflag := flag.Bool("version", false, "Show version")
+	logLevelFlag := flag.String("log-level", "", "Log level: trace, debug, info, warn, error (default from config)")
+	verboseFlag := flag.Bool("verbose", false, "Set log level to debug (short: -v)")
+	vFlag := flag.Bool("v", false, "Same as -verbose")
 
 	flag.Parse()
 
@@ -969,6 +992,8 @@ func parseAndValidateFlags() (ApplicationFlags, map[string]interface{}) {
 		fmt.Println("  golc -devops Github                    # Analyze main branches only")
 		fmt.Println("  golc -devops Github -all-branches      # Analyze ALL branches")
 		fmt.Println("  golc -devops Github -fast              # Fast analysis mode")
+		fmt.Println("  golc -devops Github -log-level=debug   # Verbose logging for troubleshooting")
+		fmt.Println("  golc -devops Github -verbose           # Same as -log-level=debug")
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
@@ -997,6 +1022,7 @@ func parseAndValidateFlags() (ApplicationFlags, map[string]interface{}) {
 		os.Exit(1)
 	}
 
+	verbose := *verboseFlag || *vFlag
 	return ApplicationFlags{
 		DevOps:      *devopsFlag,
 		Fast:        *fastFlag,
@@ -1004,7 +1030,37 @@ func parseAndValidateFlags() (ApplicationFlags, map[string]interface{}) {
 		Help:        *helpFlag,
 		Languages:   *languagesFlag,
 		Version:     *versionflag,
+		LogLevel:    *logLevelFlag,
+		Verbose:     verbose,
 	}, platformConfig
+}
+
+// resolveLogLevel returns the effective log level from CLI flags; if no override, returns the current global level.
+func resolveLogLevel(flags ApplicationFlags) logrus.Level {
+	if flags.LogLevel != "" {
+		s := strings.ToLower(flags.LogLevel)
+		// logrus v1 has no TraceLevel; treat "trace" as debug for maximum verbosity
+		if s == "trace" {
+			return logrus.DebugLevel
+		}
+		level, err := logrus.ParseLevel(s)
+		if err != nil {
+			logger.Warnf("Invalid -log-level=%q, using config default: %v", flags.LogLevel, err)
+			return utils.GetGlobalLevel()
+		}
+		return level
+	}
+	if flags.Verbose {
+		return logrus.DebugLevel
+	}
+	return utils.GetGlobalLevel()
+}
+
+// applyLogLevel applies the effective log level from flags to the global logger and main's logger.
+func applyLogLevel(flags ApplicationFlags) {
+	level := resolveLogLevel(flags)
+	utils.SetGlobalLevel(level)
+	logger.SetLevel(level)
 }
 
 // setupResultsDirectory handles Results directory creation and backup logic
@@ -1013,7 +1069,7 @@ func setupResultsDirectory(flags ApplicationFlags) string {
 	if err != nil {
 		fmt.Println("Error:", err)
 	}
-	DestinationResult := pwd + "/Results"
+	DestinationResult := filepath.Join(pwd, "Results")
 
 	logger.Infof("✅ Using configuration for DevOps platform '%s'\n", flags.DevOps)
 
@@ -1067,6 +1123,8 @@ func main() {
 
 	// Parse and validate command line flags
 	flags, platformConfig := parseAndValidateFlags()
+	// Apply -log-level / -verbose override so all packages use the same level
+	applyLogLevel(flags)
 
 	// Setup results directory
 	DestinationResult := setupResultsDirectory(flags)
@@ -1275,7 +1333,7 @@ func main() {
 			}
 		}
 		startTime = time.Now()
-		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+		AnalyseReposListFile(DestinationResult, ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 	}
 
 	/*---------------------------------- End Select type of DevOps Platform ----------------------------------------------------*/
@@ -1291,14 +1349,11 @@ func main() {
 	spin.Start()
 
 	if platformConfig["ResultAll"].(bool) {
-
-		DestinationResult = DestinationResult + "/bylanguage-report/"
+		DestinationResult = filepath.Join(DestinationResult, "bylanguage-report")
 	} else if platformConfig["ResultByFile"].(bool) {
-
-		DestinationResult = DestinationResult + "/byfile-report/"
+		DestinationResult = filepath.Join(DestinationResult, "byfile-report")
 	} else {
-
-		DestinationResult = DestinationResult + "/bylanguage-report/"
+		DestinationResult = filepath.Join(DestinationResult, "bylanguage-report")
 	}
 
 	// List files in the directory
@@ -1307,9 +1362,17 @@ func main() {
 		logger.Errorf("❌ Error listing files:%v", err)
 		os.Exit(1)
 	}
+	jsonCount := 0
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+			jsonCount++
+		}
+	}
+	logger.Debugf("report phase: listing path=%q entries=%d json_files=%d", DestinationResult, len(files), jsonCount)
 
 	// Initialize the sum of TotalCodeLines (excluding JSON to match SonarQube behavior)
 	totalCodeLinesSum := 0
+	resultFileCount := 0
 
 	// Analyse All file
 	for _, file := range files {
@@ -1340,8 +1403,18 @@ func main() {
 				}
 			}
 			codeLinesForTotal := result.TotalCodeLines - jsonLOC
+			// Fallback: byfile JSON has same top-level TotalCodeLines; if 0, sum from Results (e.g. format or encoding quirk)
+			if codeLinesForTotal == 0 && len(result.Results) > 0 {
+				for _, r := range result.Results {
+					if strings.TrimSpace(r.Language) != utils.LanguageExcludedFromTotalLOC {
+						codeLinesForTotal += r.CodeLines
+					}
+				}
+			}
 
 			totalCodeLinesSum += codeLinesForTotal
+			resultFileCount++
+			logger.Debugf("report result file: name=%s TotalCodeLines=%d TotalLines=%d", file.Name(), result.TotalCodeLines, result.TotalLines)
 
 			// Check if this repo has a higher TotalCodeLines (excl. JSON) than the current maximum
 			if codeLinesForTotal > maxTotalCodeLines {
@@ -1360,6 +1433,7 @@ func main() {
 		}
 
 	}
+	logger.Infof("report analysis: %d result file(s) processed, total LOC sum=%d", resultFileCount, totalCodeLinesSum)
 	maxTotalCodeLines1 := utils.FormatCodeLines(float64(maxTotalCodeLines))
 	totalCodeLinesSum1 := utils.FormatCodeLines(float64(totalCodeLinesSum))
 
@@ -1386,23 +1460,28 @@ func main() {
 		logger.Errorf("❌ Error during JSON encoding in Gobal Report:%v", err)
 		return
 	}
-	// Created Global Result json file
-	file1, err := os.Create("Results/GlobalReport.json")
+	// Determine base Results directory (parent of current DestinationResult)
+	baseResultsDir := filepath.Dir(filepath.Clean(DestinationResult))
+
+	// Created Global Result json file (use baseResultsDir for Windows-safe path)
+	globalReportJSONPath := filepath.Join(baseResultsDir, "GlobalReport.json")
+	file1, err := os.Create(globalReportJSONPath)
 	if err != nil {
 		logger.Errorf("❌ Error during file creation Gobal Report:%v", err)
 		return
 	}
-	defer file.Close()
-
 	_, err = file1.Write(jsonData)
 	if err != nil {
+		file1.Close()
 		logger.Errorf("❌ Error writing to file:%v", err)
 		return
 	}
+	if err := file1.Close(); err != nil {
+		logger.Errorf("❌ Error closing GlobalReport.json: %v", err)
+		return
+	}
+	logger.Infof("GlobalReport.json written to %s (total LOC=%s)", globalReportJSONPath, totalCodeLinesSum1)
 	spin.Stop()
-
-	// Determine base Results directory (parent of current DestinationResult)
-	baseResultsDir := filepath.Dir(filepath.Clean(DestinationResult))
 
 	// Generated Global Report (walks the directory for Result_* files)
 	// Pass the base Results directory for consistency across platforms.

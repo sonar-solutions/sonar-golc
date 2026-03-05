@@ -8,6 +8,7 @@ import (
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/analyzer"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/goloc/language"
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -32,6 +33,7 @@ func NewScanner(languages language.Languages) *Scanner {
 func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 	var results []scanResult
 	progress := sc.createProgressbar(len(files))
+	log := utils.NewLogger()
 
 	for _, file := range files {
 		result, err := sc.scanFile(file)
@@ -40,6 +42,8 @@ func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 		}
 		progress.Add(1)
 		results = append(results, result)
+		log.Debugf("scanned file: path=%s lines=%d loc=%d blank=%d comments=%d",
+			result.Metadata.FilePath, result.Lines, result.CodeLines, result.BlankLines, result.Comments)
 	}
 
 	return results, nil

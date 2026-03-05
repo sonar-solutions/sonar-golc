@@ -53,8 +53,9 @@ func TestIsEligibleResultFile(t *testing.T) {
 	if !isEligibleResultFile(fiRes, result) {
 		t.Errorf("expected %s to be eligible", result)
 	}
-	if isEligibleResultFile(fiBy, byfile) {
-		t.Errorf("did not expect %s to be eligible", byfile)
+	// byfile is now eligible so language totals are populated when only byfile-report exists
+	if !isEligibleResultFile(fiBy, byfile) {
+		t.Errorf("expected %s to be eligible (byfile reports used for language totals)", byfile)
 	}
 	if isEligibleResultFile(fiO, other) {
 		t.Errorf("did not expect %s to be eligible", other)
@@ -84,10 +85,10 @@ func TestAccumulateLanguageTotalsFromFile(t *testing.T) {
 	}
 }
 
-func TestCollectLanguageTotalsSkipsByfile(t *testing.T) {
+func TestCollectLanguageTotalsAggregatesByfileAndBylanguage(t *testing.T) {
 	dir, cleanup := setupGlobalReportEnv(t)
 	defer cleanup()
-	// arrange result files
+	// arrange result files: both by-language and by-file are aggregated
 	writeResultJSON(t, dir, "Result_org_a_main.json", FileData{
 		Results: []LanguageData1{{Language: "Go", CodeLines: 10}},
 	})
@@ -101,8 +102,9 @@ func TestCollectLanguageTotalsSkipsByfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectLanguageTotals error: %v", err)
 	}
-	if totals["Go"] != 10 {
-		t.Errorf("expected 10, got %d", totals["Go"])
+	// Only Result_* files are included (random.json is skipped); both by-language and byfile are summed
+	if totals["Go"] != 1010 {
+		t.Errorf("expected 1010 (10+1000), got %d", totals["Go"])
 	}
 }
 
@@ -126,8 +128,8 @@ func TestWriteLanguageTotalsJSONAndReadGlobalInfoAndRenderPDF(t *testing.T) {
 		t.Fatalf("failed writing GlobalReport.json: %v", err)
 	}
 
-	// write language totals
-	data, err := writeLanguageTotalsJSON(map[string]int{"Go": 100})
+	// write language totals (directory as first arg for Windows-safe paths)
+	data, err := writeLanguageTotalsJSON("Results", map[string]int{"Go": 100})
 	if err != nil {
 		t.Fatalf("writeLanguageTotalsJSON error: %v", err)
 	}

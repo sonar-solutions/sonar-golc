@@ -457,19 +457,21 @@ func GenerateRepositorySummaryReports(directory string) error {
 
 	// Get output paths using helper function
 	csvOutputPath, jsonOutputPath, pdfOutputPath := createReportFilePaths(directory)
+	csvFilePath := filepath.Join(csvOutputPath, "repository_summary.csv")
+	jsonFilePath := filepath.Join(jsonOutputPath, "repository_summary.json")
+	pdfFilePath := filepath.Join(pdfOutputPath, "repository_summary.pdf")
+	loggers.Debugf("repository summary reports: generating CSV=%s JSON=%s PDF=%s (repos=%d total_LOC=%d)",
+		csvFilePath, jsonFilePath, pdfFilePath, summary.TotalRepositories, summary.TotalCodeLines)
 
 	// Generate reports with consistent error handling
-	csvFilePath := filepath.Join(csvOutputPath, "repository_summary.csv")
 	generateReportWithErrorHandling("CSV", csvFilePath, func() error {
 		return generateRepositoryCSVReport(summary, csvOutputPath)
 	})
 
-	jsonFilePath := filepath.Join(jsonOutputPath, "repository_summary.json")
 	generateReportWithErrorHandling("JSON", jsonFilePath, func() error {
 		return generateRepositoryJSONReport(summary, jsonOutputPath)
 	})
 
-	pdfFilePath := filepath.Join(pdfOutputPath, "repository_summary.pdf")
 	generateReportWithErrorHandling("PDF", pdfFilePath, func() error {
 		return generateRepositoryPDFReport(summary, pdfOutputPath)
 	})
