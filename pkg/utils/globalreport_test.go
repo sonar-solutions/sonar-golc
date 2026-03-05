@@ -108,6 +108,36 @@ func TestCollectLanguageTotalsAggregatesByfileAndBylanguage(t *testing.T) {
 	}
 }
 
+// TestCollectLanguageTotalsPrefersBylanguageReportWhenBothExist ensures that when both
+// bylanguage-report and byfile-report exist (e.g. ResultAll), we only aggregate from
+// bylanguage-report to avoid double-counting the same repository.
+func TestCollectLanguageTotalsPrefersBylanguageReportWhenBothExist(t *testing.T) {
+	dir, cleanup := setupGlobalReportEnv(t)
+	defer cleanup()
+	bylanguageDir := filepath.Join(dir, "bylanguage-report")
+	byfileDir := filepath.Join(dir, "byfile-report")
+	if err := os.MkdirAll(bylanguageDir, 0755); err != nil {
+		t.Fatalf("mkdir bylanguage-report: %v", err)
+	}
+	if err := os.MkdirAll(byfileDir, 0755); err != nil {
+		t.Fatalf("mkdir byfile-report: %v", err)
+	}
+	// Same repo: by-language says 10, by-file says 10 (would double-count to 20 if both walked)
+	writeResultJSON(t, bylanguageDir, "Result_org_repo_main.json", FileData{
+		Results: []LanguageData1{{Language: "Go", CodeLines: 10}},
+	})
+	writeResultJSON(t, byfileDir, "Result_org_repo_main_byfile.json", FileData{
+		Results: []LanguageData1{{Language: "Go", CodeLines: 10}},
+	})
+	totals, err := collectLanguageTotals(dir)
+	if err != nil {
+		t.Fatalf("collectLanguageTotals error: %v", err)
+	}
+	if totals["Go"] != 10 {
+		t.Errorf("expected 10 (bylanguage only, no double-count), got %d", totals["Go"])
+	}
+}
+
 func TestWriteLanguageTotalsJSONAndReadGlobalInfoAndRenderPDF(t *testing.T) {
 	_, cleanup := setupGlobalReportEnv(t)
 	defer cleanup()

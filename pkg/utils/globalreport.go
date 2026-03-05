@@ -110,9 +110,15 @@ func CreateGlobalReport(directory string) error {
 }
 
 // collectLanguageTotals walks result files and aggregates language totals.
+// When both bylanguage-report and byfile-report exist (e.g. ResultAll), only bylanguage-report
+// is walked to avoid double-counting the same repository.
 func collectLanguageTotals(directory string) (map[string]int, error) {
 	ligneDeCodeParLangage := make(map[string]int)
-	err := filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
+	walkRoot := directory
+	if info, err := os.Stat(filepath.Join(directory, "bylanguage-report")); err == nil && info.IsDir() {
+		walkRoot = filepath.Join(directory, "bylanguage-report")
+	}
+	err := filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}

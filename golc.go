@@ -1039,10 +1039,6 @@ func parseAndValidateFlags() (ApplicationFlags, map[string]interface{}) {
 func resolveLogLevel(flags ApplicationFlags) logrus.Level {
 	if flags.LogLevel != "" {
 		s := strings.ToLower(flags.LogLevel)
-		// logrus v1 has no TraceLevel; treat "trace" as debug for maximum verbosity
-		if s == "trace" {
-			return logrus.DebugLevel
-		}
 		level, err := logrus.ParseLevel(s)
 		if err != nil {
 			logger.Warnf("Invalid -log-level=%q, using config default: %v", flags.LogLevel, err)
@@ -1132,7 +1128,7 @@ func main() {
 
 	// Create Global Report File
 
-	GlobalReport := DestinationResult + "/GlobalReport.txt"
+	GlobalReport := filepath.Join(DestinationResult, "GlobalReport.txt")
 	file, err := os.Create(GlobalReport)
 	if err != nil {
 		logger.Errorf("❌ Error creating file:%v", err)
