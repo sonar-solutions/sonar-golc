@@ -19,12 +19,16 @@ var (
 )
 
 // SetGlobalLevel sets the log level used by all loggers returned from NewLogger().
-// Call this early (e.g. from main after loading config and parsing CLI) so that
-// every package respects the same level.
+// It updates both the global default and the shared logger instance if it has
+// already been created, so callers can change the level at any time (e.g. after
+// parsing CLI flags).
 func SetGlobalLevel(level logrus.Level) {
 	globalLevelMu.Lock()
 	defer globalLevelMu.Unlock()
 	globalLevel = level
+	if sharedLogger != nil {
+		sharedLogger.SetLevel(level)
+	}
 }
 
 // GetGlobalLevel returns the current global log level.

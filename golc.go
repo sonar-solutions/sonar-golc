@@ -1054,11 +1054,10 @@ func resolveLogLevel(flags ApplicationFlags) logrus.Level {
 	return utils.GetGlobalLevel()
 }
 
-// applyLogLevel applies the effective log level from flags to the global logger and main's logger.
+// applyLogLevel applies the effective log level from flags (updates global level and shared logger).
 func applyLogLevel(flags ApplicationFlags) {
 	level := resolveLogLevel(flags)
 	utils.SetGlobalLevel(level)
-	logger.SetLevel(level)
 }
 
 // setupResultsDirectory handles Results directory creation and backup logic
