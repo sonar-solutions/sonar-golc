@@ -1,8 +1,8 @@
 #!/bin/bash
 
-export TAG="V1.0.9.3" # Release TAG in GitHub
-export Release1="v1.0.9.3" # Release Number
-export buildpath="/Users/fabio.gos_sonarsource/Documents/GitHub/build-golc-v1.0.9.3"  # Replace with the path where the release files are located
+export TAG="XXXXXX" # Release TAG in GitHub
+export Release1="XXXXXX" # Release Number
+export buildpath="XXXXXXX"  # Replace with the path where the release files are located
 
 # Use GITHUB_TOKEN from environment (set before running: export GITHUB_TOKEN=ghp_...)
 if [ -z "$GITHUB_TOKEN" ]; then
