@@ -1,10 +1,14 @@
 #!/bin/bash
 
-export TAG="V1.0.9" # Release TAG in GitHub
-export Release1="v1.0.9" # Release Number
-export buildpath="XXXXXXX"  # Replace with the path where the release files are located
+export TAG="V1.0.9.3" # Release TAG in GitHub
+export Release1="v1.0.9.3" # Release Number
+export buildpath="/Users/fabio.gos_sonarsource/Documents/GitHub/build-golc-v1.0.9.3"  # Replace with the path where the release files are located
 
-GITHUB_TOKEN="XXXXXXXXX" # Replace with your token
+# Use GITHUB_TOKEN from environment (set before running: export GITHUB_TOKEN=ghp_...)
+if [ -z "$GITHUB_TOKEN" ]; then
+  echo "Error: GITHUB_TOKEN is not set. Set it with: export GITHUB_TOKEN=your_token"
+  exit 1
+fi
 GITHUB_ORG="SonarSource-Demos"    # Replace with your organization name
 GITHUB_REPO="sonar-golc"   # Replace with the name of your GitHub repository
 
@@ -23,7 +27,7 @@ create_release() {
   local body="$3"
 
   echo "Création d'une nouvelle release avec le tag '$tag'..."
-  curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+  curl -s -L -X POST -H "Authorization: token $GITHUB_TOKEN" \
     -H "Content-Type: application/json" \
     "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases" -d "{
       \"tag_name\": \"$tag\",
@@ -42,8 +46,8 @@ find_asset_id() {
   local asset_name="$1"
   local release_id="$2"
   
-  echo $(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-    "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO=/releases/$release_id/assets" | \
+  echo $(curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
+    "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/$release_id/assets" | \
     jq -r ".[] | select(.name == \"$asset_name\") | .id")
 }
 
@@ -77,7 +81,7 @@ update_release_description() {
   local new_body="$2"
 
   echo "Updated release description..."
-  curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
+  curl -s -L -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
     -H "Content-Type: application/json" \
     "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/$release_id" -d "{
       \"body\": \"$new_body\"
@@ -277,15 +281,14 @@ fi
 # Begin to push Releae in GitHub Repository
 
 # Retrieve information from existing release
-RELEASE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+RELEASE_RESPONSE=$(curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
   "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/tags/$TAG")
-
 
 if [[ $(echo "$RELEASE_RESPONSE" | jq -r '.message') == "Not Found" ]]; then
   echo "The release for tag '$TAG' does not exist. Creating release..."
   create_release "$TAG" "$TAG" "$RELEASE_DESCRIPTION"
   # Retrieve information from the newly created release
-  RELEASE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+  RELEASE_RESPONSE=$(curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
     "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/tags/$TAG")
 fi
 
@@ -293,11 +296,31 @@ fi
 UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | jq -r '.upload_url' | sed "s/{?name,label}//")
 RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
 
-# Description update
-update_release_description "$RELEASE_ID" "$RELEASE_DESCRIPTION"
+# If we still don't have a valid release (e.g. API returned redirect/error), try creating it
+if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ] || [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "null" ]; then
+  echo "Could not get release (tag may not exist). Creating release..."
+  create_release "$TAG" "$TAG" "$RELEASE_DESCRIPTION"
+  RELEASE_RESPONSE=$(curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
+    "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/tags/$TAG")
+  UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | jq -r '.upload_url' | sed "s/{?name,label}//")
+  RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
+fi
+
+# Only update description if we got a valid release ID
+if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+  update_release_description "$RELEASE_ID" "$RELEASE_DESCRIPTION"
+else
+  echo "Warning: Could not get release ID (API may have redirected). Skipping description update."
+fi
+
+# Bail out if we don't have a valid release (uploads would fail)
+if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "null" ] || [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+  echo "Error: Could not get release or upload URL. Check GITHUB_TOKEN and repo access."
+  exit 1
+fi
 
 # Retrieve the list of files from the release
-ASSETS_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+ASSETS_RESPONSE=$(curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
   "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/$RELEASE_ID/assets")
 
 
