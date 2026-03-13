@@ -1,6 +1,6 @@
 # Introduction
 
-![logo](https://github.com/SonarSource-Demos/sonar-golc/raw/main/imgs/Logob.png)
+![logo](https://github.com/sonar-solutions/sonar-golc/raw/main/imgs/Logob.png)
 
 **GoLC** is a clever abbreviation for "Go Line Counter," drawing inspiration from [CLOC](https://github.com/AlDanial/cloc "AlDanial") and various other line-counting tools in Go like [GCloc](https://github.com/JoaoDanielRufino/gcloc "João Daniel Rufino").
 

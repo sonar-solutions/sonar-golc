@@ -42,4 +42,4 @@ Example output:
 | YAML               | .yaml, .yml                              | #               |            |
 | …                  | (and more)                               |                 |            |
 
-❗️ To add a new language, add an entry to the Languages structure in [assets/languages.go](https://github.com/SonarSource-Demos/sonar-golc/blob/main/assets/languages.go) in the repository.
+❗️ To add a new language, add an entry to the Languages structure in [assets/languages.go](https://github.com/sonar-solutions/sonar-golc/blob/main/assets/languages.go) in the repository.

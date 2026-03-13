@@ -1,6 +1,6 @@
 # Wiki source files
 
-The markdown files in this folder are the **source for the [GitHub Wiki](https://github.com/SonarSource-Demos/sonar-golc/wiki)** of the sonar-golc repository.
+The markdown files in this folder are the **source for the [GitHub Wiki](https://github.com/sonar-solutions/sonar-golc/wiki)** of the sonar-golc repository.
 
 - **Home.md** → wiki home page (index).
 - Other `.md` files (e.g. **Introduction.md**, **Docker.md**) → one wiki page per file. GitHub shows them with the filename as the page title (e.g. `Web-UI`, `Supported-languages`).
@@ -33,7 +33,7 @@ GitHub’s Wiki is a separate git repo. You publish it by cloning that repo, cop
 2. **Clone the wiki repo** (use the wiki URL, not the main repo):
 
    ```bash
-   git clone https://github.com/SonarSource-Demos/sonar-golc.wiki.git
+   git clone https://github.com/sonar-solutions/sonar-golc.wiki.git
    cd sonar-golc.wiki
    ```
 
@@ -75,4 +75,4 @@ GitHub’s Wiki is a separate git repo. You publish it by cloning that repo, cop
 
    (If the wiki repo uses `master` as default branch, use `git push origin master`.)
 
-After the push, the [Wiki](https://github.com/SonarSource-Demos/sonar-golc/wiki) will show the new pages. **Home.md** becomes the wiki’s landing page.
+After the push, the [Wiki](https://github.com/sonar-solutions/sonar-golc/wiki) will show the new pages. **Home.md** becomes the wiki’s landing page.

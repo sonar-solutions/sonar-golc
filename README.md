@@ -1,4 +1,4 @@
-![Static Badge](https://img.shields.io/badge/Go-v1.22-blue:) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=sonar-solutions_sonar-golc&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=sonar-solutions_sonar-golc) [![Lines of Code](https://nautilus.sonarqube.org/api/project_badges/measure?project=SonarSource-Demos_sonar-golc&metric=ncloc&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=SonarSource-Demos_sonar-golc) [![Reliability Issues](https://nautilus.sonarqube.org/api/project_badges/measure?project=SonarSource-Demos_sonar-golc&metric=software_quality_reliability_issues&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=SonarSource-Demos_sonar-golc) [![Maintainability Rating](https://nautilus.sonarqube.org/api/project_badges/measure?project=SonarSource-Demos_sonar-golc&metric=software_quality_maintainability_rating&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=SonarSource-Demos_sonar-golc)
+![Static Badge](https://img.shields.io/badge/Go-v1.22-blue:) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=sonar-solutions_sonar-golc&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=sonar-solutions_sonar-golc) [![Lines of Code](https://nautilus.sonarqube.org/api/project_badges/measure?project=sonar-solutions_sonar-golc&metric=ncloc&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=sonar-solutions_sonar-golc) [![Reliability Issues](https://nautilus.sonarqube.org/api/project_badges/measure?project=sonar-solutions_sonar-golc&metric=software_quality_reliability_issues&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=sonar-solutions_sonar-golc) [![Maintainability Rating](https://nautilus.sonarqube.org/api/project_badges/measure?project=sonar-solutions_sonar-golc&metric=software_quality_maintainability_rating&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=sonar-solutions_sonar-golc)
 
 ## Introduction
 
@@ -12,7 +12,7 @@
 
 ## Installation
 
-Install from the [latest release](https://github.com/SonarSource-Demos/sonar-golc/releases/tag/V1.0.9) (e.g. download the binary for your OS). To run the latest build:
+Install from the [latest release](https://github.com/sonar-solutions/sonar-golc/releases/tag/V1.0.9) (e.g. download the binary for your OS). To run the latest build:
 
 ```bash
 cp config_sample.json config.json
@@ -21,7 +21,7 @@ cp config_sample.json config.json
 ./ResultsAll   # optional: start web UI to view results
 ```
 
-For **Docker** and **Docker Compose** (published image `timothe/sonar-golc`, env vars, mounts, port override), see the [Wiki → Docker](https://github.com/SonarSource-Demos/sonar-golc/wiki/Docker) section.
+For **Docker** and **Docker Compose** (published image `timothe/sonar-golc`, env vars, mounts, port override), see the [Wiki → Docker](https://github.com/sonar-solutions/sonar-golc/wiki/Docker) section.
 
 ## Prerequisites
 
@@ -50,7 +50,7 @@ Then run GoLC with the matching `-devops` flag. Supported values: `Github`, `Git
 
 If the **Results** directory already exists, GoLC will ask whether to delete it and optionally create a backup. Reports are written under `Results/`. To view them in a browser, run `./ResultsAll` and open the URL it prints (default port 8091).
 
-Full configuration for all platforms (GitHub Enterprise, GitLab, Bitbucket Cloud/DC, Azure, File mode), token details, and run examples are in the [Wiki → Usage](https://github.com/SonarSource-Demos/sonar-golc/wiki/Usage) section.
+Full configuration for all platforms (GitHub Enterprise, GitLab, Bitbucket Cloud/DC, Azure, File mode), token details, and run examples are in the [Wiki → Usage](https://github.com/sonar-solutions/sonar-golc/wiki/Usage) section.
 
 ## Optional Parameters
 
@@ -68,7 +68,7 @@ Full configuration for all platforms (GitHub Enterprise, GitLab, Bitbucket Cloud
 | **ExcludePaths** | Exclude directories (e.g. `["test1", "pkg/test2"]`). |
 | **Projects**, **Repos** | Limit scope to specific projects or repositories (BitBucket/Azure support **Projects**). |
 
-Details and ignore-file syntax are in the [Wiki → Usage](https://github.com/SonarSource-Demos/sonar-golc/wiki/Usage#optional-parameters) section.
+Details and ignore-file syntax are in the [Wiki → Usage](https://github.com/sonar-solutions/sonar-golc/wiki/Usage#optional-parameters) section.
 
 ## Supported Languages
 
@@ -107,12 +107,12 @@ GoLC uses the same language definitions as SonarQube. Run `golc -languages` to p
 | XML | .xml, .XML | — | <!-- --> |
 | YAML | .yaml, .yml | # | — |
 
-Plus others (JCL, JSON, Objective-C, PL/I, RPG, Scss, T-SQL, VB6, Visual Basic .NET, XHTML, etc.). Full list: `golc -languages`. To add a language, extend the Languages structure in [assets/languages.go](assets/languages.go). See [Wiki → Supported-languages](https://github.com/SonarSource-Demos/sonar-golc/wiki/Supported-languages) for details.
+Plus others (JCL, JSON, Objective-C, PL/I, RPG, Scss, T-SQL, VB6, Visual Basic .NET, XHTML, etc.). Full list: `golc -languages`. To add a language, extend the Languages structure in [assets/languages.go](assets/languages.go). See [Wiki → Supported-languages](https://github.com/sonar-solutions/sonar-golc/wiki/Supported-languages) for details.
 
 ## Future Features
 
-Planned work includes: finer exclusion patterns, more integrations, UI improvements, performance and security enhancements. Contributions are welcome — open an issue or a PR if you’d like to help. See [Wiki → Future-Features](https://github.com/SonarSource-Demos/sonar-golc/wiki/Future-Features) for the roadmap.
+Planned work includes: finer exclusion patterns, more integrations, UI improvements, performance and security enhancements. Contributions are welcome — open an issue or a PR if you’d like to help. See [Wiki → Future-Features](https://github.com/sonar-solutions/sonar-golc/wiki/Future-Features) for the roadmap.
 
 ---
 
-**[Full documentation in Wiki](https://github.com/SonarSource-Demos/sonar-golc/wiki)** — Installation, Docker, all platform configs, Reports, Web UI, Execution log, and more.
+**[Full documentation in Wiki](https://github.com/sonar-solutions/sonar-golc/wiki)** — Installation, Docker, all platform configs, Reports, Web UI, Execution log, and more.
