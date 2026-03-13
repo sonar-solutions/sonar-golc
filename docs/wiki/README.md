@@ -2,10 +2,11 @@
 
 The markdown files in this folder are the **source for the [GitHub Wiki](https://github.com/sonar-solutions/sonar-golc/wiki)** of the sonar-golc repository.
 
-- **Home.md** → wiki home page (index).
-- **_Sidebar.md** → custom sidebar; defines the order of pages (matches README order: Introduction, Installation, Docker, …).
-- **_Footer.md** → custom footer shown on every wiki page (e.g. “Made with 💜 from Solutions Engineering team of Sonar”).
-- Other `.md` files (e.g. **Introduction.md**, **Docker.md**) → one wiki page per file. GitHub shows them with the filename as the page title (e.g. `Web-UI`, `Supported-languages`).
+- **Home.md** → wiki home page (index); includes intro text and quick links.
+- **_Sidebar.md** → custom sidebar (logo + ordered links); “Installation” points to Docker (Binaries, Docker, Prerequisites) and Usage has sub-links.
+- **_Footer.md** → custom footer on every wiki page (e.g. “Made with 💜 from Solutions Engineering team of Sonar”).
+- **Docker.md** → Installation (executable binaries) + Docker + full Docker/Compose guide (single consolidated page).
+- Other `.md` files (**Prerequisites**, **Usage**, **Reports**, **Web-UI**, **Supported-languages**, **Execution-Log**, **Future-Features**) → one wiki page each.
 
 ---
 
@@ -58,17 +59,10 @@ GitHub’s Wiki is a separate git repo. You publish it by cloning that repo, cop
 
    ```bash
    # From sonar-golc repo root
-   cp docs/wiki/Home.md    /path/to/sonar-golc.wiki/
-   cp docs/wiki/Introduction.md /path/to/sonar-golc.wiki/
-   cp docs/wiki/Installation.md /path/to/sonar-golc.wiki/
-   cp docs/wiki/Docker.md       /path/to/sonar-golc.wiki/
-   cp docs/wiki/Prerequisites.md /path/to/sonar-golc.wiki/
-   cp docs/wiki/Usage.md        /path/to/sonar-golc.wiki/
-   cp docs/wiki/Reports.md     /path/to/sonar-golc.wiki/
-   cp docs/wiki/Web-UI.md      /path/to/sonar-golc.wiki/
-   cp docs/wiki/Supported-languages.md /path/to/sonar-golc.wiki/
-   cp docs/wiki/Execution-Log.md       /path/to/sonar-golc.wiki/
-   cp docs/wiki/Future-Features.md     /path/to/sonar-golc.wiki/
+   cp docs/wiki/Home.md docs/wiki/_Sidebar.md docs/wiki/_Footer.md /path/to/sonar-golc.wiki/
+   cp docs/wiki/Docker.md docs/wiki/Prerequisites.md docs/wiki/Usage.md /path/to/sonar-golc.wiki/
+   cp docs/wiki/Reports.md docs/wiki/Web-UI.md docs/wiki/Supported-languages.md /path/to/sonar-golc.wiki/
+   cp docs/wiki/Execution-Log.md docs/wiki/Future-Features.md /path/to/sonar-golc.wiki/
    ```
 
    Or, in one go (from repo root, with wiki clone as sibling):

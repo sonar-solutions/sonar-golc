@@ -21,7 +21,7 @@ cp config_sample.json config.json
 ./ResultsAll   # optional: start web UI to view results
 ```
 
-For **Docker** and **Docker Compose** (published image `timothe/sonar-golc`, env vars, mounts, port override), see the [Wiki → Docker](https://github.com/sonar-solutions/sonar-golc/wiki/Docker) section.
+For **Docker** and **Docker Compose** (published image `timothe/sonar-golc`, env vars, mounts, port override), see [Wiki → Docker](https://github.com/sonar-solutions/sonar-golc/wiki/Docker) (binaries and full Docker guide).
 
 ## Prerequisites
 
@@ -29,6 +29,8 @@ For **Docker** and **Docker Compose** (published image `timothe/sonar-golc`, env
   - **repo** scope (or equivalent: e.g. GitLab `read_repository`, `read_api`)
   - Permission to list and clone repositories
 - [Go](https://go.dev/) — only if you build from source.
+
+See [Wiki → Prerequisites](https://github.com/sonar-solutions/sonar-golc/wiki/Prerequisites) for per-platform token details.
 
 ## Usage
 
@@ -115,4 +117,4 @@ Planned work includes: finer exclusion patterns, more integrations, UI improveme
 
 ---
 
-**[Full documentation in Wiki](https://github.com/sonar-solutions/sonar-golc/wiki)** — Installation, Docker, all platform configs, Reports, Web UI, Execution log, and more.
+**[Full documentation in Wiki](https://github.com/sonar-solutions/sonar-golc/wiki)** — Home, Installation (binaries + Docker), Prerequisites, Usage, Reports, Web UI, Supported languages, Execution log, Future features.

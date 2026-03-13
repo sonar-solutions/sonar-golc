@@ -1,4 +1,8 @@
-# Docker
+# Executable binaries
+
+You can install from the stable release by clicking [here](https://github.com/sonar-solutions/sonar-golc/releases/tag/V1.0.9).
+
+# With Docker
 
 Use the published image **`timothe/sonar-golc`** from Docker Hub. Config is provided via a mounted directory; the web UI is served on port 8092. The DevOps platform to analyze is set with the **`GOLC_DEVOPS`** environment variable (e.g. `Github`, `Gitlab`, `BitBucket`, `File`).
 
