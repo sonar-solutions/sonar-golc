@@ -3,6 +3,8 @@
 The markdown files in this folder are the **source for the [GitHub Wiki](https://github.com/sonar-solutions/sonar-golc/wiki)** of the sonar-golc repository.
 
 - **Home.md** → wiki home page (index).
+- **_Sidebar.md** → custom sidebar; defines the order of pages (matches README order: Introduction, Installation, Docker, …).
+- **_Footer.md** → custom footer shown on every wiki page (e.g. “Made with 💜 from Solutions Engineering team of Sonar”).
 - Other `.md` files (e.g. **Introduction.md**, **Docker.md**) → one wiki page per file. GitHub shows them with the filename as the page title (e.g. `Web-UI`, `Supported-languages`).
 
 ---
