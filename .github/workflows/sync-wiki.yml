@@ -1,0 +1,41 @@
+# Sync docs/wiki/ to the GitHub Wiki repo when files change on main.
+# Requires repository secret: WIKI_SYNC_TOKEN (PAT with repo scope, or at least push to the wiki repo).
+name: Sync Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/wiki/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+
+      - name: Sync to wiki repository
+        env:
+          WIKI_SYNC_TOKEN: ${{ secrets.WIKI_SYNC_TOKEN }}
+        run: |
+          if [ -z "$WIKI_SYNC_TOKEN" ]; then
+            echo "::warning:: WIKI_SYNC_TOKEN not set. Skipping wiki sync. Add a PAT as repo secret to enable."
+            exit 0
+          fi
+          git clone "https://x-access-token:${WIKI_SYNC_TOKEN}@github.com/sonar-solutions/sonar-golc.wiki.git" wiki-repo
+          cp docs/wiki/*.md wiki-repo/
+          # Keep README out of the wiki (it's for maintainers in the main repo)
+          rm -f wiki-repo/README.md
+          cd wiki-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No wiki changes to push."
+          else
+            git commit -m "Sync wiki from main (docs/wiki)"
+            # Wiki repos may use main or master
+            git push origin HEAD:main 2>/dev/null || git push origin HEAD:master
+          fi

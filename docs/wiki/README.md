@@ -9,6 +9,20 @@ The markdown files in this folder are the **source for the [GitHub Wiki](https:/
 
 ---
 
+## Automatic sync (recommended)
+
+When changes under `docs/wiki/` are pushed to **main**, the workflow [`.github/workflows/sync-wiki.yml`](../../.github/workflows/sync-wiki.yml) can automatically push them to the GitHub Wiki repo so you don’t have to copy and push manually.
+
+**One-time setup:** Add a repository secret named **`WIKI_SYNC_TOKEN`**:
+
+1. Create a [Personal Access Token (PAT)](https://github.com/settings/tokens) with **repo** scope (or at least access to the wiki repo).
+2. In the repo: **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
+3. Name: `WIKI_SYNC_TOKEN`, Value: the PAT.
+
+After that, any push to **main** that touches `docs/wiki/**` will sync the wiki. If the secret is not set, the workflow skips the push and only logs a warning.
+
+---
+
 ## How to push everything (repo + native GitHub Wiki)
 
 ### 1. Push the repo changes (README, docs/wiki)
