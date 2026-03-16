@@ -11,6 +11,7 @@
 - [Usage](#usage)
   - [Environment Configuration](#environment-configuration)
   - [GitHub.com (Cloud) Basic Configuration](#githubcom-cloud-basic-configuration)
+  - [GitHub Personal Access Token (PAT) for organization analysis](#github-personal-access-token-pat-for-organization-analysis)
   - [GitHub Enterprise Server (on-premises) Basic Configuration](#github-enterprise-server-on-premises-basic-configuration)
   - [GitLab (Cloud and On-premises) Basic Configuration](#gitlab-cloud-and-on-premises-basic-configuration)
   - [Bitbucket Cloud Basic Configuration](#bitbucket-cloud-basic-configuration)
@@ -114,6 +115,13 @@ Specify the following parameters in the config.json file:
  ```
 
 Save the config.json file and [Run GoLC](#run-golc)
+
+### GitHub Personal Access Token (PAT) for organization analysis
+
+For organization-level analysis (`"Org": true`):
+
+- **Fine-grained PAT**: Set **Resource owner** to the **organization** (not your user). **Repository permissions**: Metadata: Read, Contents: Read. Grant access to all repos or to the repos you want to analyze. For each organization you analyze, use a separate PAT (one resource owner per token); add a separate platform entry in `config.json` per org and pass the matching `-devops` value.
+- **Classic PAT**: Use scopes **`repo`** and **`read:org`**. If the org uses SAML SSO, authorize the token for that organization in GitHub. One classic token can be authorized for multiple orgs.
 
 ## GitHub Enterprise Server (on-premises) Basic Configuration:
 
