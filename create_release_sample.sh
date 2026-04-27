@@ -9,14 +9,23 @@ if [ -z "$GITHUB_TOKEN" ]; then
   echo "Error: GITHUB_TOKEN is not set. Set it with: export GITHUB_TOKEN=your_token"
   exit 1
 fi
-GITHUB_ORG="SonarSource-Demos"    # Replace with your organization name
+GITHUB_ORG="sonar-solutions"    # Replace with your organization name
 GITHUB_REPO="sonar-golc"   # Replace with the name of your GitHub repository
 
 # Set a description for the release
-RELEASE_DESCRIPTION="Added support for multiple groups in GitLab\n\
-Fixed bug in GitLab nested groups\n\
-Added support for new languages and file types, including Dart, Rust, JSON, Shell, Docker, and VB6, with appropriate comment syntaxes and file extensions.\n\
-Deprecated Docker images\n"
+RELEASE_DESCRIPTION="v2.0 — Web UI + GitLab auto-discovery\n\
+\n\
+New features:\n\
+- Web UI (webui binary): browser-based launcher with live progress, pre-filled config, and View Results button\n\
+- GitLab: leave Organization blank to auto-discover all accessible groups\n\
+- GitLab: replaced manual subgroup BFS with include_subgroups API parameter\n\
+- ResultsAll: group name shown next to repository name for GitLab\n\
+- Improved progress bar accuracy during GitLab group identification\n\
+\n\
+Bug fixes:\n\
+- Fixed GitLab log noise and 0-project false positives\n\
+- Fixed project names truncated to first word in progress bar\n\
+- Fixed group resolution using URL slug instead of display name\n"
 
 CMD=`PWD`
 
@@ -106,9 +115,11 @@ mkdir -p $DEST
 # -trimpath removes file system paths from binaries for security/privacy
 if [ "${GOOS}" = "windows" ]; then
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
 else
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
 fi
 cp README.md  ${DEST}/
@@ -132,9 +143,11 @@ mkdir -p $DEST
 # -trimpath removes file system paths from binaries for security/privacy
 if [ "${GOOS}" = "windows" ]; then
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
 else
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
 fi
 cp README.md  ${DEST}/
@@ -158,9 +171,11 @@ mkdir -p $DEST
 # -trimpath removes file system paths from binaries for security/privacy
 if [ "${GOOS}" = "windows" ]; then
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
 else
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
 fi
 cp README.md  ${DEST}/
@@ -185,9 +200,11 @@ mkdir -p $DEST
 # -trimpath removes file system paths from binaries for security/privacy
 if [ "${GOOS}" = "windows" ]; then
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
 else
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
 fi
 cp README.md  ${DEST}/
@@ -211,9 +228,11 @@ mkdir -p $DEST
 # -trimpath removes file system paths from binaries for security/privacy
 if [ "${GOOS}" = "windows" ]; then
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
 else
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
 fi
 cp README.md  ${DEST}/
@@ -237,9 +256,11 @@ mkdir -p $DEST
 # -trimpath removes file system paths from binaries for security/privacy
 if [ "${GOOS}" = "windows" ]; then
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
 else
     go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
+    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
     go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
 fi
 cp README.md  ${DEST}/

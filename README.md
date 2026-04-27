@@ -6,6 +6,7 @@
 
 - [Introduction](#introduction)
 - [Installation](#installation)
+- [Creating a Release](#creating-a-release)
 - [Docker](#docker)
 - [Quick Start — Web UI](#quick-start--web-ui)
 - [Prerequisites](#prerequisites)
@@ -64,6 +65,72 @@ go build -tags golc -o golc golc.go
 go build -tags webui -o webui webui.go
 go build -tags resultsall -o ResultsAll ResultsAll.go
 ```
+
+---
+
+## Creating a Release
+
+The `create_release_sample.sh` script builds all binaries for every supported platform and uploads them as ZIP archives to a GitHub release.
+
+**Prerequisites:** `bash`, `go`, `zip`, `curl`, `jq`, `git`
+
+### 1. Configure the script
+
+Open `create_release_sample.sh` and set the three variables at the top:
+
+```bash
+export TAG="V2.0"           # Git tag that will be created on GitHub
+export Release1="2.0"       # Version number used in file names
+export buildpath="/tmp/golc-releases/"  # Local directory for build output
+```
+
+Also update these two variables if releasing to a different repository:
+
+```bash
+GITHUB_ORG="sonar-solutions"   # GitHub organization
+GITHUB_REPO="sonar-golc"       # Repository name
+```
+
+Update `RELEASE_DESCRIPTION` with the changelog for this release.
+
+### 2. Set your GitHub token
+
+The token must have `repo` scope and be authorized for the `sonar-solutions` organization (including SAML SSO if enforced):
+
+```bash
+export GITHUB_TOKEN=ghp_...
+```
+
+### 3. Run the script
+
+```bash
+chmod +x create_release_sample.sh
+./create_release_sample.sh
+```
+
+The script will:
+1. Build `golc`, `webui`, and `ResultsAll` for all 6 platform combinations (arm64/amd64 × macOS/Linux/Windows)
+2. Package each combination into a ZIP archive containing the binaries, README, config sample, and assets
+3. Create `source.zip` and `source.tar.gz` from the current git HEAD
+4. Create (or update) the GitHub release at the specified tag and upload all archives
+
+### Release archive contents
+
+Each platform ZIP (e.g. `golc_2.0_darwin_arm64.zip`) contains:
+
+```
+golc_2.0_darwin_arm64/
+├── golc           # Core analysis engine
+├── webui          # Browser-based launcher
+├── ResultsAll     # Results dashboard
+├── config.json    # Pre-filled from config_sample.json
+├── README.md
+├── LICENSE
+├── imgs/
+└── dist/
+```
+
+> On Windows, binaries are named `golc.exe`, `webui.exe`, and `ResultsAll.exe`.
 
 ---
 
