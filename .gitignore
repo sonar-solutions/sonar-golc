@@ -1,5 +1,6 @@
 # Build artifacts
 golc
+webui
 ResultsAll
 ResultsAll-*
 test-*

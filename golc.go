@@ -467,12 +467,13 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 	excludeExtensions = convertToSliceString(platformConfig["ExtExclusion"].([]interface{}))
 	excludePath := getExcludePaths(platformConfig["ExcludePaths"])
 
+	baseapi := extractDomain(platformConfig["Baseapi"].(string))
 	params := RepoParams{
 		ProjectKey: p.Org,
 		Namespace:  "",
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
-		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), platformConfig["Baseapi"].(string), p.Org, p.RepoSlug),
+		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), baseapi, p.Org, p.RepoSlug),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }

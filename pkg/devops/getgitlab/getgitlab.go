@@ -42,17 +42,15 @@ type AnalyzeProject struct {
 type ExclusionRepos map[string]bool
 
 const PrefixMsg = "Get Project(s)..."
-const MessageErro1 = "/\n❌ Failed to list projects for group %s: %v\n"
-const MessageError2 = "\n ❌ Failed to get project %s: %v\n"
-const MessageError2b = "\n ❌ Failed to get project %s in any configured group\n"
-const MessageError3 = "\n❗️ Project %s is in exclude file \n"
-const MessageError4 = "\n❗️ Project %s is empty \n"
-const MessageError5 = "\n❗️ Project %s is archived \n"
-const MessageError6 = "\n❗️ Project %s is in exclude file or empty or archived \n"
-const Message1 = "\t ✅ The number of %s found is: %d\n"
-const Message2 = "\t   Analysis top branch(es) in project <%s> ..."
-const Message3 = "\r\t\t\t\t ✅ %d Project: %s - Number of branches: %d - largest Branch: %s"
-const Message4 = "Project(s)"
+const MessageErro1 = "❌ Failed to list projects for group %s: %v"
+const MessageError2 = "❌ Failed to get project %s: %v"
+const MessageError2b = "❌ Failed to get project %s in any configured group"
+const MessageError3 = "❗️ Project %s is in exclude file"
+const MessageError4 = "❗️ Project %s is empty"
+const MessageError5 = "❗️ Project %s is archived"
+const MessageError6 = "❗️ Project %s is in exclude file or empty or archived"
+const Message2 = "Analysis top branch(es) in project <%s> ..."
+const Message3 = "✅ %d Project: %s - Number of branches: %d - largest Branch: %s"
 
 const (
 	perPage = 100
@@ -99,31 +97,20 @@ func getCommitCount(client *gitlab.Client, projectID int, branchName string, sin
 }
 
 // Function to Retrieves all projects in the main group as well as those in its subgroups.
+// Uses the GitLab API's include_subgroups parameter to avoid manual subgroup traversal,
+// which requires separate ListSubGroups permissions that may not be available for all roles.
 func getAllGroupProjects(client *gitlab.Client, groupName string) ([]*gitlab.Project, error) {
 	group, err := getGroup(client, groupName)
 	if err != nil {
 		return nil, err
 	}
-
-	projects, err := getProjectsInGroup(client, group)
+	loggers := utils.NewLogger()
+	loggers.Infof("🔍 Group <%s> → resolved to ID %d (full path: %s)", groupName, group.ID, group.FullPath)
+	projects, err := listGroupProjectsWithSubgroups(client, group.ID)
 	if err != nil {
 		return nil, err
 	}
-
-	// Retrieve all descendant subgroups (recursively), not just direct children
-	subgroups, err := getAllSubgroupsRecursive(client, group)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, subgroup := range subgroups {
-		subgroupProjects, err := getProjectsInGroup(client, subgroup)
-		if err != nil {
-			return nil, err
-		}
-		projects = append(projects, subgroupProjects...)
-	}
-
+	loggers.Infof("🔍 Group <%s>: %d project(s) returned by API (before filtering)", groupName, len(projects))
 	return projects, nil
 }
 
@@ -133,93 +120,34 @@ func getGroup(client *gitlab.Client, groupName string) (*gitlab.Group, error) {
 	return group, err
 }
 
-// Function to Retrieves the list of subgroups of a given group.
-func getSubgroups(client *gitlab.Client, group *gitlab.Group) ([]*gitlab.Group, error) {
-	subgroups, _, err := client.Groups.ListSubGroups(group.ID, nil)
-	return subgroups, err
-}
-
-// Function to Retrieves direct subgroups of a given group with pagination.
-func getDirectSubgroups(client *gitlab.Client, groupID int) ([]*gitlab.Group, error) {
-	var all []*gitlab.Group
-	page := 1
-	for {
-		opts := &gitlab.ListSubGroupsOptions{
-			ListOptions: gitlab.ListOptions{
-				Page:    page,
-				PerPage: perPage,
-			},
-		}
-		subgroups, resp, err := client.Groups.ListSubGroups(groupID, opts)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, subgroups...)
-		if resp.CurrentPage >= resp.TotalPages {
-			break
-		}
-		page++
-	}
-	return all, nil
-}
-
-// Function to Retrieves all descendant subgroups (recursive) of a given group.
-func getAllSubgroupsRecursive(client *gitlab.Client, root *gitlab.Group) ([]*gitlab.Group, error) {
-	var all []*gitlab.Group
-	visited := make(map[int]bool)
-	queue := []*gitlab.Group{root}
-
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-
-		subgroups, err := getDirectSubgroups(client, current.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, sg := range subgroups {
-			if visited[sg.ID] {
-				continue
-			}
-			visited[sg.ID] = true
-			all = append(all, sg)
-			queue = append(queue, sg)
-		}
-	}
-
-	return all, nil
-}
-
-// Function to Retrieves all projects in a given group.
-func getProjectsInGroup(client *gitlab.Client, group *gitlab.Group) ([]*gitlab.Project, error) {
+// listGroupProjectsWithSubgroups retrieves all projects in a group and all its subgroups
+// using the include_subgroups API parameter (single paginated request chain, no separate
+// subgroup enumeration needed).
+func listGroupProjectsWithSubgroups(client *gitlab.Client, groupID int) ([]*gitlab.Project, error) {
 	var projects []*gitlab.Project
 	page := 1
+	includeSubGroups := true
 	for {
 		opts := &gitlab.ListGroupProjectsOptions{
 			ListOptions: gitlab.ListOptions{
 				Page:    page,
 				PerPage: perPage,
 			},
+			IncludeSubGroups: &includeSubGroups,
 		}
-
-		projs, resp, err := client.Groups.ListGroupProjects(group.ID, opts)
+		projs, resp, err := client.Groups.ListGroupProjects(groupID, opts)
 		if err != nil {
 			return nil, err
 		}
-
 		projects = append(projects, projs...)
-
-		// Vérifier si c'est la dernière page
 		if resp.CurrentPage >= resp.TotalPages {
 			break
 		}
-
-		// Passer à la page suivante
 		page++
 	}
 	return projects, nil
 }
+
 
 // Function to Get Branch Size
 func getBranchSize(client *gitlab.Client, projectID int, branchName string) int {
@@ -411,17 +339,21 @@ func processProject(analyzeProject AnalyzeProject, cpt int, spin1 *spinner.Spinn
 }
 
 func isProjectExcludedOrInvalid(project *gitlab.Project, exclusionList ExclusionRepos, emptyRepos, archivedRepos *int) (bool, bool, bool) {
+	loggers := utils.NewLogger()
 	if isExcluded(project.PathWithNamespace, exclusionList) {
+		loggers.Infof("⏭️  Skipping <%s>: in exclusion list", project.Name)
 		return true, false, false
 	}
 
 	if project.EmptyRepo {
 		*emptyRepos++
+		loggers.Infof("⏭️  Skipping <%s>: empty repository (no commits)", project.Name)
 		return false, true, false
 	}
 
 	if project.Archived {
 		*archivedRepos++
+		loggers.Infof("⏭️  Skipping <%s>: archived", project.Name)
 		return false, false, true
 	}
 
@@ -609,6 +541,7 @@ type nonDefaultCtx struct {
 func nonDefaultAllProjectsAllBranches(ctx nonDefaultCtx) ([]ProjectBranch, int) {
 	return analyzeOrgsWithProjects(ctx, func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 		valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
+		utils.NewLogger().Infof("✅ Group <%s>: %d project(s) to analyze", org, len(valid))
 		return analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
 	})
 }
@@ -669,6 +602,7 @@ func nonDefaultAllProjectsSpecificBranch(ctx nonDefaultCtx) ([]ProjectBranch, in
 	branch := ctx.config["Branch"].(string)
 	return analyzeOrgsWithProjects(ctx, func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 		valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
+		utils.NewLogger().Infof("✅ Group <%s>: %d project(s) to analyze", org, len(valid))
 		return analyzeSpecificBranchForProjects(ctx.client, valid, org, branch, spin1)
 	})
 }
@@ -691,20 +625,61 @@ func analyzeOrgsWithProjects(ctx nonDefaultCtx, perOrg func(org string, projects
 	return projectBranches, totalBranches
 }
 
+// listAllAccessibleGroups returns the full paths of every top-level GitLab group
+// the authenticated user is a member of. Using TopLevelOnly avoids double-counting
+// subgroup projects (include_subgroups=true already covers them).
+func listAllAccessibleGroups(client *gitlab.Client) ([]string, error) {
+	var paths []string
+	page := 1
+	topLevelOnly := true
+	for {
+		opts := &gitlab.ListGroupsOptions{
+			ListOptions:  gitlab.ListOptions{Page: page, PerPage: perPage},
+			TopLevelOnly: &topLevelOnly,
+		}
+		groups, resp, err := client.Groups.ListGroups(opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, g := range groups {
+			paths = append(paths, g.FullPath)
+		}
+		if resp.CurrentPage >= resp.TotalPages {
+			break
+		}
+		page++
+	}
+	return paths, nil
+}
+
+// normalizeGitLabGroup converts a display name to a GitLab-compatible path
+// by trimming whitespace and replacing spaces with hyphens.
+// GitLab paths never contain spaces; users sometimes type the display name.
+func normalizeGitLabGroup(s string) string {
+	return strings.ReplaceAll(strings.TrimSpace(s), " ", "-")
+}
+
 // getOrganizationsFromConfig returns the list of GitLab groups to analyze.
 // Supports:
 // - Organizations: array or mixed []interface{}
 // - Organization: string (comma-separated) or array-like
 func getOrganizationsFromConfig(platformConfig map[string]interface{}) []string {
+	normalize := func(orgs []string) []string {
+		out := make([]string, len(orgs))
+		for i, o := range orgs {
+			out[i] = normalizeGitLabGroup(o)
+		}
+		return out
+	}
 	// Prefer explicit Organizations if available
 	if raw, ok := platformConfig["Organizations"]; ok {
 		if orgs := toStringSlice(raw); len(orgs) > 0 {
-			return orgs
+			return normalize(orgs)
 		}
 	}
 	// Fallback to Organization (string csv or array-like)
 	if raw, ok := platformConfig["Organization"]; ok {
-		return toStringSlice(raw)
+		return normalize(toStringSlice(raw))
 	}
 	return nil
 }
@@ -737,9 +712,11 @@ func handleDefaultBranchCase(ctx defaultCtx) ([]ProjectBranch, int) {
 			}
 			ctx.spin.Stop()
 			spin1 := newSpin1()
-			loggers.Infof(Message1, Message4, len(projects))
 
 			valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
+			// Always log after filtering — gives accurate progress total and makes
+			// 0-project groups (all empty/archived) visible for debugging.
+			loggers.Infof("✅ Group <%s>: %d project(s) to analyze", org, len(valid))
 			branches, totalB := analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
 			projectBranches = append(projectBranches, branches...)
 			totalBranches += totalB
@@ -790,7 +767,8 @@ func GetRepoGitLabList(platformConfig map[string]interface{}, exclusionfile stri
 	// Calculating the period
 	until := time.Now()
 	since := until.AddDate(0, int(platformConfig["Period"].(float64)), 0)
-	ApiURL := platformConfig["Url"].(string) + platformConfig["Baseapi"].(string) + platformConfig["Apiver"].(string)
+	baseURL := strings.TrimRight(platformConfig["Url"].(string), "/") + "/"
+	ApiURL := baseURL + platformConfig["Baseapi"].(string) + platformConfig["Apiver"].(string)
 
 	loggers.Infof("🔎 Analysis of devops platform objects ...\n")
 
@@ -821,8 +799,18 @@ func GetRepoGitLabList(platformConfig map[string]interface{}, exclusionfile stri
 
 	orgs := getOrganizationsFromConfig(platformConfig)
 	if len(orgs) == 0 {
-		spin.Stop()
-		loggers.Fatalf("❌ No GitLab group configured. Please set 'Organization' or 'Organizations'.")
+		loggers.Infof("ℹ️  No group configured — discovering all accessible top-level groups...")
+		discovered, err := listAllAccessibleGroups(gitlabClient)
+		if err != nil {
+			spin.Stop()
+			loggers.Fatalf("❌ Failed to list accessible groups: %v", err)
+		}
+		if len(discovered) == 0 {
+			spin.Stop()
+			loggers.Fatalf("❌ No accessible GitLab groups found for this token.")
+		}
+		loggers.Infof("✅ Found %d accessible group(s): %s", len(discovered), strings.Join(discovered, ", "))
+		orgs = discovered
 	}
 
 	// Delegate to specialized handlers to keep complexity low
@@ -901,15 +889,13 @@ func getProjectsAndAnalyze(gitlabClient *gitlab.Client, organization string, spi
 	projects, err := getAllGroupProjects(gitlabClient, organization)
 	if err != nil {
 		spin.Stop()
-		fmt.Println("AAAAAA")
-		loggers.Fatalf(MessageErro1, organization, err)
+		loggers.Errorf(MessageErro1, organization, err)
+		return nil, cpt, nil, err
 	}
 
 	spin.Stop()
 	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin1.Color("green", "bold")
-
-	loggers.Infof(Message1, Message4, len(projects))
 
 	return projects, cpt, spin1, nil
 }

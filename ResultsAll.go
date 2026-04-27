@@ -21,7 +21,7 @@ import (
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
-const defaultPort = 8092
+const defaultPort = 8090
 
 // getPort returns the server port from PORT env, or defaultPort.
 func getPort() int {
@@ -81,15 +81,17 @@ type Globalinfo struct {
 }
 
 type LanguageData struct {
-	Language   string  `json:"Language"`
-	CodeLines  int     `json:"CodeLines"`
-	Percentage float64 `json:"Percentage"`
-	CodeLinesF string  `json:"CodeLinesF"`
+	Language    string  `json:"Language"`
+	CodeLines   int     `json:"CodeLines"`
+	Percentage  float64 `json:"Percentage"`
+	CodeLinesF  string  `json:"CodeLinesF"`
+	RelativePct float64 `json:"-"`
 }
 
 type RepositoryData struct {
 	Number      int    `json:"Number"`
 	Repository  string `json:"Repository"`
+	Org         string `json:"Org"`
 	Branch      string `json:"Branch"`
 	Lines       int    `json:"Lines"`
 	BlankLines  int    `json:"BlankLines"`
@@ -168,6 +170,7 @@ type PageData struct {
 	GlobalReport     Globalinfo
 	Repositories     []RepositoryData
 	NoteLOCExcluded  string // Note that JSON is excluded from total (SonarQube behavior)
+	Platform         string
 }
 
 var globalInfo Globalinfo       // Variable pour stocker les infos globales
@@ -286,6 +289,7 @@ func getRepositoryData() ([]RepositoryData, error) {
 		repo := RepositoryData{
 			Number:      i,
 			Repository:  branch.RepoSlug,
+			Org:         branch.Org,
 			Branch:      branch.MainBranch,
 			Lines:       reportData.TotalLines,
 			BlankLines:  reportData.TotalBlankLines,
@@ -784,6 +788,18 @@ func loadApplicationData() (PageData, error) {
 		}
 	}
 
+	// Sort languages by total LOC descending for visualization
+	sort.Slice(languages, func(i, j int) bool {
+		return languages[i].CodeLines > languages[j].CodeLines
+	})
+	// Compute relative bar width (top language = 100%)
+	if len(languages) > 0 && languages[0].CodeLines > 0 {
+		maxLOC := float64(languages[0].CodeLines)
+		for i := range languages {
+			languages[i].RelativePct = float64(languages[i].CodeLines) / maxLOC * 100
+		}
+	}
+
 	data0, err := os.ReadFile(globalReportFile)
 	if err != nil {
 		return pageData, fmt.Errorf("error reading GlobalReport.json file: %v", err)
@@ -801,11 +817,14 @@ func loadApplicationData() (PageData, error) {
 		repositoryData = []RepositoryData{} // Use empty slice if error
 	}
 
+	detectedPlatform, _, _ := detectPlatformAndReadAnalysis()
+
 	pageData = PageData{
 		Languages:       languages,
 		GlobalReport:    globalInfo,
 		Repositories:    repositoryData,
 		NoteLOCExcluded: utils.NoteExcludedFromTotal,
+		Platform:        detectedPlatform,
 	}
 
 	return pageData, nil
@@ -830,6 +849,27 @@ func setupHTTPHandlers(pageData PageData) {
 			return
 		}
 		http.Error(w, "❌ Method not allowed", http.StatusMethodNotAllowed)
+	})
+
+	http.HandleFunc("/reports/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/reports/")
+		var filePath string
+		switch name {
+		case "global-report.pdf":
+			filePath = "Results/GlobalReport.pdf"
+		case "repository-summary.pdf":
+			filePath = "Results/byfile-report/pdf-report/repository_summary.pdf"
+		case "repository-summary.csv":
+			filePath = "Results/byfile-report/csv-report/repository_summary.csv"
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			http.Error(w, "Report not yet available", http.StatusNotFound)
+			return
+		}
+		http.ServeFile(w, r, filePath)
 	})
 
 	// API Endpoint for Language Data
@@ -1093,15 +1133,24 @@ const htmlTemplate = `
       .repository-table-container .card-body {
           padding: 0;
       }
-      
+
       .repository-table-container .table-responsive {
           margin: 0;
       }
-      
+
       .repository-table-container .table {
           margin-top: 0;
           margin-bottom: 0;
       }
+      /* Language bar chart */
+      .lang-bar-row { margin-bottom: 0.6rem; }
+      .lang-bar-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px; gap:4px; }
+      .lang-bar-name { font-weight:600; font-size:0.85rem; max-width:56%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .lang-bar-meta { font-size:0.75rem; opacity:0.85; white-space:nowrap; text-align:right; }
+      .lang-bar-track { background:rgba(255,255,255,.18); border-radius:3px; height:5px; overflow:hidden; }
+      .lang-bar-fill { background:rgba(255,255,255,.85); border-radius:3px; height:5px; transition:width .4s ease; }
+      /* Reports dropdown — sharp rectangular corners */
+      .dropdown-menu { border-radius: 4px !important; }
     </style>
     <script src="/dist/vendors/chartjs/chart.js"></script>
     <script src="/dist/vendors/bootstrap/js/bootstrap.bundle.min.js"></script>
@@ -1113,7 +1162,18 @@ const htmlTemplate = `
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><i class="fa-solid fa-bars text-white fs-3"></i></button>
           <div class="collapse navbar-collapse" id="navbarSupportedContent">
             <ul class="navbar-nav ms-auto mt-2 mt-lg-0">
-              <li class="nav-item"><a class="nav-link active" aria-current="page" title="Download Reports" href="/download" target="downloads">Reports</a></li>
+              <li class="nav-item dropdown">
+                <a class="nav-link dropdown-toggle" href="#" id="reportsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                  <i class="fas fa-file-pdf me-1"></i>Reports
+                </a>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="reportsDropdown">
+                  <li><a class="dropdown-item" href="/reports/global-report.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF</a></li>
+                  <li><a class="dropdown-item" href="/reports/repository-summary.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF</a></li>
+                  <li><a class="dropdown-item" href="/reports/repository-summary.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV</a></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item" href="/download"><i class="fas fa-file-archive me-2"></i>Download All ZIP</a></li>
+                </ul>
+              </li>
               <li class="nav-item"><a class="nav-link" aria-current="page" title="API REF" href="#" id="apiButton">API</a></li>
             </ul>
           </div>
@@ -1155,18 +1215,23 @@ const htmlTemplate = `
             </div>
             <div class="col-lg-6 mt-3 mt-lg-0">
                               <div class="card text-white bg-primary mb-4" style="max-width: 21rem;">
-                <h5 class="card-header text-white" style="padding: 1rem 1rem;"><i class="fas fa-code"></i> Languages</h5>
-                <div class="card-body text-white" style="padding: 1rem 1rem;">
-                    <ul>
+                <h5 class="card-header text-white" style="padding: 0.75rem 1rem;">
+                  <i class="fas fa-code"></i> Languages
+                  <small class="text-white-50" style="font-size:0.7rem;display:block;font-weight:400;margin-top:2px;">sorted by lines of code &darr;</small>
+                </h5>
+                <div class="card-body text-white" style="padding: 0.75rem 1rem; max-height:440px; overflow-y:auto;">
                     {{range .Languages}}
-                        {{if eq .Language "JSON"}}
-                        <li>{{.Language}}: (excluded from total) - {{.CodeLinesF}} LOC</li>
-                        {{else}}
-                        <li>{{.Language}}: {{printf "%.2f" .Percentage}}% - {{.CodeLinesF}} LOC</li>
-                        {{end}}
+                    <div class="lang-bar-row">
+                      <div class="lang-bar-header">
+                        <span class="lang-bar-name" title="{{.Language}}">{{.Language}}{{if eq .Language "JSON"}}&nbsp;<span style="font-size:0.68rem;opacity:0.65;font-weight:400;">(excl.)</span>{{end}}</span>
+                        <span class="lang-bar-meta">{{if ne .Language "JSON"}}{{printf "%.1f" .Percentage}}% · {{end}}{{.CodeLinesF}} LOC</span>
+                      </div>
+                      <div class="lang-bar-track">
+                        <div class="lang-bar-fill" style="width:{{printf "%.1f" .RelativePct}}%;"></div>
+                      </div>
+                    </div>
                     {{end}}
-                    </ul>
-                </div>    
+                </div>
               </div>
               <div class="text-center mt-3">
                 <a href="#repository-section" class="btn btn-outline-light btn-lg">
@@ -1217,10 +1282,11 @@ const htmlTemplate = `
                         </tr>
                       </thead>
                       <tbody id="repositoryTableBody">
+                        {{$platform := .Platform}}
                         {{range .Repositories}}
-                        <tr data-repository="{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
+                        <tr data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
                           <td>{{.Number}}</td>
-                          <td><a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{.Repository}}</a></td>
+                          <td><a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{if and (eq $platform "gitlab") .Org}}<span class="text-muted" style="font-size:0.85em;">{{.Org}}&thinsp;/&thinsp;</span>{{end}}{{.Repository}}</a></td>
                           <td>{{.Branch}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>
@@ -1486,7 +1552,6 @@ const htmlTemplate = `
                 sortTable(header.dataset.column);
             });
         });
-        
 
     </script>
   </body>
@@ -1592,7 +1657,6 @@ const repositoryDetailTemplate = `
           <div class="collapse navbar-collapse" id="navbarSupportedContent">
             <ul class="navbar-nav ms-auto mt-2 mt-lg-0">
               <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
-              <li class="nav-item"><a class="nav-link" href="/download" target="downloads">Reports</a></li>
               <li class="nav-item"><a class="nav-link" href="#" id="apiButton">API</a></li>
             </ul>
           </div>
