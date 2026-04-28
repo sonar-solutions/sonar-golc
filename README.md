@@ -40,9 +40,16 @@ Each archive contains two binaries:
 | `webui` / `webui.exe` | Browser-based launcher — start here |
 | `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `webui`) |
 
-Then run
+Then run it for your operating system:
+
+**Mac / Linux**
 ```bash
-./webui or ./webui.exe
+./webui
+```
+
+**Windows** (Command Prompt or PowerShell)
+```bat
+webui.exe
 ```
 
 Open the URL printed in the terminal (default: `http://localhost:8091`), then:
