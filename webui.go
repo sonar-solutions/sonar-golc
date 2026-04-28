@@ -340,43 +340,46 @@ func applyIdentifyPhaseUpdate(clean string, st *AppState, ev *ProgressEvent) {
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Identifying repositories..."
+	case reTotal.MatchString(clean):
+		// All platforms: definitive total once discovery is complete.
+		if n, ok := parseIntMatch(reTotal, clean, 1); ok {
+			st.total = n
+		}
+		ev.Type = "progress"
+		ev.Message = normalizeLogMessage(clean)
+		ev.Label = fmt.Sprintf(labelIdentifyingFmt, st.current, st.total)
 	case rePerProjectRepoCount.MatchString(clean):
 		applyPerProjectRepoCount(clean, st, ev)
 	case reGitLabGroup.MatchString(clean):
 		applyGitLabGroupCount(clean, st, ev)
 	case reRepoDiscover.MatchString(clean):
 		applyRepoDiscovery(clean, st, ev)
+	case strings.Contains(clean, "largest repo") || strings.Contains(clean, "largest Repository"):
+		ev.Type = "progress"
+		ev.Message = normalizeLogMessage(clean)
+		ev.Label = "Largest branch identified"
 	}
 }
 
 // applyProgressCase dispatches the log line to the appropriate phase handler.
+// IMPORTANT: phase-transition cases must come BEFORE the catch-all
+// "case st.phase == PhaseIdentify" so that lines arriving while in
+// PhaseIdentify (e.g. "Analysis of Repos") can still trigger a transition.
 func applyProgressCase(clean string, st *AppState, ev *ProgressEvent) {
 	switch {
+	// ── Phase entry / transition — checked first regardless of current phase ──
 	case strings.Contains(clean, "Analysis of devops platform objects") ||
 		strings.Contains(clean, "Analysis of Directories"):
 		st.phase = PhaseIdentify
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Identifying repositories..."
-	case st.phase == PhaseIdentify:
-		applyIdentifyPhaseUpdate(clean, st, ev)
-	case reTotal.MatchString(clean):
-		if n, ok := parseIntMatch(reTotal, clean, 1); ok {
-			st.total = n
-		}
-		ev.Phase = st.phase
-	case strings.Contains(clean, "largest repo") || strings.Contains(clean, "largest Repository"):
-		ev.Type = "progress"
-		ev.Message = normalizeLogMessage(clean)
-		ev.Label = "Largest branch identified"
 	case strings.Contains(clean, "Analysis of Repos"):
 		st.phase = PhaseAnalyzing
 		st.current = 0
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Counting lines of code..."
-	case reAnalyzed.MatchString(clean):
-		applyRepoAnalyzed(clean, st, ev)
 	case strings.Contains(clean, "Analyse Report"):
 		st.phase = PhaseReporting
 		ev.Type = "progress"
@@ -386,6 +389,11 @@ func applyProgressCase(clean string, st *AppState, ev *ProgressEvent) {
 		st.phase = PhaseComplete
 		ev.Type = "complete"
 		ev.Message = normalizeLogMessage(clean)
+	// ── Within-phase updates — must come after all transition cases ──
+	case st.phase == PhaseIdentify:
+		applyIdentifyPhaseUpdate(clean, st, ev)
+	case reAnalyzed.MatchString(clean):
+		applyRepoAnalyzed(clean, st, ev)
 	}
 }
 
