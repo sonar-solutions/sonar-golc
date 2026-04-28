@@ -16,7 +16,7 @@ GITHUB_REPO="sonar-golc"   # Replace with the name of your GitHub repository
 RELEASE_DESCRIPTION="v2.0 — Web UI + GitLab auto-discovery\n\
 \n\
 New features:\n\
-- Web UI (webui binary): browser-based launcher with live progress, pre-filled config, and View Results button\n\
+- webui binary: browser-based launcher with live progress, pre-filled config, and View Results button\n\
 - GitLab: leave Organization blank to auto-discover all accessible groups\n\
 - GitLab: replaced manual subgroup BFS with include_subgroups API parameter\n\
 - ResultsAll: group name shown next to repository name for GitLab\n\
@@ -54,7 +54,7 @@ create_release() {
 find_asset_id() {
   local asset_name="$1"
   local release_id="$2"
-  
+
   echo $(curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
     "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/$release_id/assets" | \
     jq -r ".[] | select(.name == \"$asset_name\") | .id")
@@ -95,182 +95,47 @@ update_release_description() {
     "https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/$release_id" -d "{
       \"body\": \"$new_body\"
     }"
-  
+
   echo "Description updated."
 }
 
 #----------------------- Begin Build --------------------------------#
 
-# Buil arm64 Darwin
+build_platform() {
+  local GOARCH="$1"
+  local GOOS="$2"
 
-export GOARCH=arm64
-export GOOS=darwin
-export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
-export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
+  export GOARCH GOOS
+  export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
+  export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
 
-mkdir -p $DEST
+  mkdir -p "$DEST"
 
+  # -trimpath removes file system paths from binaries for security/privacy
+  if [ "${GOOS}" = "windows" ]; then
+      go build -trimpath -tags=webui -ldflags "-X main.version=${TAG}" -o "${DEST}/webui.exe" webui.go golc.go
+      go build -trimpath -tags=resultsall -o "${DEST}/ResultsAll.exe" ResultsAll.go
+  else
+      go build -trimpath -tags=webui -ldflags "-X main.version=${TAG}" -o "${DEST}/webui" webui.go golc.go
+      go build -trimpath -tags=resultsall -o "${DEST}/ResultsAll" ResultsAll.go
+  fi
 
-# Build with proper tags and handle Windows .exe extension
-# -trimpath removes file system paths from binaries for security/privacy
-if [ "${GOOS}" = "windows" ]; then
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
-else
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
-fi
-cp README.md  ${DEST}/
-cp LICENSE ${DEST}/
-cp -r imgs ${DEST}/
-cp -r dist ${DEST}/
-cp config_sample.json ${DEST}/config.json
-cd ${buildpath}${Release1}/${GOARCH}/${GOOS}/
-zip -r ${FILE_DEST}.zip ${FILE_DEST}
-cd $CMD
+  cp README.md  "${DEST}/"
+  cp LICENSE    "${DEST}/"
+  cp -r imgs    "${DEST}/"
+  cp config_sample.json "${DEST}/config.json"
 
-# Buil arm64 Linux
+  cd "${buildpath}${Release1}/${GOARCH}/${GOOS}/"
+  zip -r "${FILE_DEST}.zip" "${FILE_DEST}"
+  cd "$CMD"
+}
 
-export GOOS=linux
-export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
-export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
-
-mkdir -p $DEST
-
-# Build with proper tags and handle Windows .exe extension
-# -trimpath removes file system paths from binaries for security/privacy
-if [ "${GOOS}" = "windows" ]; then
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
-else
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
-fi
-cp README.md  ${DEST}/
-cp LICENSE ${DEST}/
-cp -r imgs ${DEST}/
-cp -r dist ${DEST}/
-cp config_sample.json ${DEST}/config.json
-cd ${buildpath}${Release1}/${GOARCH}/${GOOS}/
-zip -r ${FILE_DEST}.zip ${FILE_DEST}
-cd $CMD
-
-# Buil arm64 Windows
-
-export GOOS=windows
-export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
-export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
-
-mkdir -p $DEST
-
-# Build with proper tags and handle Windows .exe extension
-# -trimpath removes file system paths from binaries for security/privacy
-if [ "${GOOS}" = "windows" ]; then
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
-else
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
-fi
-cp README.md  ${DEST}/
-cp LICENSE ${DEST}/
-cp -r imgs ${DEST}/
-cp -r dist ${DEST}/
-cp config_sample.json ${DEST}/config.json
-cd ${buildpath}${Release1}/${GOARCH}/${GOOS}/
-zip -r ${FILE_DEST}.zip ${FILE_DEST}
-cd $CMD
-
-# Buil amd64 Darwin
-
-export GOARCH=amd64
-export GOOS=darwin
-export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
-export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
-
-mkdir -p $DEST
-
-# Build with proper tags and handle Windows .exe extension
-# -trimpath removes file system paths from binaries for security/privacy
-if [ "${GOOS}" = "windows" ]; then
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
-else
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
-fi
-cp README.md  ${DEST}/
-cp LICENSE ${DEST}/
-cp -r imgs ${DEST}/
-cp -r dist ${DEST}/
-cp config_sample.json ${DEST}/config.json
-cd ${buildpath}${Release1}/${GOARCH}/${GOOS}/
-zip -r ${FILE_DEST}.zip ${FILE_DEST}
-cd $CMD
-
-# Buil amd64 Linux
-
-export GOOS=linux
-export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
-export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
-
-mkdir -p $DEST
-
-# Build with proper tags and handle Windows .exe extension
-# -trimpath removes file system paths from binaries for security/privacy
-if [ "${GOOS}" = "windows" ]; then
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
-else
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
-fi
-cp README.md  ${DEST}/
-cp LICENSE ${DEST}/
-cp -r imgs ${DEST}/
-cp -r dist ${DEST}/
-cp config_sample.json ${DEST}/config.json
-cd ${buildpath}${Release1}/${GOARCH}/${GOOS}/
-zip -r ${FILE_DEST}.zip ${FILE_DEST}
-cd $CMD
-
-# Buil amd64 Windows
-
-export GOOS=windows
-export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
-export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
-
-mkdir -p $DEST
-
-# Build with proper tags and handle Windows .exe extension
-# -trimpath removes file system paths from binaries for security/privacy
-if [ "${GOOS}" = "windows" ]; then
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc.exe golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui.exe webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll.exe ResultsAll.go
-else
-    go build -trimpath -tags=golc -ldflags "-X main.version=${TAG}" -o ${DEST}/golc golc.go
-    go build -trimpath -tags=webui -o ${DEST}/webui webui.go
-    go build -trimpath -tags=resultsall -o ${DEST}/ResultsAll ResultsAll.go
-fi
-cp README.md  ${DEST}/
-cp LICENSE ${DEST}/
-cp -r imgs ${DEST}/
-cp -r dist ${DEST}/
-cp config_sample.json ${DEST}/config.json
-cd ${buildpath}${Release1}/${GOARCH}/${GOOS}/
-zip -r ${FILE_DEST}.zip ${FILE_DEST}
-cd $CMD
+build_platform arm64 darwin
+build_platform arm64 linux
+build_platform arm64 windows
+build_platform amd64 darwin
+build_platform amd64 linux
+build_platform amd64 windows
 
 #------------------------------ End Build ------------------------------------#
 
@@ -283,23 +148,23 @@ mkdir -p ${SOURCE_DIR}
 # Use git archive for clean source (excludes .gitignore files)
 if command -v git &> /dev/null && git rev-parse --git-dir > /dev/null 2>&1; then
     git archive HEAD --prefix=sonar-golc-${Release1}/ | tar -x -C ${SOURCE_DIR}
-    
+
     # Create source.zip
     cd ${SOURCE_DIR}
     zip -r ../source.zip sonar-golc-${Release1}/
     cd $CMD
-    
+
     # Create source.tar.gz
     cd ${SOURCE_DIR}
     tar -czf ../source.tar.gz sonar-golc-${Release1}/
     cd $CMD
-    
+
     echo "✓ Created source.zip and source.tar.gz"
 else
     echo "Warning: Not a git repository, skipping source archives"
 fi
 
-# Begin to push Releae in GitHub Repository
+# Begin to push Release in GitHub Repository
 
 # Retrieve information from existing release
 RELEASE_RESPONSE=$(curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
@@ -352,9 +217,9 @@ declare -a GOOS_VALUES=("linux" "windows" "darwin")
 for GOARCH in "${GOARCH_VALUES[@]}"; do
     for GOOS in "${GOOS_VALUES[@]}"; do
         zip_file="${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}.zip"
-        
+
        # Find the ID of the existing asset with the same name
-  
+
         EXISTING_ASSET_ID=$(echo "$ASSETS_RESPONSE" | jq -r ".[] | select(.name == \"$(basename $zip_file)\") | .id")
 
         # Delete existing asset, if found
@@ -388,5 +253,3 @@ if [ -f "${buildpath}${Release1}/source.tar.gz" ]; then
 fi
 
 cd $CMD
-
-

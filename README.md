@@ -1,4 +1,4 @@
-![Static Badge](https://img.shields.io/badge/Go-v1.22-blue:)
+![Static Badge](https://img.shields.io/badge/Go-v1.25-blue:)
 
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=sonar-solutions_sonar-golc&metric=alert_status&token=8ec4d9fa8caaec10baf81b14f9411528c569312d)](https://sonarcloud.io/summary/new_code?id=sonar-solutions_sonar-golc)[![Lines of Code](https://nautilus.sonarqube.org/api/project_badges/measure?project=SonarSource-Demos_sonar-golc&metric=ncloc&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=SonarSource-Demos_sonar-golc)[![Reliability Issues](https://nautilus.sonarqube.org/api/project_badges/measure?project=SonarSource-Demos_sonar-golc&metric=software_quality_reliability_issues&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=SonarSource-Demos_sonar-golc)[![Maintainability Rating](https://nautilus.sonarqube.org/api/project_badges/measure?project=SonarSource-Demos_sonar-golc&metric=software_quality_maintainability_rating&token=sqb_44cfc298b697f0c4fcbb32de1de67db5ca2c341f)](https://nautilus.sonarqube.org/dashboard?id=SonarSource-Demos_sonar-golc)
 
@@ -10,8 +10,7 @@
 - [Docker](#docker)
 - [Quick Start — Web UI](#quick-start--web-ui)
 - [Prerequisites](#prerequisites)
-- [Usage — CLI](#usage--cli)
-  - [Environment Configuration](#environment-configuration)
+- [Configuration](#configuration)
   - [GitHub.com (Cloud)](#githubcom-cloud)
   - [GitHub Enterprise Server (on-premises)](#github-enterprise-server-on-premises)
   - [GitLab (Cloud and On-premises)](#gitlab-cloud-and-on-premises)
@@ -20,7 +19,6 @@
   - [Azure DevOps Services (Cloud)](#azure-devops-services-cloud)
   - [File Mode](#file-mode)
   - [Optional Parameters](#optional-parameters)
-  - [Run GoLC](#run-golc)
 - [Reports](#reports)
 - [Supported Languages](#supported-languages)
 - [Execution Log](#execution-log)
@@ -45,24 +43,22 @@ It connects directly to your DevOps platform, identifies the largest branch of e
 
 **Option 1 — Download a pre-built release**
 
-Download the latest binaries from the [Releases page](https://github.com/sonar-solutions/sonar-golc/releases). Three binaries are available:
+Download the latest binaries from the [Releases page](https://github.com/sonar-solutions/sonar-golc/releases). Two binaries are available:
 
 | Binary | Purpose |
 |--------|---------|
-| `golc` | Core analysis engine (CLI) |
 | `webui` | Browser-based launcher with live progress |
 | `ResultsAll` | Results web dashboard |
 
 **Option 2 — Build from source**
 
-Requires [Go 1.22+](https://go.dev/).
+Requires [Go 1.25+](https://go.dev/).
 
 ```bash
 git clone https://github.com/sonar-solutions/sonar-golc.git
 cd sonar-golc
 
-go build -tags golc -o golc golc.go
-go build -tags webui -o webui webui.go
+go build -tags webui -o webui webui.go golc.go
 go build -tags resultsall -o ResultsAll ResultsAll.go
 ```
 
@@ -109,7 +105,7 @@ chmod +x create_release_sample.sh
 ```
 
 The script will:
-1. Build `golc`, `webui`, and `ResultsAll` for all 6 platform combinations (arm64/amd64 × macOS/Linux/Windows)
+1. Build `webui` and `ResultsAll` for all 6 platform combinations (arm64/amd64 × macOS/Linux/Windows)
 2. Package each combination into a ZIP archive containing the binaries, README, config sample, and assets
 3. Create `source.zip` and `source.tar.gz` from the current git HEAD
 4. Create (or update) the GitHub release at the specified tag and upload all archives
@@ -120,17 +116,15 @@ Each platform ZIP (e.g. `golc_2.0_darwin_arm64.zip`) contains:
 
 ```
 golc_2.0_darwin_arm64/
-├── golc           # Core analysis engine
-├── webui          # Browser-based launcher
+├── webui          # Browser-based launcher (contains analysis engine)
 ├── ResultsAll     # Results dashboard
 ├── config.json    # Pre-filled from config_sample.json
 ├── README.md
 ├── LICENSE
-├── imgs/
-└── dist/
+└── imgs/
 ```
 
-> On Windows, binaries are named `golc.exe`, `webui.exe`, and `ResultsAll.exe`.
+> On Windows, binaries are named `webui.exe` and `ResultsAll.exe`.
 
 ---
 
@@ -170,8 +164,6 @@ See [docs/docker.md](docs/docker.md) for full Docker usage details.
 
 The Web UI is the easiest way to run GoLC. It provides a browser-based step-by-step interface to configure your platform, run the analysis with a live progress bar, and open the results dashboard — no manual config editing required.
 
-![webui](imgs/webui.png)
-
 **Start the Web UI:**
 ```bash
 ./webui
@@ -203,9 +195,7 @@ A personal access token for your DevOps platform with the following minimum perm
 
 ---
 
-## Usage — CLI
-
-### Environment Configuration
+## Configuration
 
 Copy `config_sample.json` to `config.json` and fill in your credentials:
 
@@ -213,7 +203,7 @@ Copy `config_sample.json` to `config.json` and fill in your credentials:
 cp config_sample.json config.json
 ```
 
-The sections below show the minimum required fields for each platform. Save `config.json` and [run GoLC](#run-golc).
+The sections below show the minimum required fields for each platform.
 
 ---
 
@@ -357,60 +347,6 @@ repo-slug-2
 
 ---
 
-### Run GoLC
-
-```bash
-./golc -devops <Github|GithubEnterprise|Gitlab|BitBucket|BitBucketSRV|Azure|File>
-```
-
-Example:
-
-```
-$:> ./golc -devops Github
-
-✅ Using configuration for DevOps platform 'Github'
-
-🔎 Analysis of devops platform objects ...
-
-✅ The number of Repo(s) found is: 50
-
-✅ 1 Repo: my-service - Number of branches: 3 - largest Branch: main
-✅ 2 Repo: my-api - Number of branches: 1 - largest Branch: main
-...
-
-✅ The largest Repository is <my-service> with the branch <main>
-✅ TotalProject(s) that will be analyzed: 49 - Find empty: 1 - Excluded: 0 - Archived: 0
-
-🔎 Analysis of Repos ...
-
-    ✅ json report exported to Results/bylanguage-report/Result_my-service.json
-    ✅ The repository <my-service> has been analyzed
-...
-
-🔎 Analyse Report ...
-
-✅ Number of Repository analyzed: 49
-✅ The total sum of lines of code is: 5.62M Lines of Code
-
-✅ Reports are located in the 'Results' directory
-✅ Time elapsed: 00:02:24
-
-ℹ️  To visualize results, run: ResultsAll
-```
-
-If a `Results` directory already exists, GoLC will prompt you to delete it (and optionally back it up as a zip first).
-
-After the analysis, launch the results dashboard:
-
-```bash
-./ResultsAll
-# Opens http://localhost:8090
-```
-
-> **Windows users:** Use PowerShell and run `.\golc.exe -devops <Platform>`.
-
----
-
 ## Reports
 
 Reports are written to the `Results` directory:
@@ -487,13 +423,6 @@ XML                | .xml, .XML                               |                 
 XHTML              | .xhtml                                   |                 | <!-- -->
 YAML               | .yaml, .yml                              | #               |
 ```
-
-To list all supported languages at runtime:
-```bash
-./golc -languages
-```
-
-To add a new language, add an entry to the `Languages` structure in [`assets/languages.go`](assets/languages.go).
 
 ---
 

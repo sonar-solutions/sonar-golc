@@ -518,11 +518,11 @@ func killPort(port int) {
 }
 
 func runAnalysis(platformKey string) {
-	golcBin, err := findBinary("golc")
+	golcBin, err := os.Executable()
 	if err != nil {
 		appState.broadcast(ProgressEvent{
 			Type:    "error",
-			Message: "golc binary not found. Build it with: go build -tags golc -o golc golc.go",
+			Message: "could not resolve executable path: " + err.Error(),
 			Phase:   PhaseError,
 		})
 		appState.mu.Lock()
@@ -532,10 +532,10 @@ func runAnalysis(platformKey string) {
 		return
 	}
 
-	// Delete Results dir so golc won't prompt
+	// Delete Results dir before running analysis
 	_ = os.RemoveAll("Results")
 
-	cmd := exec.Command(golcBin, "-devops", platformKey)
+	cmd := exec.Command(golcBin, "--internal-run", platformKey)
 	cmd.Stdin = strings.NewReader("")
 
 	outR, outW, _ := os.Pipe()
@@ -822,6 +822,16 @@ func handleStatic(w http.ResponseWriter, r *http.Request) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
+	// When invoked as an internal analysis subprocess, run the GoLC engine and exit.
+	if len(os.Args) > 1 && os.Args[1] == "--internal-run" {
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: webui --internal-run <platform>")
+			os.Exit(1)
+		}
+		runGolcInProcess(os.Args[2])
+		os.Exit(0)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/config", handleGetConfig)
