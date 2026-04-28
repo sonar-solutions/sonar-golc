@@ -4,10 +4,12 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"math"
 	"net"
 	"net/http"
@@ -21,6 +23,9 @@ import (
 	"sync"
 	"time"
 )
+
+//go:embed all:dist
+var distFS embed.FS
 
 var webuiPort = getEnvPort("GOLC_WEBUI_PORT", 8091)
 var resultsAllPort = getEnvPort("GOLC_RESULTS_PORT", 8090)
@@ -916,7 +921,13 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"url": fmt.Sprintf("http://localhost:%d", port)})
 }
 
-var staticHandler = http.StripPrefix("/dist/", http.FileServer(http.Dir("./dist/")))
+var staticHandler = func() http.Handler {
+	sub, err := fs.Sub(distFS, "dist")
+	if err != nil {
+		panic("embedded dist/ not found: " + err.Error())
+	}
+	return http.StripPrefix("/dist/", http.FileServer(http.FS(sub)))
+}()
 
 func handleStatic(w http.ResponseWriter, r *http.Request) {
 	staticHandler.ServeHTTP(w, r)
