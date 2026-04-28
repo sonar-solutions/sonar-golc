@@ -578,7 +578,12 @@ func pidsByPortUnix(port int) []int {
 
 // pidsByPortWindows uses netstat -ano to find PIDs bound to a TCP port on Windows.
 func pidsByPortWindows(port int) []int {
-	out, err := exec.Command("netstat", "-ano").Output()
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" {
+		systemRoot = `C:\Windows`
+	}
+	netstatPath := filepath.Join(systemRoot, "System32", "netstat.exe")
+	out, err := exec.Command(netstatPath, "-ano").Output()
 	if err != nil {
 		return nil
 	}
