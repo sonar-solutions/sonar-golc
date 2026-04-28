@@ -1126,9 +1126,8 @@ const basicFields = {
                      {id:'Organization',label:'Group URL slug(s) <small class="text-muted">(comma-separated — leave blank to auto-discover all your accessible groups)</small>',ph:'url-slug-1,url-slug-2 (or blank to auto-discover)',html:true},
                      {id:'Url',label:'Server URL <small class="text-muted">(GitLab Cloud — change for on-prem)</small>',ph:'https://gitlab.com/',defaultValue:'https://gitlab.com/',onchange:'syncGitlabProtocol()',html:true}],
   BitBucket:        [{id:'Users',label:'Email address',ph:'you@example.com'},
-                     {id:'AccessToken',label:'API Token <small class="text-muted">— requires <strong>Repositories: Read</strong> &amp; <strong>Account: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
-                     {id:'Workspace',label:'Workspace slug',ph:'my-workspace'},
-                     {id:'Organization',label:'Organization (same as workspace)',ph:'my-workspace'}],
+                     {id:'AccessToken',label:'API Token <small class="text-muted">— requires <strong>Repositories: Read</strong> &amp; <strong>Projects: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
+                     {id:'Workspace',label:'Workspace slug',ph:'my-workspace'}],
   BitBucketSRV:     [{id:'Users',label:'Username / Login',ph:'your-login'},
                      {id:'AccessToken',label:'Access Token <small class="text-muted">— requires <strong>Project: Read</strong> &amp; <strong>Repository: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'},
@@ -1342,6 +1341,10 @@ function gatherConfig() {
   fields.forEach(f => {
     cfg[f.id] = document.getElementById('f-'+f.id) ? document.getElementById('f-'+f.id).value.trim() : '';
   });
+  // Bitbucket Cloud: Organization = Workspace (same value, one field removed from UI)
+  if (currentPlatform === 'BitBucket') {
+    cfg.Organization = cfg.Workspace;
+  }
   // Auto-derive Baseapi and Protocol for GitHub Enterprise from the Url field
   if (currentPlatform === 'GithubEnterprise') {
     syncGHEBaseapi();
