@@ -790,12 +790,55 @@ func zipResults(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "Results.zip")
 }
 
+// buildLanguageSummary converts raw language data into a sorted, percentage-annotated slice.
+func buildLanguageSummary(rawData []LanguageData) []LanguageData {
+	totals := make(map[string]int)
+	for _, r := range rawData {
+		totals[r.Language] += r.CodeLines
+	}
+
+	totalExcl := 0
+	var languages []LanguageData
+	for lang, total := range totals {
+		if strings.TrimSpace(lang) != utils.LanguageExcludedFromTotalLOC {
+			totalExcl += total
+		}
+		languages = append(languages, LanguageData{
+			Language:   lang,
+			CodeLines:  total,
+			CodeLinesF: utils.FormatCodeLines(float64(total)),
+		})
+	}
+
+	applyLanguagePercentages(languages, totalExcl)
+
+	sort.Slice(languages, func(i, j int) bool {
+		return languages[i].CodeLines > languages[j].CodeLines
+	})
+	if len(languages) > 0 && languages[0].CodeLines > 0 {
+		maxLOC := float64(languages[0].CodeLines)
+		for i := range languages {
+			languages[i].RelativePct = float64(languages[i].CodeLines) / maxLOC * 100
+		}
+	}
+	return languages
+}
+
+// applyLanguagePercentages sets the Percentage field for each language entry.
+func applyLanguagePercentages(languages []LanguageData, totalExcludingJSON int) {
+	for i := range languages {
+		if strings.TrimSpace(languages[i].Language) == utils.LanguageExcludedFromTotalLOC || totalExcludingJSON == 0 {
+			languages[i].Percentage = 0
+		} else {
+			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalExcludingJSON) * 100
+		}
+	}
+}
+
 // loadApplicationData loads and processes all required data files
 func loadApplicationData() (PageData, error) {
 	var pageData PageData
-	ligneDeCodeParLangage := make(map[string]int)
 
-	// Reading data from the code_lines_by_language.json file
 	inputFileData, err := os.ReadFile(codeLinesLanguageFile)
 	if err != nil {
 		return pageData, fmt.Errorf("error reading code_lines_by_language.json file: %v", err)
@@ -806,50 +849,7 @@ func loadApplicationData() (PageData, error) {
 		return pageData, fmt.Errorf("error decoding JSON code_lines_by_language.json file: %v", err)
 	}
 
-	// Summarize results by language
-	for _, result := range languageData {
-		language := result.Language
-		codeLines := result.CodeLines
-		ligneDeCodeParLangage[language] += codeLines
-	}
-
-	var languages []LanguageData
-	totalLines := 0
-	totalLinesExcludingJSON := 0
-	for lang, total := range ligneDeCodeParLangage {
-		totalLines += total
-		if strings.TrimSpace(lang) != utils.LanguageExcludedFromTotalLOC {
-			totalLinesExcludingJSON += total
-		}
-		languages = append(languages, LanguageData{
-			Language:   lang,
-			CodeLines:  total,
-			CodeLinesF: utils.FormatCodeLines(float64(total)),
-		})
-	}
-
-	// Percentages use total excluding JSON to match SonarQube behavior
-	for i := range languages {
-		if strings.TrimSpace(languages[i].Language) == utils.LanguageExcludedFromTotalLOC {
-			languages[i].Percentage = 0
-		} else if totalLinesExcludingJSON > 0 {
-			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalLinesExcludingJSON) * 100
-		} else {
-			languages[i].Percentage = 0
-		}
-	}
-
-	// Sort languages by total LOC descending for visualization
-	sort.Slice(languages, func(i, j int) bool {
-		return languages[i].CodeLines > languages[j].CodeLines
-	})
-	// Compute relative bar width (top language = 100%)
-	if len(languages) > 0 && languages[0].CodeLines > 0 {
-		maxLOC := float64(languages[0].CodeLines)
-		for i := range languages {
-			languages[i].RelativePct = float64(languages[i].CodeLines) / maxLOC * 100
-		}
-	}
+	languages := buildLanguageSummary(languageData)
 
 	data0, err := os.ReadFile(globalReportFile)
 	if err != nil {
@@ -861,11 +861,10 @@ func loadApplicationData() (PageData, error) {
 		return pageData, fmt.Errorf("error decoding JSON GlobalReport.json file: %v", err)
 	}
 
-	// Get repository data
 	repositoryData, err := getRepositoryData()
 	if err != nil {
 		fmt.Println("❌ Error loading repository data:", err)
-		repositoryData = []RepositoryData{} // Use empty slice if error
+		repositoryData = []RepositoryData{}
 	}
 
 	detectedPlatform, _, _ := detectPlatformAndReadAnalysis()

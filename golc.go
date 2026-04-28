@@ -716,13 +716,87 @@ func saveFileAnalysisResult(destDir, org string, dirs []string) error {
 
 /* ---------------- Analyse Directory ---------------- */
 
-func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool, destDir string) {
-
-	type Configuration struct {
-		ExcludeExtensions []string
+// analyseDirectory runs the goloc analysis for a single directory entry.
+func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX, extexclusion []string, destDir string, count *int) {
+	params := goloc.Params{
+		Path:              dir,
+		ByFile:            ResultByFile,
+		ByAll:             ResultAll,
+		ExcludePaths:      fileexclusionEX,
+		ExcludeExtensions: extexclusion,
+		IncludeExtensions: []string{},
+		OrderByLang:       false,
+		OrderByFile:       false,
+		OrderByCode:       false,
+		OrderByLine:       false,
+		OrderByBlank:      false,
+		OrderByComment:    false,
+		Order:             "DESC",
+		OutputName:        "Result_",
+		OutputPath:        destDir,
+		ReportFormats:     []string{"json"},
+		Branch:            "",
+		Token:             "",
+		Cloned:            false,
+		Repopath:          "",
+	}
+	if ResultAll {
+		params.ByFile = true
 	}
 
-	//fmt.Print("\n🔎 Analysis of Directories ...\n")
+	gc, err := goloc.NewGCloc(params, assets.Languages)
+	if err != nil {
+		logger.Errorf(errorMessageRepo+"%v", err)
+		return
+	}
+
+	if err := runGlocPasses(gc, params, ResultAll); err != nil {
+		return
+	}
+
+	logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", *count, dir)
+	*count++
+}
+
+// runGlocPasses executes either a dual-pass (ResultAll) or single-pass analysis.
+func runGlocPasses(gc *goloc.GCloc, params goloc.Params, ResultAll bool) error {
+	if !ResultAll {
+		if err := gc.Run(); err != nil {
+			fmt.Print("\n")
+			logger.Errorf("❌ Error during analysis: %v", err)
+			return err
+		}
+		return nil
+	}
+
+	// First run: byfile report
+	if err := gc.Run(); err != nil {
+		fmt.Print("\n")
+		logger.Errorf("❌ Error during analysis (byfile pass): %v", err)
+		return err
+	}
+
+	// Second run: bylanguage report
+	params.ByFile = false
+	params.Cloned = true
+	params.Repopath = gc.Repopath
+	params.RepopathDisposable = gc.RepopathDisposable
+
+	gc2, err := goloc.NewGCloc(params, assets.Languages)
+	if err != nil {
+		fmt.Print("\n")
+		logger.Errorf("❌ Error initializing GCloc for bylanguage pass: %v", err)
+		return err
+	}
+	if err := gc2.Run(); err != nil {
+		fmt.Print("\n")
+		logger.Errorf("❌ Error during analysis (bylanguage pass): %v", err)
+		return err
+	}
+	return nil
+}
+
+func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool, destDir string) {
 	logger.Infof("🔎 Analysis of Directories ...\n")
 
 	var wg sync.WaitGroup
@@ -732,92 +806,8 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 	for _, Listdirectories := range Listdirectorie {
 		go func(dir string) {
 			defer wg.Done()
-
-			//fmt.Println("Rep:", Listdirectories)
-
-			spin := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
-			spin.Color("green", "bold")
-			messageF := ""
-			spin.FinalMSG = messageF
-
-			outputFileName := "Result_"
-
-			params := goloc.Params{
-				Path:              dir,
-				ByFile:            ResultByFile,
-				ByAll:             ResultAll,
-				ExcludePaths:      fileexclusionEX,
-				ExcludeExtensions: extexclusion,
-				IncludeExtensions: []string{},
-				OrderByLang:       false,
-				OrderByFile:       false,
-				OrderByCode:       false,
-				OrderByLine:       false,
-				OrderByBlank:      false,
-				OrderByComment:    false,
-				Order:             "DESC",
-				OutputName:        outputFileName,
-				OutputPath:        destDir,
-				ReportFormats:     []string{"json"},
-				Branch:            "",
-				Token:             "",
-				Cloned:            false,
-				Repopath:          "",
-			}
-			if ResultAll {
-				params.ByFile = true
-			}
-
-			gc, err := goloc.NewGCloc(params, assets.Languages)
-			if err != nil {
-				logger.Errorf(errorMessageRepo+"%v", err)
-				return
-			} else {
-
-				if ResultAll {
-
-					// First run: byfile report (ByFile=true)
-					if err := gc.Run(); err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis (byfile pass): %v", err)
-						return
-					}
-
-					// Second run: bylanguage report (ByFile=false)
-					params.ByFile = false
-					params.Cloned = true
-					params.Repopath = gc.Repopath
-					params.RepopathDisposable = gc.RepopathDisposable
-
-					gc, err = goloc.NewGCloc(params, assets.Languages)
-					if err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error initializing GCloc for bylanguage pass: %v", err)
-						return
-					}
-
-					if err := gc.Run(); err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis (bylanguage pass): %v", err)
-						return
-					}
-				} else {
-					// ResultAll=false: single pass (byfile or bylanguage depending on ResultByFile)
-					if err := gc.Run(); err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis: %v", err)
-						return
-					}
-				}
-
-			}
-
-			//gc.Run()
-			spin.Stop()
-			logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", count, dir)
-			count++
+			analyseDirectory(dir, ResultByFile, ResultAll, fileexclusionEX, extexclusion, destDir, &count)
 		}(Listdirectories)
-
 	}
 
 	wg.Wait()

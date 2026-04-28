@@ -37,6 +37,13 @@ const (
 	PhaseError      Phase = "error"
 )
 
+const (
+	contentTypeHeader   = "Content-Type"
+	contentTypeJSON     = "application/json"
+	errPostOnly         = "POST only"
+	labelIdentifyingFmt = "Identifying repositories (%d/%d)"
+)
+
 type ProgressEvent struct {
 	Type    string `json:"type"`             // "progress" | "log" | "complete" | "error"
 	Message string `json:"message"`          // displayed in log terminal (original log line when available)
@@ -254,11 +261,87 @@ func normalizeLogMessage(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func parseProgress(line string, st *AppState) *ProgressEvent {
-	clean := stripANSI(line)
+// parseIntMatch returns the integer in the given capture group if the regex matches and the value is positive.
+func parseIntMatch(re *regexp.Regexp, s string, group int) (int, bool) {
+	m := re.FindStringSubmatch(s)
+	if len(m) <= group {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[group])
+	return n, err == nil && n > 0
+}
 
-	ev := &ProgressEvent{Type: "log", Message: normalizeLogMessage(clean), Phase: st.phase}
+// extractGroupMatch returns the text of a capture group, or empty string if unmatched.
+func extractGroupMatch(re *regexp.Regexp, s string, group int) string {
+	m := re.FindStringSubmatch(s)
+	if len(m) > group {
+		return m[group]
+	}
+	return ""
+}
 
+func applyPerProjectRepoCount(clean string, st *AppState, ev *ProgressEvent) {
+	if n, ok := parseIntMatch(rePerProjectRepoCount, clean, 1); ok {
+		st.total += n
+	}
+	ev.Type = "progress"
+	ev.Message = normalizeLogMessage(clean)
+	ev.Label = fmt.Sprintf(labelIdentifyingFmt, st.current, st.total)
+}
+
+func applyGitLabGroupCount(clean string, st *AppState, ev *ProgressEvent) {
+	if n, ok := parseIntMatch(reGitLabGroup, clean, 2); ok {
+		st.total += n
+	}
+	ev.Type = "progress"
+	ev.Message = normalizeLogMessage(clean)
+	ev.Label = fmt.Sprintf(labelIdentifyingFmt, st.current, st.total)
+}
+
+func applyRepoDiscovery(clean string, st *AppState, ev *ProgressEvent) {
+	st.current++
+	repo := extractGroupMatch(reRepoDiscover, clean, 1)
+	ev.Type = "progress"
+	ev.Message = normalizeLogMessage(clean)
+	if repo != "" {
+		ev.Label = fmt.Sprintf("Identifying branches: %s (%d/%d)", repo, st.current, st.total)
+	} else {
+		ev.Label = fmt.Sprintf(labelIdentifyingFmt, st.current, st.total)
+	}
+}
+
+func applyRepoAnalyzed(clean string, st *AppState, ev *ProgressEvent) {
+	st.current++
+	repo := extractGroupMatch(reAnalyzed, clean, 1)
+	ev.Type = "progress"
+	ev.Message = normalizeLogMessage(clean)
+	if repo != "" {
+		ev.Label = fmt.Sprintf("Counting lines of code: %s (%d/%d)", repo, st.current, st.total)
+	} else {
+		ev.Label = fmt.Sprintf("Counting lines of code (%d/%d)", st.current, st.total)
+	}
+}
+
+// applyIdentifyPhaseUpdate handles all sub-cases within the PhaseIdentify stage.
+func applyIdentifyPhaseUpdate(clean string, st *AppState, ev *ProgressEvent) {
+	switch {
+	case reProjectFound.MatchString(clean):
+		// Azure/Bitbucket: project count line resets running repo total.
+		st.total = 0
+		ev.Type = "progress"
+		ev.Message = normalizeLogMessage(clean)
+		ev.Label = "Identifying repositories..."
+	case rePerProjectRepoCount.MatchString(clean):
+		applyPerProjectRepoCount(clean, st, ev)
+	case reGitLabGroup.MatchString(clean):
+		applyGitLabGroupCount(clean, st, ev)
+	case reRepoDiscover.MatchString(clean):
+		applyRepoDiscovery(clean, st, ev)
+	}
+}
+
+// applyProgressCase dispatches the log line to the appropriate phase handler.
+func applyProgressCase(clean string, st *AppState, ev *ProgressEvent) {
 	switch {
 	case strings.Contains(clean, "Analysis of devops platform objects") ||
 		strings.Contains(clean, "Analysis of Directories"):
@@ -266,99 +349,41 @@ func parseProgress(line string, st *AppState) *ProgressEvent {
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Identifying repositories..."
-
-	// Azure/Bitbucket: project count line marks the start of per-project enumeration.
-	// Reset running repo total so it is rebuilt from per-project Repo(s) counts below.
-	case reProjectFound.MatchString(clean) && st.phase == PhaseIdentify:
-		st.total = 0
-		ev.Type = "progress"
-		ev.Message = normalizeLogMessage(clean)
-		ev.Label = "Identifying repositories..."
-
-	// Azure/Bitbucket: per-project repo count — accumulate into total.
-	// Fires once per project, so we sum across projects rather than overwrite.
-	case rePerProjectRepoCount.MatchString(clean) && st.phase == PhaseIdentify:
-		if m := rePerProjectRepoCount.FindStringSubmatch(clean); len(m) > 1 {
-			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-				st.total += n
-			}
-		}
-		ev.Type = "progress"
-		ev.Message = normalizeLogMessage(clean)
-		ev.Label = fmt.Sprintf("Identifying repositories (%d/%d)", st.current, st.total)
-
+	case st.phase == PhaseIdentify:
+		applyIdentifyPhaseUpdate(clean, st, ev)
 	case reTotal.MatchString(clean):
-		if m := reTotal.FindStringSubmatch(clean); len(m) > 1 {
-			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-				st.total = n
-			}
+		if n, ok := parseIntMatch(reTotal, clean, 1); ok {
+			st.total = n
 		}
 		ev.Phase = st.phase
-
-	// GitLab per-group count: accumulate running total as each group is enumerated.
-	// This fires before all repos are done, giving a meaningful progress denominator.
-	case reGitLabGroup.MatchString(clean) && st.phase == PhaseIdentify:
-		if m := reGitLabGroup.FindStringSubmatch(clean); len(m) > 2 {
-			if n, err := strconv.Atoi(m[2]); err == nil && n > 0 {
-				st.total += n
-			}
-		}
-		ev.Type = "progress"
-		ev.Message = normalizeLogMessage(clean)
-		ev.Label = fmt.Sprintf("Identifying repositories (%d/%d)", st.current, st.total)
-
-	case reRepoDiscover.MatchString(clean) && st.phase == PhaseIdentify:
-		st.current++
-		repo := ""
-		if m := reRepoDiscover.FindStringSubmatch(clean); len(m) > 1 {
-			repo = m[1]
-		}
-		ev.Type = "progress"
-		ev.Message = normalizeLogMessage(clean) // original logrus line → shown in terminal with full branch info
-		if repo != "" {
-			ev.Label = fmt.Sprintf("Identifying branches: %s (%d/%d)", repo, st.current, st.total)
-		} else {
-			ev.Label = fmt.Sprintf("Identifying repositories (%d/%d)", st.current, st.total)
-		}
-
 	case strings.Contains(clean, "largest repo") || strings.Contains(clean, "largest Repository"):
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Largest branch identified"
-
 	case strings.Contains(clean, "Analysis of Repos"):
 		st.phase = PhaseAnalyzing
 		st.current = 0
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Counting lines of code..."
-
 	case reAnalyzed.MatchString(clean):
-		st.current++
-		repo := ""
-		if m := reAnalyzed.FindStringSubmatch(clean); len(m) > 1 {
-			repo = m[1]
-		}
-		ev.Type = "progress"
-		ev.Message = normalizeLogMessage(clean) // original logrus line → shown in terminal
-		if repo != "" {
-			ev.Label = fmt.Sprintf("Counting lines of code: %s (%d/%d)", repo, st.current, st.total)
-		} else {
-			ev.Label = fmt.Sprintf("Counting lines of code (%d/%d)", st.current, st.total)
-		}
-
+		applyRepoAnalyzed(clean, st, ev)
 	case strings.Contains(clean, "Analyse Report"):
 		st.phase = PhaseReporting
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Generating global report..."
-
 	case strings.Contains(clean, "Time elapsed"):
 		st.phase = PhaseComplete
 		ev.Type = "complete"
 		ev.Message = normalizeLogMessage(clean)
 	}
+}
 
+func parseProgress(line string, st *AppState) *ProgressEvent {
+	clean := stripANSI(line)
+	ev := &ProgressEvent{Type: "log", Message: normalizeLogMessage(clean), Phase: st.phase}
+	applyProgressCase(clean, st, ev)
 	ev.Phase = st.phase
 	ev.Current = st.current
 	ev.Total = st.total
@@ -478,7 +503,7 @@ func killPort(port int) {
 	}
 	conn.Close()
 	// Port is occupied — use lsof to find and kill the PID.
-	out, err := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)).Output()
+	out, err := exec.Command("/usr/sbin/lsof", "-ti", fmt.Sprintf(":%d", port)).Output()
 	if err != nil {
 		return
 	}
@@ -600,7 +625,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "template error: "+err.Error(), 500)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
 	_ = tmpl.Execute(w, nil)
 }
 
@@ -615,7 +640,7 @@ func handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		// Return empty object — no config yet
 		cfg = map[string]interface{}{}
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeHeader, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(cfg)
 }
 
@@ -626,7 +651,7 @@ type RunRequest struct {
 
 func handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		http.Error(w, errPostOnly, 405)
 		return
 	}
 
@@ -663,12 +688,12 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 
 	go runAnalysis(req.Platform)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeHeader, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
 
 func handleEvents(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set(contentTypeHeader, "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -719,7 +744,7 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	appState.mu.RLock()
 	defer appState.mu.RUnlock()
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeHeader, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"running": appState.running,
 		"phase":   appState.phase,
@@ -732,7 +757,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func handleStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		http.Error(w, errPostOnly, 405)
 		return
 	}
 	appState.mu.Lock()
@@ -744,13 +769,13 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = cmd.Process.Kill()
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeHeader, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
 }
 
 func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		http.Error(w, errPostOnly, 405)
 		return
 	}
 
@@ -758,7 +783,7 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 
 	bin, err := findBinary("ResultsAll")
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(contentTypeHeader, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]string{"url": url, "note": "ResultsAll binary not found"})
 		return
 	}
@@ -776,7 +801,7 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command(bin)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	if startErr := cmd.Start(); startErr == nil {
+	if cmd.Start() == nil {
 		appState.resultsProc = cmd.Process
 	}
 	appState.mu.Unlock()
@@ -784,7 +809,7 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	// Give it a moment to bind the port
 	time.Sleep(800 * time.Millisecond)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeHeader, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{"url": url})
 }
 

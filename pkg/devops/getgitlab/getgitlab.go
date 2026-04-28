@@ -43,6 +43,7 @@ type ExclusionRepos map[string]bool
 
 const PrefixMsg = "Get Project(s)..."
 const MessageErro1 = "❌ Failed to list projects for group %s: %v"
+const msgGroupToAnalyze = "✅ Group <%s>: %d project(s) to analyze"
 const MessageError2 = "❌ Failed to get project %s: %v"
 const MessageError2b = "❌ Failed to get project %s in any configured group"
 const MessageError3 = "❗️ Project %s is in exclude file"
@@ -81,6 +82,14 @@ func LoadExclusionRepos(filename string) (ExclusionRepos, error) {
 	}
 
 	return ignoreMap, nil
+}
+
+// loadExclusionList returns an empty map when exclusionfile is "0", otherwise delegates to LoadExclusionRepos.
+func loadExclusionList(exclusionfile string) (ExclusionRepos, error) {
+	if exclusionfile == "0" {
+		return make(ExclusionRepos), nil
+	}
+	return LoadExclusionRepos(exclusionfile)
 }
 
 // Function to Get Commit count
@@ -543,7 +552,7 @@ type nonDefaultCtx struct {
 func nonDefaultAllProjectsAllBranches(ctx nonDefaultCtx) ([]ProjectBranch, int) {
 	return analyzeOrgsWithProjects(ctx, func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 		valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
-		utils.NewLogger().Infof("✅ Group <%s>: %d project(s) to analyze", org, len(valid))
+		utils.NewLogger().Infof(msgGroupToAnalyze, org, len(valid))
 		return analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
 	})
 }
@@ -604,7 +613,7 @@ func nonDefaultAllProjectsSpecificBranch(ctx nonDefaultCtx) ([]ProjectBranch, in
 	branch := ctx.config["Branch"].(string)
 	return analyzeOrgsWithProjects(ctx, func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 		valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
-		utils.NewLogger().Infof("✅ Group <%s>: %d project(s) to analyze", org, len(valid))
+		utils.NewLogger().Infof(msgGroupToAnalyze, org, len(valid))
 		return analyzeSpecificBranchForProjects(ctx.client, valid, org, branch, spin1)
 	})
 }
@@ -718,7 +727,7 @@ func handleDefaultBranchCase(ctx defaultCtx) ([]ProjectBranch, int) {
 			valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
 			// Always log after filtering — gives accurate progress total and makes
 			// 0-project groups (all empty/archived) visible for debugging.
-			loggers.Infof("✅ Group <%s>: %d project(s) to analyze", org, len(valid))
+			loggers.Infof(msgGroupToAnalyze, org, len(valid))
 			branches, totalB := analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
 			projectBranches = append(projectBranches, branches...)
 			totalBranches += totalB
@@ -779,19 +788,11 @@ func GetRepoGitLabList(platformConfig map[string]interface{}, exclusionfile stri
 	spin.Color("green", "bold")
 	spin.Start()
 
-	// Test if exclusion file exist
-	if exclusionfile == "0" {
-		exclusionList = make(map[string]bool)
-
-	} else {
-
-		exclusionList, err1 = LoadExclusionRepos(exclusionfile)
-		if err1 != nil {
-			loggers.Errorf("❌ Error Read Exclusion File <%s>: %v", exclusionfile, err1)
-			spin.Stop()
-			return nil, err1
-		}
-
+	exclusionList, err1 = loadExclusionList(exclusionfile)
+	if err1 != nil {
+		loggers.Errorf("❌ Error Read Exclusion File <%s>: %v", exclusionfile, err1)
+		spin.Stop()
+		return nil, err1
 	}
 
 	gitlabClient, err := gitlab.NewClient(platformConfig["AccessToken"].(string), gitlab.WithBaseURL(ApiURL))
