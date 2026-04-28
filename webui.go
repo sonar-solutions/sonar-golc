@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -531,26 +532,78 @@ func findFreePort(preferred int) int {
 }
 
 // killPort kills any process listening on the given TCP port.
+// Uses lsof on macOS/Linux and netstat on Windows.
 func killPort(port int) {
-	addr := fmt.Sprintf("localhost:%d", port)
-	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 200*time.Millisecond)
 	if err != nil {
 		return // nothing listening
 	}
 	conn.Close()
-	// Port is occupied — use lsof to find and kill the PID.
-	out, err := exec.Command("/usr/sbin/lsof", "-ti", fmt.Sprintf(":%d", port)).Output()
-	if err != nil {
-		return
+
+	var pids []int
+	switch runtime.GOOS {
+	case "windows":
+		pids = pidsByPortWindows(port)
+	default:
+		pids = pidsByPortUnix(port)
 	}
-	for _, pidStr := range strings.Fields(string(out)) {
-		var pid int
-		if n, _ := fmt.Sscanf(pidStr, "%d", &pid); n == 1 && pid > 0 {
-			if p, err := os.FindProcess(pid); err == nil {
-				_ = p.Kill()
-			}
+	for _, pid := range pids {
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
 		}
 	}
+}
+
+// pidsByPortUnix uses lsof to find PIDs bound to a TCP port on macOS/Linux.
+func pidsByPortUnix(port int) []int {
+	portArg := fmt.Sprintf(":%d", port)
+	// lsof may live in /usr/sbin (macOS) or /usr/bin (Linux).
+	for _, bin := range []string{"/usr/sbin/lsof", "/usr/bin/lsof", "lsof"} {
+		out, err := exec.Command(bin, "-ti", portArg).Output()
+		if err != nil {
+			continue
+		}
+		return parsePidList(string(out))
+	}
+	return nil
+}
+
+// pidsByPortWindows uses netstat -ano to find PIDs bound to a TCP port on Windows.
+func pidsByPortWindows(port int) []int {
+	out, err := exec.Command("netstat", "-ano").Output()
+	if err != nil {
+		return nil
+	}
+	portSuffix := fmt.Sprintf(":%d", port)
+	var pids []int
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		// Expected format: Proto  LocalAddr  ForeignAddr  State  PID
+		if len(fields) < 5 {
+			continue
+		}
+		if !strings.HasSuffix(fields[1], portSuffix) {
+			continue
+		}
+		if strings.ToUpper(fields[3]) != "LISTENING" {
+			continue
+		}
+		if pid, err := strconv.Atoi(fields[4]); err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// parsePidList splits whitespace-separated PID output (lsof -t format).
+func parsePidList(s string) []int {
+	var pids []int
+	for _, f := range strings.Fields(s) {
+		if pid, err := strconv.Atoi(f); err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 func runAnalysis(platformKey string) {
