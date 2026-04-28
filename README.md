@@ -18,7 +18,6 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 ## Table of Contents
 
 - [Quick Start](#quick-start)
-- [Installation](#installation)
 - [Configuration](#configuration)
   - [Optional Parameters](#optional-parameters)
 - [Reports](#reports)
