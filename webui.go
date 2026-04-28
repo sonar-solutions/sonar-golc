@@ -74,6 +74,7 @@ type AppState struct {
 	clients     []chan ProgressEvent
 	golcCmd     *exec.Cmd
 	resultsProc *os.Process
+	resultsPort int // port the current ResultsAll instance is bound to
 }
 
 var appState = &AppState{phase: PhaseIdle}
@@ -511,6 +512,24 @@ func findBinary(name string) (string, error) {
 	return "", fmt.Errorf("binary %q not found", name)
 }
 
+// findFreePort returns the preferred port if it is available, otherwise asks
+// the OS for any free port.
+func findFreePort(preferred int) int {
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", preferred))
+	if err == nil {
+		l.Close()
+		return preferred
+	}
+	// Preferred port is busy — let the OS pick one.
+	l, err = net.Listen("tcp", ":0")
+	if err != nil {
+		return preferred // last resort: try the preferred and let it fail
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
+
 // killPort kills any process listening on the given TCP port.
 func killPort(port int) {
 	addr := fmt.Sprintf("localhost:%d", port)
@@ -796,14 +815,7 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", resultsAllPort)
-
 	bin, err := findBinary("ResultsAll")
-	if err != nil {
-		w.Header().Set(contentTypeHeader, contentTypeJSON)
-		_ = json.NewEncoder(w).Encode(map[string]string{"url": url, "note": "ResultsAll binary not found"})
-		return
-	}
 
 	appState.mu.Lock()
 	// Always kill the old ResultsAll — it caches data at startup and must be
@@ -812,10 +824,31 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 		_ = appState.resultsProc.Kill()
 		appState.resultsProc = nil
 	}
-	// Also kill any stale ResultsAll from a previous webui session holding the port.
-	killPort(resultsAllPort)
+	// Kill any stale ResultsAll from a previous session that may hold the port.
+	if appState.resultsPort != 0 {
+		killPort(appState.resultsPort)
+	}
+
+	if err != nil {
+		port := appState.resultsPort
+		if port == 0 {
+			port = resultsAllPort
+		}
+		appState.mu.Unlock()
+		w.Header().Set(contentTypeHeader, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"url":  fmt.Sprintf("http://localhost:%d", port),
+			"note": "ResultsAll binary not found",
+		})
+		return
+	}
+
+	// Pick a free port — prefer the configured default, fall back to any free one.
+	port := findFreePort(resultsAllPort)
+	appState.resultsPort = port
 
 	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("GOLC_RESULTS_PORT=%d", port))
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if cmd.Start() == nil {
@@ -823,11 +856,11 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	}
 	appState.mu.Unlock()
 
-	// Give it a moment to bind the port
+	// Give ResultsAll a moment to bind the port.
 	time.Sleep(800 * time.Millisecond)
 
 	w.Header().Set(contentTypeHeader, contentTypeJSON)
-	_ = json.NewEncoder(w).Encode(map[string]string{"url": url})
+	_ = json.NewEncoder(w).Encode(map[string]string{"url": fmt.Sprintf("http://localhost:%d", port)})
 }
 
 var staticHandler = http.StripPrefix("/dist/", http.FileServer(http.Dir("./dist/")))
@@ -859,8 +892,9 @@ func main() {
 	mux.HandleFunc("/api/open-results", handleOpenResults)
 	mux.HandleFunc("/dist/", handleStatic)
 
-	addr := fmt.Sprintf(":%d", webuiPort)
-	fmt.Printf("GoLC Web UI started on http://localhost:%d\n", webuiPort)
+	port := findFreePort(webuiPort)
+	addr := fmt.Sprintf(":%d", port)
+	fmt.Printf("GoLC Web UI started on http://localhost:%d\n", port)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		fmt.Fprintln(os.Stderr, "server error:", err)
 		os.Exit(1)
