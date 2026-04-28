@@ -1115,10 +1115,10 @@ const platforms = {
 const TOKEN_PH = '••••••••••••••••••••';
 const basicFields = {
   Github:           [{id:'Users',label:'Username / Login',ph:'your-github-login'},
-                     {id:'AccessToken',label:'Access Token <small class="text-muted">— requires <strong>repo</strong> scope</small>',ph:TOKEN_PH,secret:true,html:true},
+                     {id:'AccessToken',label:'Access Token <small class="text-muted">— Classic PAT: <strong>repo</strong> &nbsp;|&nbsp; Fine-grained: <strong>Contents: Read</strong> &amp; <strong>Metadata: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'}],
   GithubEnterprise: [{id:'Users',label:'Username / Login',ph:'your-login'},
-                     {id:'AccessToken',label:'Access Token <small class="text-muted">— requires <strong>repo</strong> scope</small>',ph:TOKEN_PH,secret:true,html:true},
+                     {id:'AccessToken',label:'Access Token <small class="text-muted">— Classic PAT: <strong>repo</strong> &nbsp;|&nbsp; Fine-grained: <strong>Contents: Read</strong> &amp; <strong>Metadata: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'},
                      {id:'Url',label:'Server URL',ph:'https://github.yourcompany.com/',onchange:'syncGHEBaseapi()'}],
   Gitlab:           [{id:'Users',label:'Username / Login',ph:'your-gitlab-login'},
