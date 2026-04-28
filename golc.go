@@ -693,8 +693,9 @@ func saveFileAnalysisResult(destDir, org string, dirs []string) error {
 	result := fileAnalysisResult{}
 	for _, d := range dirs {
 		result.ProjectBranches = append(result.ProjectBranches, fileProjectBranch{
-			Org:      org,
-			RepoSlug: filepath.Base(d),
+			Org:        org,
+			RepoSlug:   filepath.Base(d),
+			MainBranch: "file",
 		})
 	}
 	result.NumRepositories = len(result.ProjectBranches)
