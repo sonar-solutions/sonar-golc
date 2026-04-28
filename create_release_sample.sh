@@ -35,6 +35,7 @@ build_platform() {
   cd "${buildpath}${Release1}/${GOARCH}/${GOOS}/"
   zip -r "${FILE_DEST}.zip" "${FILE_DEST}"
   cd "$CMD"
+  return 0
 }
 
 build_platform arm64 darwin

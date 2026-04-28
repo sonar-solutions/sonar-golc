@@ -615,6 +615,21 @@ func parsePidList(s string) []int {
 }
 
 func runAnalysis(platformKey string) {
+	// Validate platformKey against the known allowlist before using it as a
+	// command argument, guarding against any unexpected value reaching exec.Command.
+	if _, ok := platformDefaults[platformKey]; !ok {
+		appState.broadcast(ProgressEvent{
+			Type:    "error",
+			Message: "unknown platform: " + platformKey,
+			Phase:   PhaseError,
+		})
+		appState.mu.Lock()
+		appState.running = false
+		appState.phase = PhaseError
+		appState.mu.Unlock()
+		return
+	}
+
 	golcBin, err := os.Executable()
 	if err != nil {
 		appState.broadcast(ProgressEvent{
