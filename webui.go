@@ -644,6 +644,11 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, ok := platformDefaults[req.Platform]; !ok {
+		http.Error(w, "unknown platform", 400)
+		return
+	}
+
 	// Persist config
 	if err := savePlatformConfig(req.Platform, req.Config); err != nil {
 		http.Error(w, "failed to save config: "+err.Error(), 500)
@@ -783,10 +788,10 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"url": url})
 }
 
+var staticHandler = http.StripPrefix("/dist/", http.FileServer(http.Dir("./dist/")))
+
 func handleStatic(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Clean(r.URL.Path)
-	// Serve from ./dist/
-	http.ServeFile(w, r, "."+path)
+	staticHandler.ServeHTTP(w, r)
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
