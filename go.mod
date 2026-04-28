@@ -6,7 +6,7 @@ require (
 	github.com/briandowns/spinner v1.23.0
 	github.com/fatih/color v1.18.0
 	github.com/go-git/go-git/v5 v5.18.0
-	github.com/google/go-github/v62 v62.0.0
+	github.com/google/go-github/v82 v82.0.0
 	github.com/hashicorp/go-getter v1.8.6
 	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/ktrysmt/go-bitbucket v0.9.80
@@ -66,7 +66,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
-	github.com/google/go-querystring v1.1.0 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect

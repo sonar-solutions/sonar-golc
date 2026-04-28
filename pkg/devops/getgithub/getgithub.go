@@ -15,7 +15,7 @@ import (
 	"github.com/SonarSource-Demos/sonar-golc/assets"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/briandowns/spinner"
-	"github.com/google/go-github/v62/github"
+	"github.com/google/go-github/v82/github"
 )
 
 type ExclusionList struct {

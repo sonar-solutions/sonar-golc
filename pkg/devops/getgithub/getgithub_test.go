@@ -10,7 +10,7 @@ import (
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/briandowns/spinner"
-	"github.com/google/go-github/v62/github"
+	"github.com/google/go-github/v82/github"
 )
 
 // Constants to avoid duplicating string literals (SonarQube maintainability)
