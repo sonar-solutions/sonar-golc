@@ -501,6 +501,9 @@ func readLines(r io.Reader, fn func(string)) {
 // ─── Analysis runner ──────────────────────────────────────────────────────────
 
 func findBinary(name string) (string, error) {
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
 	// Check same dir as current executable
 	exe, err := os.Executable()
 	if err == nil {

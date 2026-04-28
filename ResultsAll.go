@@ -6,10 +6,12 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +22,9 @@ import (
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
+
+//go:embed all:dist
+var distFS embed.FS
 
 const defaultPort = 8090
 
@@ -944,15 +949,22 @@ func setupHTTPHandlers(pageData PageData) {
 
 	// Repository Detail Page Handler
 	http.HandleFunc("/repository/", func(w http.ResponseWriter, r *http.Request) {
-		// Parse URL path to extract repository name and branch
-		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repository/"), "/")
-		if len(pathParts) < 2 {
+		// Parse URL path to extract repository name and branch.
+		// Branch names may contain "/" (e.g. feature/my-branch), so split on
+		// the first "/" only: everything after is the branch name.
+		rest := strings.TrimPrefix(r.URL.Path, "/repository/")
+		slashIdx := strings.Index(rest, "/")
+		if slashIdx < 0 {
 			http.Error(w, "Invalid repository URL", http.StatusBadRequest)
 			return
 		}
 
-		repoName := pathParts[0]
-		branchName := pathParts[1]
+		repoName := rest[:slashIdx]
+		branchName := rest[slashIdx+1:]
+		if repoName == "" || branchName == "" {
+			http.Error(w, "Invalid repository URL", http.StatusBadRequest)
+			return
+		}
 
 		// Get repository detail data
 		repoData, err := getRepositoryDetailData(repoName, branchName)
@@ -975,7 +987,11 @@ func setupHTTPHandlers(pageData PageData) {
 func handleServerStartup() {
 	port := getPort()
 	fmt.Println("✅ Launching web visualization...")
-	http.Handle("/dist/", http.StripPrefix("/dist/", http.FileServer(http.Dir("dist"))))
+	sub, err := fs.Sub(distFS, "dist")
+	if err != nil {
+		panic("embedded dist/ not found: " + err.Error())
+	}
+	http.Handle("/dist/", http.StripPrefix("/dist/", http.FileServer(http.FS(sub))))
 
 	if isPortOpen(port) {
 		handlePortConflict(port)
@@ -1210,7 +1226,7 @@ const htmlTemplate = `
   <body>
     <main class="main" id="top">
       <nav class="navbar navbar-expand-lg fixed-top navbar-dark" data-navbar-on-scroll="data-navbar-on-scroll">
-       <div class="container"><a class="navbar-brand" href="index.html"><img src="dist/img//Logo.png" alt="" /></a>
+       <div class="container"><a class="navbar-brand" href="index.html"><img src="dist/img/Logo.png" alt="" /></a>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><i class="fa-solid fa-bars text-white fs-3"></i></button>
           <div class="collapse navbar-collapse" id="navbarSupportedContent">
             <ul class="navbar-nav ms-auto mt-2 mt-lg-0">
@@ -1704,7 +1720,7 @@ const repositoryDetailTemplate = `
   <body>
     <main class="main" id="top">
       <nav class="navbar navbar-expand-lg fixed-top navbar-dark" data-navbar-on-scroll="data-navbar-on-scroll">
-       <div class="container"><a class="navbar-brand" href="/"><img src="/dist/img//Logo.png" alt="" /></a>
+       <div class="container"><a class="navbar-brand" href="/"><img src="/dist/img/Logo.png" alt="" /></a>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><i class="fa-solid fa-bars text-white fs-3"></i></button>
           <div class="collapse navbar-collapse" id="navbarSupportedContent">
             <ul class="navbar-nav ms-auto mt-2 mt-lg-0">
