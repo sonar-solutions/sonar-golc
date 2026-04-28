@@ -128,7 +128,7 @@ const directoryconf = "/config"
 var logFile *os.File
 var AppConfig Config
 var logger *logrus.Logger
-var version1 = "1.0.9"
+var version1 = "2.0"
 
 var directoriesToCreate = []string{
 	directoryconf,

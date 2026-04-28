@@ -189,7 +189,7 @@ func savePlatformConfig(platformKey string, platformCfg map[string]interface{}) 
 		full = map[string]interface{}{
 			"platforms": map[string]interface{}{},
 			"Logging":   map[string]interface{}{"Level": "debug"},
-			"Release":   map[string]interface{}{"Version": "1.0.9"},
+			"Release":   map[string]interface{}{"Version": "2.0"},
 		}
 	}
 	platforms, ok := full["platforms"].(map[string]interface{})
