@@ -180,6 +180,29 @@ var platformDefaults = map[string]map[string]interface{}{
 	},
 }
 
+// sanitizePlatformKey maps a user-supplied platform name to a compile-time
+// string literal, ensuring no tainted value ever reaches exec.Command.
+func sanitizePlatformKey(key string) (string, bool) {
+	switch key {
+	case "Github":
+		return "Github", true
+	case "GithubEnterprise":
+		return "GithubEnterprise", true
+	case "Gitlab":
+		return "Gitlab", true
+	case "BitBucket":
+		return "BitBucket", true
+	case "BitBucketSRV":
+		return "BitBucketSRV", true
+	case "Azure":
+		return "Azure", true
+	case "File":
+		return "File", true
+	default:
+		return "", false
+	}
+}
+
 func loadFullConfig() (map[string]interface{}, error) {
 	data, err := os.ReadFile("config.json")
 	if err != nil {
@@ -620,9 +643,8 @@ func parsePidList(s string) []int {
 }
 
 func runAnalysis(platformKey string) {
-	// Validate platformKey against the known allowlist before using it as a
-	// command argument, guarding against any unexpected value reaching exec.Command.
-	if _, ok := platformDefaults[platformKey]; !ok {
+	safePlatformKey, ok := sanitizePlatformKey(platformKey)
+	if !ok {
 		appState.broadcast(ProgressEvent{
 			Type:    "error",
 			Message: "unknown platform: " + platformKey,
@@ -652,7 +674,7 @@ func runAnalysis(platformKey string) {
 	// Delete Results dir before running analysis
 	_ = os.RemoveAll("Results")
 
-	cmd := exec.Command(golcBin, "--internal-run", platformKey)
+	cmd := exec.Command(golcBin, "--internal-run", safePlatformKey)
 	cmd.Stdin = strings.NewReader("")
 
 	outR, outW, _ := os.Pipe()
