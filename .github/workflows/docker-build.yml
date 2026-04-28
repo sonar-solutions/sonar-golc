@@ -42,4 +42,4 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: timothe/sonar-golc:${{ steps.meta.outputs.tag }}
+          tags: fabiogos846/sonar-golc:${{ steps.meta.outputs.tag }}

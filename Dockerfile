@@ -31,16 +31,13 @@ RUN chmod +x docker-entrypoint.sh && chown -R appuser:appuser /app
 
 USER appuser
 
-# GOLC_DEVOPS: which platform to analyze (e.g. Github, Gitlab, BitBucket, File); must match a key in config.json
-ENV GOLC_CONFIG_FILE=/config/config.json
-
-VOLUME ["/config", "/data"]
+VOLUME ["/data"]
 
 WORKDIR /data
 
-# GOLC_WEBUI_PORT (default 8091): web UI port (not used in Docker mode)
-# GOLC_RESULTS_PORT / PORT (default 8090): ResultsAll dashboard port
+# GOLC_WEBUI_PORT (default 8091): browser UI port
+# GOLC_RESULTS_PORT (default 8090): results dashboard port
 
-EXPOSE 8090
+EXPOSE 8091 8090
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

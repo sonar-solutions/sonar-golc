@@ -4,7 +4,7 @@ export TAG="XXXXXX" # Release TAG in GitHub
 export Release1="XXXXXX" # Release Number
 export buildpath="XXXXXXX"  # Replace with the path where the release files are located
 
-DOCKER_IMAGE="timothe/sonar-golc"  # Docker Hub image name
+DOCKER_IMAGE="fabiogos846/sonar-golc"  # Docker Hub image name
 
 CMD=`PWD`
 
