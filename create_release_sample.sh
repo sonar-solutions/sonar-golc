@@ -1,7 +1,7 @@
 #!/bin/bash
 
-export TAG="ver2.0.1" # Release TAG in GitHub
-export Release1="ver2.0.1" # Release Number
+export TAG="ver2.0.2" # Release TAG in GitHub
+export Release1="ver2.0.2" # Release Number
 export buildpath="/Users/fabio.gos_sonarsource/Documents/golc-builds"  # Replace with the path where the release files are located
 
 CMD=`PWD`
