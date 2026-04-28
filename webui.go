@@ -219,15 +219,26 @@ func savePlatformConfig(platformKey string, platformCfg map[string]interface{}) 
 
 var (
 	// Matches total repo/project/branch count for all platforms:
-	//   GitHub/BB/Azure: "The number of Repo(s) found is: N"
-	//   Azure/GitHub:    "Total Repositories that will be analyzed: N"
+	//   GitHub/BB/Azure: "Total Repositories that will be analyzed: N"
 	//   GitLab:          "TotalProject(s) that will be analyzed: N"
-	reTotal = regexp.MustCompile(`(?i)(?:number of (?:repo|repositor|director|project)|TotalProject[^:]*|Total\s+(?:Repositor|Branch|Project)[^:]*)\D*(\d+)`)
+	// Note: per-project "number of Repo(s) found is: N" lines are intentionally
+	// excluded here — they are handled by rePerProjectRepoCount below.
+	reTotal = regexp.MustCompile(`(?i)(?:number of (?:repositor|director)|TotalProject[^:]*|Total\s+(?:Repositor|Branch|Project)[^:]*)\D*(\d+)`)
 
 	// GitLab only: "✅ Group <name>: N project(s) to analyze" — logged after
 	// filterValidProjects so the count reflects only repos that will actually be
 	// analyzed (empty/archived excluded). This gives an accurate progress total.
 	reGitLabGroup = regexp.MustCompile(`(?i)Group\s*<([^>]+)>:\s*(\d+)\s+project.*?to analyze`)
+
+	// Azure/Bitbucket: "number of Project(s) found/to analyze" fires once before
+	// per-project loops begin. Reset the running repo total so it can be rebuilt
+	// by accumulating per-project rePerProjectRepoCount matches.
+	reProjectFound = regexp.MustCompile(`(?i)number of [Pp]roject\(s\)`)
+
+	// Azure/Bitbucket: "number of Repo(s) found is: N" fires once per project.
+	// Accumulate into total so the progress bar denominator grows as each
+	// project's repos are discovered (same pattern as reGitLabGroup for GitLab).
+	rePerProjectRepoCount = regexp.MustCompile(`(?i)number of Repo\(s\) found is:\s*(\d+)`)
 
 	reAnalyzed = regexp.MustCompile(`(?i)(?:The repository|directory) <([^>]+)> has been analyzed`)
 
@@ -255,6 +266,26 @@ func parseProgress(line string, st *AppState) *ProgressEvent {
 		ev.Type = "progress"
 		ev.Message = normalizeLogMessage(clean)
 		ev.Label = "Identifying repositories..."
+
+	// Azure/Bitbucket: project count line marks the start of per-project enumeration.
+	// Reset running repo total so it is rebuilt from per-project Repo(s) counts below.
+	case reProjectFound.MatchString(clean) && st.phase == PhaseIdentify:
+		st.total = 0
+		ev.Type = "progress"
+		ev.Message = normalizeLogMessage(clean)
+		ev.Label = "Identifying repositories..."
+
+	// Azure/Bitbucket: per-project repo count — accumulate into total.
+	// Fires once per project, so we sum across projects rather than overwrite.
+	case rePerProjectRepoCount.MatchString(clean) && st.phase == PhaseIdentify:
+		if m := rePerProjectRepoCount.FindStringSubmatch(clean); len(m) > 1 {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+				st.total += n
+			}
+		}
+		ev.Type = "progress"
+		ev.Message = normalizeLogMessage(clean)
+		ev.Label = fmt.Sprintf("Identifying repositories (%d/%d)", st.current, st.total)
 
 	case reTotal.MatchString(clean):
 		if m := reTotal.FindStringSubmatch(clean); len(m) > 1 {
