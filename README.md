@@ -31,8 +31,18 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 
 ## Quick Start
 
+Download the latest release from the [Releases page](https://github.com/sonar-solutions/sonar-golc/releases).
+
+Each archive contains two binaries:
+
+| Binary | Purpose |
+|--------|---------|
+| `webui` / `webui.exe` | Browser-based launcher — start here |
+| `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `webui`) |
+
+Then run
 ```bash
-./webui
+./webui or ./webui.exe
 ```
 
 Open the URL printed in the terminal (default: `http://localhost:8091`), then:
@@ -43,24 +53,6 @@ Open the URL printed in the terminal (default: `http://localhost:8091`), then:
 4. **View Results** — click "View Results" when complete. The results dashboard opens automatically.
 
 > **Ports are managed automatically.** If the default port is in use, GoLC picks the next free one. The actual URL is always printed on startup.
-
-> **GitLab tip:** Leave the Organization field blank to auto-discover all groups your token has access to.
-
----
-
-## Installation
-
-Pre-built binaries
-
-Download the latest release from the [Releases page](https://github.com/sonar-solutions/sonar-golc/releases).
-
-Each archive contains two binaries:
-
-| Binary | Purpose |
-|--------|---------|
-| `webui` / `webui.exe` | Browser-based launcher — start here |
-| `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `webui`) |
-
 
 ---
 
