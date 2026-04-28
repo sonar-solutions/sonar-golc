@@ -66,38 +66,27 @@ go build -tags resultsall -o ResultsAll ResultsAll.go
 
 ## Creating a Release
 
-The `create_release_sample.sh` script builds all binaries for every supported platform and uploads them as ZIP archives to a GitHub release.
+The `create_release_sample.sh` script builds all binaries for every supported platform, packages them into ZIP archives, and optionally builds a multi-arch Docker image.
 
-**Prerequisites:** `bash`, `go`, `zip`, `curl`, `jq`, `git`
+**Prerequisites:** `bash`, `go`, `zip`, `git` (+ `docker` with `buildx` for the Docker step)
 
 ### 1. Configure the script
 
 Open `create_release_sample.sh` and set the three variables at the top:
 
 ```bash
-export TAG="V2.0"           # Git tag that will be created on GitHub
-export Release1="2.0"       # Version number used in file names
+export TAG="v2.0"           # Version tag embedded in the binaries
+export Release1="2.0"       # Version number used in file/directory names
 export buildpath="/tmp/golc-releases/"  # Local directory for build output
 ```
 
-Also update these two variables if releasing to a different repository:
+To build and push a Docker image, also set:
 
 ```bash
-GITHUB_ORG="sonar-solutions"   # GitHub organization
-GITHUB_REPO="sonar-golc"       # Repository name
+DOCKER_IMAGE="your-dockerhub-user/sonar-golc"
 ```
 
-Update `RELEASE_DESCRIPTION` with the changelog for this release.
-
-### 2. Set your GitHub token
-
-The token must have `repo` scope and be authorized for the `sonar-solutions` organization (including SAML SSO if enforced):
-
-```bash
-export GITHUB_TOKEN=ghp_...
-```
-
-### 3. Run the script
+### 2. Run the script
 
 ```bash
 chmod +x create_release_sample.sh
@@ -108,7 +97,9 @@ The script will:
 1. Build `webui` and `ResultsAll` for all 6 platform combinations (arm64/amd64 × macOS/Linux/Windows)
 2. Package each combination into a ZIP archive containing the binaries, README, config sample, and assets
 3. Create `source.zip` and `source.tar.gz` from the current git HEAD
-4. Create (or update) the GitHub release at the specified tag and upload all archives
+4. Build a multi-arch Docker image (amd64 + arm64) — uncomment the Docker section to enable
+
+To push the Docker image after building, run the command printed at the end of the script.
 
 ### Release archive contents
 
@@ -156,7 +147,6 @@ docker compose up
 |----------|---------|-------------|
 | `GOLC_DEVOPS` | `Github` | Platform key: `Github`, `Gitlab`, `BitBucket`, `BitBucketSRV`, `Azure`, `File` |
 | `GOLC_RESULTS_PORT` | `8090` | Port for the ResultsAll dashboard (also accepts legacy `PORT`) |
-| `GOLC_WEBUI_PORT` | `8091` | Port for the Web UI (not applicable in Docker mode) |
 
 See [docs/docker.md](docs/docker.md) for full Docker usage details.
 
@@ -164,17 +154,20 @@ See [docs/docker.md](docs/docker.md) for full Docker usage details.
 
 ## Port Configuration
 
-Both binaries pick up their port from environment variables, falling back to defaults:
+Both binaries **automatically find a free port** at startup — if the default port is already in use, they pick the next available one. The actual URL is always printed to the console on startup.
+
+To pin a specific port, set the corresponding environment variable before launching:
 
 | Variable | Binary | Default | Description |
 |----------|--------|---------|-------------|
-| `GOLC_WEBUI_PORT` | `webui` | `8091` | Web UI listening port |
-| `GOLC_RESULTS_PORT` | `ResultsAll` | `8090` | Results dashboard listening port |
+| `GOLC_WEBUI_PORT` | `webui` | `8091` | Web UI port (auto-selects if busy) |
+| `GOLC_RESULTS_PORT` | `ResultsAll` | `8090` | Results dashboard port (managed automatically by webui) |
 
 ```bash
 GOLC_WEBUI_PORT=9001 ./webui
-GOLC_RESULTS_PORT=9002 ./ResultsAll
 ```
+
+> The results dashboard port is managed automatically by the Web UI — you never need to set `GOLC_RESULTS_PORT` manually when using `webui`.
 
 ---
 
@@ -185,7 +178,7 @@ The Web UI is the easiest way to run GoLC. It provides a browser-based step-by-s
 **Start the Web UI:**
 ```bash
 ./webui
-# Open http://localhost:8091 in your browser
+# The URL is printed on startup, e.g.: GoLC Web UI started on http://localhost:8091
 ```
 
 **Workflow:**
