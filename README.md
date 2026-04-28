@@ -19,7 +19,6 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 
 - [Quick Start](#quick-start)
 - [Installation](#installation)
-- [Docker](#docker)
 - [Configuration](#configuration)
   - [Optional Parameters](#optional-parameters)
 - [Reports](#reports)
@@ -60,29 +59,6 @@ Open the URL printed in the terminal (default: `http://localhost:8091`), then:
 4. **View Results** — click "View Results" when complete. The results dashboard opens automatically.
 
 > **Ports are managed automatically.** If the default port is in use, GoLC picks the next free one. The actual URL is always printed on startup.
-
----
-
-## Docker
-
-```bash
-docker run -p 8091:8091 -p 8090:8090 -v "$(pwd)/data:/data" fabiogos846/sonar-golc
-```
-
-Open `http://localhost:8091`, configure your platform in the browser, and click **Run Analysis**. Results open at `http://localhost:8090` when complete. Everything is saved to the mounted `data/` directory and persists across restarts.
-
-**Docker Compose:**
-
-```bash
-docker compose up
-```
-
-The included `docker-compose.yml` mounts `./data` automatically.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GOLC_WEBUI_PORT` | `8091` | Browser UI port |
-| `GOLC_RESULTS_PORT` | `8090` | Results dashboard port |
 
 ---
 

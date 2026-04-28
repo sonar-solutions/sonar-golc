@@ -4,8 +4,6 @@ export TAG="XXXXXX" # Release TAG in GitHub
 export Release1="XXXXXX" # Release Number
 export buildpath="XXXXXXX"  # Replace with the path where the release files are located
 
-DOCKER_IMAGE="fabiogos846/sonar-golc"  # Docker Hub image name
-
 CMD=`PWD`
 
 #----------------------- Begin Build --------------------------------#
@@ -72,32 +70,6 @@ if command -v git &> /dev/null && git rev-parse --git-dir > /dev/null 2>&1; then
 else
     echo "Warning: Not a git repository, skipping source archives"
 fi
-
-#----------------------- Docker Build --------------------------------#
-
-echo "Building multi-arch Docker image..."
-
-# Ensure buildx builder with multi-arch support exists
-if ! docker buildx inspect golc-builder > /dev/null 2>&1; then
-    docker buildx create --name golc-builder --use
-else
-    docker buildx use golc-builder
-fi
-
-docker buildx build \
-    --platform linux/amd64,linux/arm64 \
-    --build-arg VERSION="${TAG}" \
-    -t "${DOCKER_IMAGE}:${TAG}" \
-    -t "${DOCKER_IMAGE}:latest" \
-    --load=false \
-    .
-
-echo "✓ Docker image built: ${DOCKER_IMAGE}:${TAG} and ${DOCKER_IMAGE}:latest"
-echo ""
-echo "To push to Docker Hub, run:"
-echo "  docker buildx build --platform linux/amd64,linux/arm64 -t ${DOCKER_IMAGE}:${TAG} -t ${DOCKER_IMAGE}:latest --push ."
-
-#------------------------------ End Docker ----------------------------#
 
 echo ""
 echo "Build complete. Archives written to: ${buildpath}${Release1}/"
