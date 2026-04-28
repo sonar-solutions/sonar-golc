@@ -50,7 +50,7 @@ Open the URL printed in the terminal (default: `http://localhost:8091`), then:
 
 ## Installation
 
-### Option 1 — Pre-built binaries
+Pre-built binaries
 
 Download the latest release from the [Releases page](https://github.com/sonar-solutions/sonar-golc/releases).
 
@@ -61,23 +61,10 @@ Each archive contains two binaries:
 | `webui` / `webui.exe` | Browser-based launcher — start here |
 | `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `webui`) |
 
-### Option 2 — Build from source
-
-Requires [Go 1.25+](https://go.dev/).
-
-```bash
-git clone https://github.com/sonar-solutions/sonar-golc.git
-cd sonar-golc
-
-go build -tags webui -o webui webui.go golc.go
-go build -tags resultsall -o ResultsAll ResultsAll.go
-```
 
 ---
 
 ## Docker
-
-Docker gives you the same browser UI as the native binary — no config files to edit.
 
 ```bash
 docker run -p 8091:8091 -p 8090:8090 -v "$(pwd)/data:/data" fabiogos846/sonar-golc
@@ -114,14 +101,6 @@ Credentials are entered in the browser and saved automatically — no config fil
 | Bitbucket Data Center | Repo read, pull |
 | Azure DevOps | Code: Read · Project and Team: Read |
 
-### Platform notes
-
-**GitLab** — The Organization field expects the **URL slug** (e.g. `my-group` from `https://gitlab.com/my-group`), not the display name. Use a comma-separated list for multiple groups, or leave it blank to auto-discover all groups your token has access to.
-
-**Bitbucket Cloud** — Use an **API Token** (not an App Password) from your Atlassian account settings. The Username field must be your email address.
-
-**File Mode** — To analyze multiple directories, create a `.cloc_file_load` file with one path per line. It takes precedence over the Directory field in the UI.
-
 ---
 
 ### Optional Parameters
@@ -140,42 +119,14 @@ Credentials are entered in the browser and saved automatically — no config fil
 | `Repos` | string | Limit to specific repo slugs (comma-separated). |
 | `Org` | bool | `true` = organization, `false` = personal account (GitHub only). |
 
-**Exclusion file format** (`.cloc_<platform>_ignore`):
-
-```
-# GitHub / GitLab — one repo slug per line
-repo-slug-1
-repo-slug-2
-
-# Bitbucket / Azure DevOps
-PROJECT_KEY
-PROJECT_KEY/REPO_SLUG
-```
 
 ---
 
 ## Reports
 
-Reports are written to the `Results` directory after each run:
+Reports are available at the `Results` page after each run:
 
-```
-Results/
-├── bylanguage-report/
-│   └── Result_<repo>.json
-├── byfile-report/
-│   ├── csv-report/
-│   │   └── Result_<repo>_byfile.csv
-│   ├── pdf-report/
-│   │   └── Result_<repo>_byfile.pdf
-│   └── Result_<repo>_byfile.json
-├── GlobalReport.json
-├── GlobalReport.pdf
-└── GlobalReport.txt
-```
 
-![report](imgs/report.png)
-
-![report](imgs/reportbyfiles.png)
 
 ---
 
@@ -232,31 +183,3 @@ YAML               | .yaml, .yml                              | #               
 ## Execution Log
 
 GoLC writes a detailed log to `Logs/Logs.log` in the working directory. The file is recreated on each run. Use it to troubleshoot authentication errors, rate limits, or unexpected results.
-
----
-
-## Creating a Release
-
-The `create_release_sample.sh` script builds release archives for all platforms and optionally produces a multi-arch Docker image.
-
-**Prerequisites:** `bash`, `go`, `zip`, `git` · Docker with `buildx` for the Docker step.
-
-### 1. Configure
-
-```bash
-export TAG="v2.0"                              # Version tag embedded in the binaries
-export Release1="2.0"                          # Used in archive file names
-export buildpath="/tmp/golc-releases/"         # Output directory
-DOCKER_IMAGE="your-dockerhub-user/sonar-golc"  # Docker Hub image name
-```
-
-### 2. Run
-
-```bash
-chmod +x create_release_sample.sh
-./create_release_sample.sh
-```
-
-The script builds `webui` and `ResultsAll` for all 6 platform combinations (arm64/amd64 × macOS/Linux/Windows), packages each into a ZIP archive, and creates `source.zip` / `source.tar.gz` from the current git HEAD.
-
-The Docker build section is commented out by default. Uncomment it to build a multi-arch image. To push to Docker Hub, run the command printed at the end of the script.
