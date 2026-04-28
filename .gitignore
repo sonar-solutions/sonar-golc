@@ -1,5 +1,7 @@
 # Build artifacts
+sonar-golc
 golc
+webui
 ResultsAll
 ResultsAll-*
 test-*

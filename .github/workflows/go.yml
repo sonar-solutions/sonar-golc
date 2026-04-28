@@ -4,9 +4,10 @@ on:
   push:
     branches:
       - main
+      - ver2.0
   pull_request:
     types: [opened, synchronize, reopened]
-  workflow_dispatch: # Allows manual triggers
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,12 +20,12 @@ jobs:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: Cache Go modules
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -38,55 +39,38 @@ jobs:
 
       - name: Build Go apps
         run: |
-          go build -trimpath -tags=golc -o golc ./golc.go
+          go build -trimpath -tags=webui -o webui webui.go golc.go
           go build -trimpath -tags=resultsall -o ResultsAll ./ResultsAll.go
 
       - name: Generate test coverage reports
         run: |
-          # Create config file for testing
           cp config_sample.json config.json
-          
-          echo "📦 Testing pkg/ directory..."
+
+          echo "Testing pkg/ directory..."
           go test -coverprofile=coverage-pkg.out ./pkg/...
-          
-          echo "🔧 Testing golc application..."
-          go test -tags=golc -coverprofile=coverage-golc.out .
-          
-          echo "🌐 Testing resultsall application..."
+
+          echo "Testing golc application..."
+          go test -tags=webui -coverprofile=coverage-webui.out .
+
+          echo "Testing resultsall application..."
           go test -tags=resultsall -coverprofile=coverage-resultsall.out .
-          
-          echo "📊 Coverage summary:"
-          echo "pkg/ directory:"
+
+          echo "Coverage summary:"
+          echo "pkg/:"
           go tool cover -func=coverage-pkg.out | tail -1
-          echo "golc application:"
-          go tool cover -func=coverage-golc.out | tail -1
-          echo "resultsall application:"
+          echo "golc:"
+          go tool cover -func=coverage-webui.out | tail -1
+          echo "resultsall:"
           go tool cover -func=coverage-resultsall.out | tail -1
 
-      # SonarQube Analysis
       - name: Run SonarQube Analysis
         uses: SonarSource/sonarqube-scan-action@v7.0.0
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_SQC_TOKEN }}
-      # Fail the build if the quality gate is not met
-      # - uses: SonarSource/sonarqube-quality-gate-action@v1
-      #   timeout-minutes: 5
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
 
-  # manual_approval:
-  #   runs-on: ubuntu-latest
-  #   needs: build
-  #   steps:
-  #     - name: Wait for manual approval
-  #       uses: chrnorm/deploy-approval-action@v1.2.0
-  #       with:
-  #         approvers: 'your-github-username' # List the GitHub usernames who can approve
-  #         token: ${{ secrets.GITHUB_TOKEN }}
-
-  # release_stub:
-  #   runs-on: ubuntu-latest
-  #   # needs: manual_approval
-  #   steps:
-  #     - name: Release process (stubbed)
-  #       run: echo "Release process started. Stubbed out for now."
+      - name: SonarQube Quality Gate check
+        uses: SonarSource/sonarqube-quality-gate-action@cf038b0e0cdecfa9e56c198bbb7d21d751d62c3b # v1.2.0
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

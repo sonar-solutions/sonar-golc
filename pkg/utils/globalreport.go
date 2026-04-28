@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/jung-kurt/gofpdf"
@@ -189,83 +190,256 @@ func readGlobalInfoFromFile(path string) (Globalinfo, error) {
 	return g, nil
 }
 
-// renderGlobalPDF generates the GlobalReport.pdf from languages and global info.
-func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo) error {
-	var unit = "%"
-	loggers := NewLogger()
-	Org := "Organization : " + ginfo.Organization
-	Tloc := "Total lines Of code : " + ginfo.TotalLinesOfCode
-	Lrepos := "Largest Repository : " + ginfo.LargestRepository
-	Lrepoloc := "Lines of code largest Repository : " + ginfo.LinesOfCodeLargestRepo
-	NBrepos := fmt.Sprintf("Number of Repositories analyzed : %d", ginfo.NumberRepos)
+// prepareLanguagesForPDF sorts languages descending by LOC, computes percentages and formatted values,
+// and returns the sorted slice together with the maximum LOC value (for bar-width scaling).
+func prepareLanguagesForPDF(languages []LanguageData) ([]LanguageData, int) {
+	sort.Slice(languages, func(i, j int) bool {
+		return languages[i].CodeLines > languages[j].CodeLines
+	})
 
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.AddPage()
-
-	logoPath := "imgs/Logob.png"
-	//pdf.Image(logoPath, 10, 10, 50, 0, false, "", 0, "")
-
-	pdf.Ln(10)
-	pdf.SetFont("Times", "B", 12)
-	pdf.Cell(0, 20, "Global Report")
-	pdf.Ln(20)
-
-	pdf.SetFont("Times", "B", 12)
-	pdf.SetFillColor(51, 153, 255)
-	pdf.CellFormat(100, 10, Org, "0", 1, "", true, 0, "")
-	pdf.SetFont("Times", "", 10)
-	pdf.SetFillColor(102, 178, 255)
-	pdf.CellFormat(100, 10, Tloc, "0", 1, "", true, 0, "")
-	pdf.CellFormat(100, 10, Lrepos, "0", 1, "", true, 0, "")
-	pdf.CellFormat(100, 10, Lrepoloc, "0", 1, "", true, 0, "")
-	pdf.CellFormat(100, 10, NBrepos, "0", 1, "", true, 0, "")
-	pdf.SetFont("Times", "", 8)
-	pdf.CellFormat(100, 8, "Note: "+NoteExcludedFromTotal, "0", 1, "L", true, 0, "")
-	pdf.Ln(10)
-
-	pdf.SetFont("Times", "B", 12)
-	pdf.SetFillColor(51, 153, 255)
-
-	rowCount := 0
-	const maxRowsPerPage = 14
-
-	for _, lang := range languages {
-		if rowCount%maxRowsPerPage == 0 {
-			if rowCount != 0 {
-				pdf.AddPage()
-			}
-
-			pdf.Image(logoPath, 10, 10, 50, 0, false, "", 0, "")
-			pdf.Ln(10)
-			pdf.SetFont("Times", "B", 12)
-			pdf.SetFillColor(51, 153, 255)
-			pdf.CellFormat(100, 10, "Languages :", "0", 1, "", true, 0, "")
-			pdf.SetFont("Times", "", 10)
-			pdf.SetFillColor(102, 178, 255)
-			rowCount = 0
-
+	maxLOC := 0
+	for _, l := range languages {
+		if l.CodeLines > maxLOC {
+			maxLOC = l.CodeLines
 		}
-
-		totalForPct := getTotalCodeLinesExcludingJSON(languages)
-		if strings.TrimSpace(lang.Language) == LanguageExcludedFromTotalLOC {
-			lang.Percentage = 0
-		} else if totalForPct > 0 {
-			lang.Percentage = float64(lang.CodeLines) / float64(totalForPct) * 100
-		} else {
-			lang.Percentage = 0
-		}
-		lang.CodeLinesF = fmt.Sprintf("%d", lang.CodeLines)
-		pdf.SetFont("Times", "", 10)
-		pdflang := fmt.Sprintf("%s : %.2f %s - %s LOC", lang.Language, lang.Percentage, unit, lang.CodeLinesF)
-		if strings.TrimSpace(lang.Language) == LanguageExcludedFromTotalLOC {
-			pdflang = fmt.Sprintf("%s : (excluded from total) - %s LOC", lang.Language, lang.CodeLinesF)
-		}
-		pdf.CellFormat(100, 10, pdflang, "0", 1, "", true, 0, "")
-		rowCount++
 	}
 
+	totalExcl := getTotalCodeLinesExcludingJSON(languages)
+	for i := range languages {
+		if strings.TrimSpace(languages[i].Language) == LanguageExcludedFromTotalLOC || totalExcl == 0 {
+			languages[i].Percentage = 0
+		} else {
+			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalExcl) * 100
+		}
+		languages[i].CodeLinesF = FormatCodeLines(float64(languages[i].CodeLines))
+	}
+	return languages, maxLOC
+}
+
+// renderLanguageRows draws the per-language table rows, adding a page break with a continuation
+// header when necessary.
+func renderLanguageRows(pdf *gofpdf.Fpdf, languages []LanguageData, maxLOC int, drawColHeaders func(),
+	marginL, pageH, marginB, colNum, colLang, colLOC, colPct, colBar, rowH float64,
+	barColors [][3]int) {
+	for i, lang := range languages {
+		if pdf.GetY()+rowH > pageH-marginB-8 {
+			pdf.AddPage()
+			pdf.SetFillColor(0, 115, 186)
+			pdf.Rect(marginL, pdf.GetY(), colNum+colLang+colLOC+colPct+colBar, 7, "F")
+			pdf.SetFont("Helvetica", "B", 9)
+			pdf.SetTextColor(255, 255, 255)
+			pdf.SetX(marginL + 2)
+			pdf.CellFormat(colNum+colLang+colLOC+colPct+colBar-2, 7, "Language Breakdown (continued)", "", 1, "L", false, 0, "")
+			pdf.Ln(1)
+			drawColHeaders()
+		}
+		renderLanguageRow(pdf, lang, i, maxLOC, barColors, marginL, colNum, colLang, colLOC, colPct, colBar, rowH)
+	}
+}
+
+// renderLanguageRow draws a single language row in the breakdown table.
+func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barColors [][3]int,
+	marginL, colNum, colLang, colLOC, colPct, colBar, rowH float64) {
+	rowY := pdf.GetY()
+	if i%2 == 0 {
+		pdf.SetFillColor(255, 255, 255)
+	} else {
+		pdf.SetFillColor(244, 247, 251)
+	}
+	pdf.Rect(marginL, rowY, colNum+colLang+colLOC+colPct+colBar, rowH, "F")
+
+	bc := barColors[i%len(barColors)]
+
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetTextColor(130, 130, 140)
+	pdf.SetXY(marginL, rowY)
+	pdf.CellFormat(colNum, rowH, fmt.Sprintf("%d", i+1), "0", 0, "C", false, 0, "")
+
+	langDisplay := lang.Language
+	if strings.TrimSpace(lang.Language) == LanguageExcludedFromTotalLOC {
+		langDisplay = lang.Language + " (excl.)"
+	}
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetTextColor(20, 20, 30)
+	pdf.CellFormat(colLang, rowH, langDisplay, "0", 0, "L", false, 0, "")
+
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.CellFormat(colLOC, rowH, lang.CodeLinesF, "0", 0, "R", false, 0, "")
+
+	pctStr := fmt.Sprintf("%.1f%%", lang.Percentage)
+	if strings.TrimSpace(lang.Language) == LanguageExcludedFromTotalLOC {
+		pctStr = "-"
+	}
+	pdf.CellFormat(colPct, rowH, pctStr, "0", 0, "R", false, 0, "")
+
+	barX := marginL + colNum + colLang + colLOC + colPct
+	trackW := colBar - 4
+	midY := rowY + (rowH-3)/2
+	pdf.SetFillColor(218, 228, 240)
+	pdf.Rect(barX+2, midY, trackW, 3, "F")
+	if maxLOC > 0 && lang.CodeLines > 0 {
+		fillW := float64(lang.CodeLines) / float64(maxLOC) * trackW
+		if fillW < 1 {
+			fillW = 1
+		}
+		pdf.SetFillColor(bc[0], bc[1], bc[2])
+		pdf.Rect(barX+2, midY, fillW, 3, "F")
+	}
+
+	pdf.SetXY(marginL, rowY+rowH)
+}
+
+// renderGlobalPDF generates the GlobalReport.pdf from languages and global info.
+func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo) error {
+	loggers := NewLogger()
+
+	languages, maxLOC := prepareLanguagesForPDF(languages)
+
+	const (
+		pageW    = 210.0
+		pageH    = 297.0
+		marginL  = 15.0
+		marginR  = 15.0
+		marginT  = 28.0
+		marginB  = 15.0
+		contentW = pageW - marginL - marginR
+	)
+
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AliasNbPages("{nb}")
+	pdf.SetMargins(marginL, marginT, marginR)
+	pdf.SetAutoPageBreak(true, marginB+8)
+
+	logoPath := "imgs/Logob.png"
+	_, logoErr := os.Stat(logoPath)
+
+	pdf.SetHeaderFunc(func() {
+		// Dark navy band
+		pdf.SetFillColor(10, 14, 26)
+		pdf.Rect(0, 0, pageW, 22, "F")
+		// Blue accent stripe
+		pdf.SetFillColor(0, 115, 186)
+		pdf.Rect(0, 22, pageW, 1.5, "F")
+		// Logo (right side)
+		if logoErr == nil {
+			pdf.Image(logoPath, 163, 2, 32, 0, false, "", 0, "")
+		}
+		// Report title
+		pdf.SetFont("Helvetica", "B", 12)
+		pdf.SetTextColor(255, 255, 255)
+		pdf.SetXY(marginL, 7)
+		pdf.CellFormat(140, 7, "GoLC - Global Lines of Code Report", "", 0, "L", false, 0, "")
+		// Org subtitle
+		pdf.SetFont("Helvetica", "", 8)
+		pdf.SetTextColor(170, 200, 225)
+		pdf.SetXY(marginL, 15)
+		org := ginfo.Organization
+		if len(org) > 50 {
+			org = org[:47] + "..."
+		}
+		pdf.CellFormat(140, 5, "Organization: "+org, "", 0, "L", false, 0, "")
+		pdf.SetTextColor(0, 0, 0)
+		pdf.SetY(marginT)
+	})
+
+	pdf.SetFooterFunc(func() {
+		pdf.SetY(-12)
+		pdf.SetFont("Helvetica", "I", 7)
+		pdf.SetTextColor(150, 150, 150)
+		pdf.SetX(marginL)
+		note := NoteExcludedFromTotal
+		if len(note) > 85 {
+			note = note[:82] + "..."
+		}
+		pdf.CellFormat(contentW-22, 4, note, "", 0, "L", false, 0, "")
+		pdf.SetX(marginL + contentW - 22)
+		pdf.CellFormat(22, 4, fmt.Sprintf("Page %d / {nb}", pdf.PageNo()), "", 0, "R", false, 0, "")
+		pdf.SetTextColor(0, 0, 0)
+	})
+
+	pdf.AddPage()
+
+	// ── Stat cards ────────────────────────────────────────────────────
+	cardW := (contentW - 12.0) / 4 // 3 gaps of 4mm
+	cardH := 22.0
+	cardsY := pdf.GetY()
+
+	type statCard struct {
+		title, value string
+		r, g, b      int
+	}
+	valOrNA := func(s string) string {
+		if s == "" {
+			return "N/A"
+		}
+		if len(s) > 18 {
+			return s[:15] + "..."
+		}
+		return s
+	}
+	cards := []statCard{
+		{"Total LOC", valOrNA(ginfo.TotalLinesOfCode), 0, 115, 186},
+		{"Repositories", fmt.Sprintf("%d", ginfo.NumberRepos), 0, 168, 110},
+		{"Largest Repo", valOrNA(ginfo.LargestRepository), 241, 146, 49},
+		{"Largest Repo LOC", valOrNA(ginfo.LinesOfCodeLargestRepo), 167, 86, 180},
+	}
+	for i, c := range cards {
+		x := marginL + float64(i)*(cardW+4)
+		pdf.SetFillColor(246, 248, 252)
+		pdf.Rect(x, cardsY, cardW, cardH, "F")
+		pdf.SetFillColor(c.r, c.g, c.b)
+		pdf.Rect(x, cardsY, 3, cardH, "F")
+		pdf.SetFont("Helvetica", "", 7)
+		pdf.SetTextColor(110, 110, 120)
+		pdf.SetXY(x+5, cardsY+4)
+		pdf.CellFormat(cardW-6, 4, c.title, "", 0, "L", false, 0, "")
+		pdf.SetFont("Helvetica", "B", 10)
+		pdf.SetTextColor(10, 14, 26)
+		pdf.SetXY(x+5, cardsY+10)
+		pdf.CellFormat(cardW-6, 6, c.value, "", 0, "L", false, 0, "")
+	}
+	pdf.SetXY(marginL, cardsY+cardH+6)
+
+	// ── Language breakdown section header ────────────────────────────
+	pdf.SetFillColor(0, 115, 186)
+	pdf.Rect(marginL, pdf.GetY(), contentW, 8, "F")
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetX(marginL + 2)
+	pdf.CellFormat(contentW-2, 8, "Language Breakdown", "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+
+	// Column widths
+	const (
+		colNum  = 10.0
+		colLang = 52.0
+		colLOC  = 30.0
+		colPct  = 22.0
+	)
+	colBar := contentW - colNum - colLang - colLOC - colPct
+
+	drawColHeaders := func() {
+		pdf.SetFillColor(220, 230, 242)
+		pdf.SetFont("Helvetica", "B", 8)
+		pdf.SetTextColor(40, 40, 50)
+		pdf.SetX(marginL)
+		pdf.CellFormat(colNum, 6, "#", "0", 0, "C", true, 0, "")
+		pdf.CellFormat(colLang, 6, "LANGUAGE", "0", 0, "L", true, 0, "")
+		pdf.CellFormat(colLOC, 6, "LOC", "0", 0, "R", true, 0, "")
+		pdf.CellFormat(colPct, 6, "SHARE %", "0", 0, "R", true, 0, "")
+		pdf.CellFormat(colBar, 6, "BAR", "0", 1, "L", true, 0, "")
+	}
+	drawColHeaders()
+
+	barColors := [][3]int{
+		{0, 115, 186}, {0, 168, 110}, {241, 146, 49}, {167, 86, 180},
+		{231, 76, 60}, {22, 160, 133}, {52, 73, 94}, {200, 130, 20},
+	}
+
+	rowH := 7.0
+	renderLanguageRows(pdf, languages, maxLOC, drawColHeaders, marginL, pageH, marginB, colNum, colLang, colLOC, colPct, colBar, rowH, barColors)
 	if err := pdf.OutputFileAndClose("Results/GlobalReport.pdf"); err != nil {
-		loggers.Errorf("❌ Error saving PDF file: %v", err)
+		loggers.Errorf("Error saving PDF file: %v", err)
 		return err
 	}
 	return nil

@@ -350,10 +350,16 @@ func generateRepositoryJSONReport(summary *RepositorySummaryReport, outputPath s
 // generateRepositoryPDFReport creates a PDF report of all repositories
 func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath string) error {
 	const codeLinesHeader = "Code Lines"
-	const maxRowsPerPage = 35
+	const (
+		rowH         = 6.0
+		pageH        = 297.0
+		bottomMargin = 15.0
+	)
 
-	// Create PDF
+	// Create PDF with manual page-break management to avoid blank pages caused
+	// by the mismatch between header content height and a fixed row-count limit.
 	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.SetAutoPageBreak(false, 0)
 	pdf.AddPage()
 
 	// Add logo if it exists
@@ -395,13 +401,14 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 	// Initial table header
 	createPDFTableHeader(pdf, codeLinesHeader)
 
-	// Table data
+	// Table data — page breaks triggered by remaining space, not row count
 	pdf.SetFont("Arial", "", 8)
 	pdf.SetFillColor(240, 240, 240)
 
 	rowCount := 0
 	for _, repo := range summary.Repositories {
-		if rowCount >= maxRowsPerPage {
+		// Break before the row would overflow the page
+		if pdf.GetY()+rowH > pageH-bottomMargin {
 			pdf.AddPage()
 			createPDFTableHeader(pdf, codeLinesHeader)
 			pdf.SetFont("Arial", "", 8)
@@ -409,7 +416,6 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 			rowCount = 0
 		}
 
-		// Alternate row colors
 		fill := rowCount%2 == 0
 		createRepositoryPDFRow(pdf, repo, fill)
 		rowCount++

@@ -1,5 +1,5 @@
-//go:build golc
-// +build golc
+//go:build webui
+// +build webui
 
 package main
 
@@ -7,13 +7,10 @@ import (
 	"archive/zip"
 	"bufio"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -128,7 +125,7 @@ const directoryconf = "/config"
 var logFile *os.File
 var AppConfig Config
 var logger *logrus.Logger
-var version1 = "1.0.9"
+var version1 = "2.0"
 
 var directoriesToCreate = []string{
 	directoryconf,
@@ -467,12 +464,13 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 	excludeExtensions = convertToSliceString(platformConfig["ExtExclusion"].([]interface{}))
 	excludePath := getExcludePaths(platformConfig["ExcludePaths"])
 
+	baseapi := extractDomain(platformConfig["Baseapi"].(string))
 	params := RepoParams{
 		ProjectKey: p.Org,
 		Namespace:  "",
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
-		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), platformConfig["Baseapi"].(string), p.Org, p.RepoSlug),
+		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), baseapi, p.Org, p.RepoSlug),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -676,15 +674,126 @@ func AnalyseReposListAzure(DestinationResult string, platformConfig map[string]i
 	return AnalyseReposList(DestinationResult, platformConfig, repoInterfaces, analyseAzurebRepo)
 }
 
+/* ---------------- File analysis result serialisation ---------------- */
+
+type fileProjectBranch struct {
+	Org         string `json:"Org"`
+	ProjectKey  string `json:"ProjectKey"`
+	RepoSlug    string `json:"RepoSlug"`
+	MainBranch  string `json:"MainBranch"`
+	LargestSize int64  `json:"LargestSize"`
+}
+
+type fileAnalysisResult struct {
+	NumRepositories int                  `json:"NumRepositories"`
+	ProjectBranches []fileProjectBranch  `json:"ProjectBranches"`
+}
+
+func saveFileAnalysisResult(destDir, org string, dirs []string) error {
+	result := fileAnalysisResult{}
+	for _, d := range dirs {
+		result.ProjectBranches = append(result.ProjectBranches, fileProjectBranch{
+			Org:      org,
+			RepoSlug: filepath.Base(d),
+		})
+	}
+	result.NumRepositories = len(result.ProjectBranches)
+
+	configDir := filepath.Join(destDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(filepath.Join(configDir, "analysis_result_file.json"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return json.NewEncoder(f).Encode(result)
+}
+
 /* ---------------- Analyse Directory ---------------- */
 
-func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool) {
-
-	type Configuration struct {
-		ExcludeExtensions []string
+// analyseDirectory runs the goloc analysis for a single directory entry.
+func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX, extexclusion []string, destDir string, count *int) {
+	params := goloc.Params{
+		Path:              dir,
+		ByFile:            ResultByFile,
+		ByAll:             ResultAll,
+		ExcludePaths:      fileexclusionEX,
+		ExcludeExtensions: extexclusion,
+		IncludeExtensions: []string{},
+		OrderByLang:       false,
+		OrderByFile:       false,
+		OrderByCode:       false,
+		OrderByLine:       false,
+		OrderByBlank:      false,
+		OrderByComment:    false,
+		Order:             "DESC",
+		OutputName:        "Result_",
+		OutputPath:        destDir,
+		ReportFormats:     []string{"json"},
+		Branch:            "",
+		Token:             "",
+		Cloned:            false,
+		Repopath:          "",
+	}
+	if ResultAll {
+		params.ByFile = true
 	}
 
-	//fmt.Print("\n🔎 Analysis of Directories ...\n")
+	gc, err := goloc.NewGCloc(params, assets.Languages)
+	if err != nil {
+		logger.Errorf(errorMessageRepo+"%v", err)
+		return
+	}
+
+	if err := runGlocPasses(gc, params, ResultAll); err != nil {
+		return
+	}
+
+	logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", *count, dir)
+	*count++
+}
+
+// runGlocPasses executes either a dual-pass (ResultAll) or single-pass analysis.
+func runGlocPasses(gc *goloc.GCloc, params goloc.Params, ResultAll bool) error {
+	if !ResultAll {
+		if err := gc.Run(); err != nil {
+			fmt.Print("\n")
+			logger.Errorf("❌ Error during analysis: %v", err)
+			return err
+		}
+		return nil
+	}
+
+	// First run: byfile report
+	if err := gc.Run(); err != nil {
+		fmt.Print("\n")
+		logger.Errorf("❌ Error during analysis (byfile pass): %v", err)
+		return err
+	}
+
+	// Second run: bylanguage report
+	params.ByFile = false
+	params.Cloned = true
+	params.Repopath = gc.Repopath
+	params.RepopathDisposable = gc.RepopathDisposable
+
+	gc2, err := goloc.NewGCloc(params, assets.Languages)
+	if err != nil {
+		fmt.Print("\n")
+		logger.Errorf("❌ Error initializing GCloc for bylanguage pass: %v", err)
+		return err
+	}
+	if err := gc2.Run(); err != nil {
+		fmt.Print("\n")
+		logger.Errorf("❌ Error during analysis (bylanguage pass): %v", err)
+		return err
+	}
+	return nil
+}
+
+func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool, destDir string) {
 	logger.Infof("🔎 Analysis of Directories ...\n")
 
 	var wg sync.WaitGroup
@@ -694,90 +803,8 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 	for _, Listdirectories := range Listdirectorie {
 		go func(dir string) {
 			defer wg.Done()
-
-			//fmt.Println("Rep:", Listdirectories)
-
-			spin := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
-			spin.Color("green", "bold")
-			messageF := ""
-			spin.FinalMSG = messageF
-
-			outputFileName := "Result_"
-
-			params := goloc.Params{
-				Path:              dir,
-				ByFile:            ResultByFile,
-				ByAll:             ResultAll,
-				ExcludePaths:      fileexclusionEX,
-				ExcludeExtensions: extexclusion,
-				IncludeExtensions: []string{},
-				OrderByLang:       false,
-				OrderByFile:       false,
-				OrderByCode:       false,
-				OrderByLine:       false,
-				OrderByBlank:      false,
-				OrderByComment:    false,
-				Order:             "DESC",
-				OutputName:        outputFileName,
-				OutputPath:        "Results",
-				ReportFormats:     []string{"json"},
-				Branch:            "",
-				Token:             "",
-				Cloned:            false,
-				Repopath:          "",
-			}
-
-			gc, err := goloc.NewGCloc(params, assets.Languages)
-			if err != nil {
-				logger.Errorf(errorMessageRepo+"%v", err)
-				return
-			} else {
-
-				if ResultAll {
-
-					if err := gc.Run(); err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis with ByAll = true: %v", err)
-
-						return
-					}
-
-					// Second call to Run with ByFile = false
-					params.ByFile = true
-
-					params.Cloned = false
-					params.Repopath = gc.Repopath
-					params.RepopathDisposable = gc.RepopathDisposable
-
-					gc, err = goloc.NewGCloc(params, assets.Languages)
-					if err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error initializing GCloc for ByFile = false: %v", err)
-						return
-					}
-
-					if err := gc.Run(); err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis with ByFile = false: %v", err)
-						return
-					}
-				} else {
-					// If ByAll = false, just run normally
-					if err := gc.Run(); err != nil {
-						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis: %v", err)
-						return
-					}
-				}
-
-			}
-
-			//gc.Run()
-			spin.Stop()
-			logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", count, dir)
-			count++
+			analyseDirectory(dir, ResultByFile, ResultAll, fileexclusionEX, extexclusion, destDir, &count)
 		}(Listdirectories)
-
 	}
 
 	wg.Wait()
@@ -897,9 +924,26 @@ func createDirectories(basePath string, paths []string) {
 	}
 }
 
-func init() {
+// setupResultsDirectory creates the Results directory tree for a given platform.
+func setupResultsDirectory(platform string) string {
+	pwd, err := os.Getwd()
+	if err != nil {
+		fmt.Println("Error:", err)
+	}
+	DestinationResult := pwd + "/Results"
+	logger.Infof("✅ Using configuration for DevOps platform '%s'\n", platform)
+	_ = os.RemoveAll(DestinationResult)
+	if err := os.MkdirAll(DestinationResult, os.ModePerm); err != nil {
+		panic(err)
+	}
+	createDirectories(DestinationResult, directoriesToCreate)
+	return DestinationResult
+}
 
-	// Load Config file (path from GOLC_CONFIG_FILE env, default config.json)
+// runGolcInProcess runs the GoLC analysis for the given platform key (e.g. "Github").
+// It is invoked by the webui binary when started with --internal-run <platform>.
+func runGolcInProcess(platform string) {
+	// Load config
 	configPath := os.Getenv("GOLC_CONFIG_FILE")
 	if configPath == "" {
 		configPath = "config.json"
@@ -907,156 +951,34 @@ func init() {
 	var err error
 	AppConfig, err = LoadConfig(configPath)
 	if err != nil {
-		logrus.Fatalf("\n❌ Failed to load config: %s", err)
+		fmt.Fprintf(os.Stderr, "\n❌ Failed to load config: %s\n", err)
 		os.Exit(1)
 	}
-
 	if AppConfig.Release.Version != version1 {
-		logrus.Fatalf("\n❌ Version mismatch: expected %s but got %s - Use the correct config.json file !", version1, AppConfig.Release.Version)
+		fmt.Fprintf(os.Stderr, "\n❌ Version mismatch: expected %s but got %s - Use the correct config.json file!\n", version1, AppConfig.Release.Version)
 		os.Exit(1)
 	}
 
-	logrus.Info("✅ Configuration loaded successfully and version matched!")
-
-	// Create Logs Directory
+	// Setup logging
 	logDir := "Logs"
-	if _, err := os.Stat(logDir); os.IsNotExist(err) {
-		err = os.MkdirAll(logDir, 0755)
-		if err != nil {
-			logrus.Fatalf("❌ Failed to create log directory: %v", err)
-		}
-	}
-	// Remove Log file
-	if err := os.Remove("Logs/Logs.log"); err != nil && !os.IsNotExist(err) {
-		logrus.Fatalf("❌ Failed to delete old log file: %v", err)
-	}
-
-	// Set Loggin
-	// Create a new logger instance
-
-	logger = utils.NewLogger()
-	logger.SetLevel(AppConfig.Logging.Level)
-}
-
-// ApplicationFlags holds command line arguments
-type ApplicationFlags struct {
-	DevOps      string
-	Fast        bool
-	AllBranches bool
-	Help        bool
-	Languages   bool
-	Version     bool
-}
-
-// parseAndValidateFlags processes command line arguments and validates them
-func parseAndValidateFlags() (ApplicationFlags, map[string]interface{}) {
-	// Define flags
-	devopsFlag := flag.String("devops", "", "Specify the DevOps platform")
-	fastFlag := flag.Bool("fast", false, "Enable fast mode (only for Github)")
-	allBranchesFlag := flag.Bool("all-branches", false, "Analyze all branches for each repository (not just main branch)")
-	helpFlag := flag.Bool("help", false, "Show help message")
-	languagesFlag := flag.Bool("languages", false, "Show all supported languages")
-	versionflag := flag.Bool("version", false, "Show version")
-
-	flag.Parse()
-
-	// Handle informational flags
-	if *helpFlag {
-		fmt.Println("Usage: golc -devops [OPTIONS]")
-		fmt.Println("Options:  <BitBucketSRV>||<BitBucket>||<Github>||<Gitlab>||<Azure>||<File>")
-		fmt.Println("")
-		fmt.Println("Examples:")
-		fmt.Println("  golc -devops Github                    # Analyze main branches only")
-		fmt.Println("  golc -devops Github -all-branches      # Analyze ALL branches")
-		fmt.Println("  golc -devops Github -fast              # Fast analysis mode")
-		flag.PrintDefaults()
-		os.Exit(0)
-	}
-
-	if *languagesFlag {
-		displayLanguages()
-		os.Exit(0)
-	}
-
-	if *versionflag {
-		fmt.Printf("GoLC version: %s %s/%s\n", version1, runtime.GOOS, runtime.GOARCH)
-		os.Exit(0)
-	}
-
-	// Validate required flags
-	if *devopsFlag == "" {
-		fmt.Println("\n❌ Please specify the DevOps platform using the -devops flag : <BitBucketSRV>||<BitBucket>||<Github>||<GithubEnterprise>||<Gitlab>||<Azure>||<File>")
-		fmt.Println("✅ Example for BitBucket server : golc -devops BitBucketSRV")
-		os.Exit(1)
-	}
-
-	platformConfig, ok := AppConfig.Platforms[*devopsFlag].(map[string]interface{})
-	if !ok {
-		fmt.Printf("\n❌ Configuration for DevOps platform '%s' not found\n", *devopsFlag)
-		fmt.Println("✅ the -devops flag is : <BitBucketSRV>||<BitBucket>||<Github>||<GithubEnterprise>||<Gitlab>||<Azure>||<File>")
-		os.Exit(1)
-	}
-
-	return ApplicationFlags{
-		DevOps:      *devopsFlag,
-		Fast:        *fastFlag,
-		AllBranches: *allBranchesFlag,
-		Help:        *helpFlag,
-		Languages:   *languagesFlag,
-		Version:     *versionflag,
-	}, platformConfig
-}
-
-// setupResultsDirectory handles Results directory creation and backup logic
-func setupResultsDirectory(flags ApplicationFlags) string {
-	pwd, err := os.Getwd()
-	if err != nil {
-		fmt.Println("Error:", err)
-	}
-	DestinationResult := pwd + "/Results"
-
-	logger.Infof("✅ Using configuration for DevOps platform '%s'\n", flags.DevOps)
-
-	_, err = os.Stat(DestinationResult)
-	if err == nil {
-		fmt.Printf("❗️ Directory <'%s'> already exists. Do you want to delete it? (y/n): ", DestinationResult)
-		var response string
-		fmt.Scanln(&response)
-
-		if response == "y" || response == "Y" {
-			fmt.Printf("❗️ Do you want to create a backup of the directory before deleting? (y/n): ")
-			var backupResponse string
-			fmt.Scanln(&backupResponse)
-
-			if backupResponse == "y" || backupResponse == "Y" {
-				if err := createBackup(DestinationResult, pwd); err != nil {
-					fmt.Printf("❌ Error creating backup: %s\n", err)
-					os.Exit(1)
-				}
-			}
-
-			if err := os.RemoveAll(DestinationResult); err != nil {
-				fmt.Printf("❌ Error deleting directory: %s\n", err)
-				os.Exit(1)
-			}
-			if err := os.MkdirAll(DestinationResult, os.ModePerm); err != nil {
-				panic(err)
-			}
-			createDirectories(DestinationResult, directoriesToCreate)
-		} else {
+	if _, statErr := os.Stat(logDir); os.IsNotExist(statErr) {
+		if mkErr := os.MkdirAll(logDir, 0755); mkErr != nil {
+			fmt.Fprintf(os.Stderr, "❌ Failed to create log directory: %v\n", mkErr)
 			os.Exit(1)
 		}
-	} else if os.IsNotExist(err) {
-		if err := os.MkdirAll(DestinationResult, os.ModePerm); err != nil {
-			panic(err)
-		}
-		createDirectories(DestinationResult, directoriesToCreate)
+	}
+	_ = os.Remove("Logs/Logs.log")
+	logger = utils.NewLogger()
+	logger.SetLevel(AppConfig.Logging.Level)
+	logger.Info("✅ Configuration loaded successfully and version matched!")
+
+	// Resolve platform config
+	platformConfig, ok := AppConfig.Platforms[platform].(map[string]interface{})
+	if !ok {
+		fmt.Fprintf(os.Stderr, "\n❌ Configuration for DevOps platform '%s' not found\n", platform)
+		os.Exit(1)
 	}
 
-	return DestinationResult
-}
-
-func main() {
 	var maxTotalCodeLines int
 	var maxProject, maxRepo string
 	var NumberRepos int
@@ -1065,11 +987,8 @@ func main() {
 	var ListExclusion []string
 	var message0, message1, message2, message3, message4, message5 string
 
-	// Parse and validate command line flags
-	flags, platformConfig := parseAndValidateFlags()
-
 	// Setup results directory
-	DestinationResult := setupResultsDirectory(flags)
+	DestinationResult := setupResultsDirectory(platform)
 	fmt.Printf("\n")
 
 	// Create Global Report File
@@ -1117,19 +1036,12 @@ func main() {
 
 		startTime = time.Now()
 
-		if flags.Fast {
-			fmt.Println("🚀 Fast mode enabled for Github")
-			fast = true
-			err := getgithub.FastAnalys(platformConfig, fileexclusionEX)
-
-			if err != nil {
-				logger.Errorf("❌ Quick scan Analysis : '%s'", err)
-				os.Exit(0)
-			}
+		if false {
+			// fast mode (not available via web UI)
 		} else {
 			fast = false
 
-			if flags.AllBranches {
+			if false {
 				fmt.Println("🌿 All-branches mode enabled for Github")
 				logger.Infof("🌿 All-branches mode enabled - analyzing ALL branches for each repository")
 
@@ -1266,16 +1178,51 @@ func main() {
 				ListDirectory = append(ListDirectory, platformConfig["Directory"].(string))
 			}
 		} else {
-			if len(platformConfig["Directory"].(string)) == 0 {
+			dirField := platformConfig["Directory"].(string)
+			if len(dirField) == 0 {
 				logger.Error("❌ No analysis possible, no directory, specified file or specified loading file")
 				os.Exit(1)
 			} else {
-
-				ListDirectory = append(ListDirectory, platformConfig["Directory"].(string))
+				for _, d := range strings.Split(dirField, "\n") {
+					if d = strings.TrimSpace(d); d != "" {
+						ListDirectory = append(ListDirectory, d)
+					}
+				}
+			}
+		}
+		// Expand to immediate subdirectories when ScanSubDirs is set
+		scanSubDirs, _ := platformConfig["ScanSubDirs"].(bool)
+		if scanSubDirs {
+			var expanded []string
+			for _, d := range ListDirectory {
+				entries, err := os.ReadDir(d)
+				if err != nil {
+					logger.Errorf("❌ Cannot read directory <%s>: %v", d, err)
+					continue
+				}
+				found := false
+				for _, e := range entries {
+					if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+						expanded = append(expanded, filepath.Join(d, e.Name()))
+						found = true
+					}
+				}
+				if !found {
+					// No subdirectories — analyze the directory itself
+					expanded = append(expanded, d)
+				}
+			}
+			if len(expanded) > 0 {
+				ListDirectory = expanded
 			}
 		}
 		startTime = time.Now()
-		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool), DestinationResult)
+
+		// Write analysis_result_file.json so ResultsAll can list the repos
+		if err := saveFileAnalysisResult(DestinationResult, platformConfig["Organization"].(string), ListDirectory); err != nil {
+			logger.Errorf("❌ Failed to write analysis_result_file.json: %v", err)
+		}
 	}
 
 	/*---------------------------------- End Select type of DevOps Platform ----------------------------------------------------*/
@@ -1366,7 +1313,12 @@ func main() {
 	if totalCodeLinesSum1 == "0" {
 		spin.Stop()
 		fmt.Println("\n --------------------------------------------------------------------")
-		logger.Error("  ❌ There is definitely a problem, 0 lines of code are reported ???")
+		logger.Errorf("  ❌ Analysis produced 0 lines of code. Possible causes:")
+		logger.Errorf("     • The directory/repository path does not exist or is empty")
+		logger.Errorf("     • All files were excluded by the exclusion rules")
+		logger.Errorf("     • The token lacks read access to the repositories")
+		logger.Errorf("     • No source files with recognised extensions were found")
+		logger.Errorf("     • Check the logs above for per-repo errors")
 		fmt.Println("\n --------------------------------------------------------------------")
 		os.Exit(1)
 	}
@@ -1408,7 +1360,8 @@ func main() {
 	// Pass the base Results directory for consistency across platforms.
 	err = utils.CreateGlobalReport(baseResultsDir)
 	if err != nil {
-		log.Fatalf("❌ Error creating global report: %v", err)
+		logger.Errorf("❌ Error creating global report: %v", err)
+		os.Exit(1)
 	}
 
 	// Generate Repository Summary Reports

@@ -6,10 +6,12 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -21,13 +23,18 @@ import (
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
-const defaultPort = 8092
+//go:embed all:dist
+var distFS embed.FS
 
-// getPort returns the server port from PORT env, or defaultPort.
+const defaultPort = 8090
+
+// getPort returns the server port from GOLC_RESULTS_PORT or PORT env, or defaultPort.
 func getPort() int {
-	if s := os.Getenv("PORT"); s != "" {
-		if p, err := strconv.Atoi(s); err == nil && p > 0 && p < 65536 {
-			return p
+	for _, key := range []string{"GOLC_RESULTS_PORT", "PORT"} {
+		if s := os.Getenv(key); s != "" {
+			if p, err := strconv.Atoi(s); err == nil && p > 0 && p < 65536 {
+				return p
+			}
 		}
 	}
 	return defaultPort
@@ -81,15 +88,17 @@ type Globalinfo struct {
 }
 
 type LanguageData struct {
-	Language   string  `json:"Language"`
-	CodeLines  int     `json:"CodeLines"`
-	Percentage float64 `json:"Percentage"`
-	CodeLinesF string  `json:"CodeLinesF"`
+	Language    string  `json:"Language"`
+	CodeLines   int     `json:"CodeLines"`
+	Percentage  float64 `json:"Percentage"`
+	CodeLinesF  string  `json:"CodeLinesF"`
+	RelativePct float64 `json:"-"`
 }
 
 type RepositoryData struct {
 	Number      int    `json:"Number"`
 	Repository  string `json:"Repository"`
+	Org         string `json:"Org"`
 	Branch      string `json:"Branch"`
 	Lines       int    `json:"Lines"`
 	BlankLines  int    `json:"BlankLines"`
@@ -142,6 +151,18 @@ type BranchData struct {
 	CodeLinesF  string `json:"CodeLinesF"`
 }
 
+type FileDetail struct {
+	File        string `json:"File"`
+	Lines       int    `json:"Lines"`
+	BlankLines  int    `json:"BlankLines"`
+	Comments    int    `json:"Comments"`
+	CodeLines   int    `json:"CodeLines"`
+	LinesF      string `json:"LinesF"`
+	BlankLinesF string `json:"BlankLinesF"`
+	CommentsF   string `json:"CommentsF"`
+	CodeLinesF  string `json:"CodeLinesF"`
+}
+
 type RepositoryDetailData struct {
 	Repository       string                   `json:"Repository"`
 	MainBranch       string                   `json:"MainBranch"`
@@ -155,12 +176,13 @@ type RepositoryDetailData struct {
 	TotalCommentsF   string                   `json:"TotalCommentsF"`
 	TotalCodeLinesF  string                   `json:"TotalCodeLinesF"`
 	Languages        []RepositoryLanguageData `json:"Languages"`
+	Files            []FileDetail             `json:"Files"`
 	OtherBranches    []BranchData             `json:"OtherBranches"`
 	GlobalReport     Globalinfo               `json:"GlobalReport"`
 	Platform         string                   `json:"Platform"`
 	PlatformIcon     string                   `json:"PlatformIcon"`
 	RepositoryURL    string                   `json:"RepositoryURL"`
-	NoteLOCExcluded  string                   `json:"NoteLOCExcluded"` // Note that JSON is excluded from total (SonarQube behavior)
+	NoteLOCExcluded  string                   `json:"NoteLOCExcluded"`
 }
 
 type PageData struct {
@@ -168,6 +190,7 @@ type PageData struct {
 	GlobalReport     Globalinfo
 	Repositories     []RepositoryData
 	NoteLOCExcluded  string // Note that JSON is excluded from total (SonarQube behavior)
+	Platform         string
 }
 
 var globalInfo Globalinfo       // Variable pour stocker les infos globales
@@ -230,12 +253,26 @@ func getRepositoryData() ([]RepositoryData, error) {
 	for _, branch := range repoMap {
 		i++
 		// Construct filename for byfile report using platform-specific logic
-		firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
-		fileName := buildSecurePath(byFileReportDir,
-			fmt.Sprintf("Result_%s_%s_%s_byfile.json",
-				sanitizePathComponent(firstPart),
-				sanitizePathComponent(branch.RepoSlug),
-				sanitizePathComponent(branch.MainBranch)))
+		var fileName, byLanguagePath string
+		if platform == "file" {
+			// File mode uses simpler naming: Result_{slug}_byfile.json
+			fileName = buildSecurePath(byFileReportDir,
+				fmt.Sprintf("Result_%s_byfile.json", sanitizePathComponent(branch.RepoSlug)))
+			byLanguagePath = buildSecurePath(byLanguageReportDir,
+				fmt.Sprintf("Result_%s.json", sanitizePathComponent(branch.RepoSlug)))
+		} else {
+			firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
+			fileName = buildSecurePath(byFileReportDir,
+				fmt.Sprintf("Result_%s_%s_%s_byfile.json",
+					sanitizePathComponent(firstPart),
+					sanitizePathComponent(branch.RepoSlug),
+					sanitizePathComponent(branch.MainBranch)))
+			byLanguagePath = buildSecurePath(byLanguageReportDir,
+				fmt.Sprintf("Result_%s_%s_%s.json",
+					sanitizePathComponent(firstPart),
+					sanitizePathComponent(branch.RepoSlug),
+					sanitizePathComponent(branch.MainBranch)))
+		}
 
 		// Read the byfile report
 		fileData, err := os.ReadFile(fileName)
@@ -260,11 +297,6 @@ func getRepositoryData() ([]RepositoryData, error) {
 
 		// Code lines for report total: exclude JSON to match SonarQube behavior
 		codeLinesForReport := reportData.TotalCodeLines
-		byLanguagePath := buildSecurePath(byLanguageReportDir,
-			fmt.Sprintf("Result_%s_%s_%s.json",
-				sanitizePathComponent(firstPart),
-				sanitizePathComponent(branch.RepoSlug),
-				sanitizePathComponent(branch.MainBranch)))
 		if langData, err := os.ReadFile(byLanguagePath); err == nil {
 			var byLang struct {
 				Results []struct {
@@ -286,6 +318,7 @@ func getRepositoryData() ([]RepositoryData, error) {
 		repo := RepositoryData{
 			Number:      i,
 			Repository:  branch.RepoSlug,
+			Org:         branch.Org,
 			Branch:      branch.MainBranch,
 			Lines:       reportData.TotalLines,
 			BlankLines:  reportData.TotalBlankLines,
@@ -536,11 +569,17 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 	} else {
 		firstPart = getFirstPartForFilename(platform, orgName, repoName)
 	}
-	byFileReportPath := buildSecurePath(byFileReportDir,
-		fmt.Sprintf("Result_%s_%s_%s_byfile.json",
-			sanitizePathComponent(firstPart),
-			sanitizePathComponent(repoName),
-			sanitizePathComponent(branchName)))
+	var byFileReportPath string
+	if platform == "file" {
+		byFileReportPath = buildSecurePath(byFileReportDir,
+			fmt.Sprintf("Result_%s_byfile.json", sanitizePathComponent(repoName)))
+	} else {
+		byFileReportPath = buildSecurePath(byFileReportDir,
+			fmt.Sprintf("Result_%s_%s_%s_byfile.json",
+				sanitizePathComponent(firstPart),
+				sanitizePathComponent(repoName),
+				sanitizePathComponent(branchName)))
+	}
 
 	byFileData, err := os.ReadFile(byFileReportPath)
 	if err != nil {
@@ -567,11 +606,17 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 	}
 
 	// Read the bylanguage report for language breakdown
-	byLanguageReportPath := buildSecurePath(byLanguageReportDir,
-		fmt.Sprintf("Result_%s_%s_%s.json",
-			sanitizePathComponent(firstPart),
-			sanitizePathComponent(repoName),
-			sanitizePathComponent(branchName)))
+	var byLanguageReportPath string
+	if platform == "file" {
+		byLanguageReportPath = buildSecurePath(byLanguageReportDir,
+			fmt.Sprintf("Result_%s.json", sanitizePathComponent(repoName)))
+	} else {
+		byLanguageReportPath = buildSecurePath(byLanguageReportDir,
+			fmt.Sprintf("Result_%s_%s_%s.json",
+				sanitizePathComponent(firstPart),
+				sanitizePathComponent(repoName),
+				sanitizePathComponent(branchName)))
+	}
 
 	languageData, err := os.ReadFile(byLanguageReportPath)
 	if err != nil {
@@ -623,6 +668,22 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		formattedLanguages = append(formattedLanguages, formattedLang)
 	}
 
+	// Build per-file list (populated when byfile report has file-level Results)
+	var formattedFiles []FileDetail
+	for _, f := range byFileReport.Results {
+		formattedFiles = append(formattedFiles, FileDetail{
+			File:        f.File,
+			Lines:       f.Lines,
+			BlankLines:  f.BlankLines,
+			Comments:    f.Comments,
+			CodeLines:   f.CodeLines,
+			LinesF:      utils.FormatCodeLines(float64(f.Lines)),
+			BlankLinesF: utils.FormatCodeLines(float64(f.BlankLines)),
+			CommentsF:   utils.FormatCodeLines(float64(f.Comments)),
+			CodeLinesF:  utils.FormatCodeLines(float64(f.CodeLines)),
+		})
+	}
+
 	// Get platform info and repository URL
 	platformIcon, repositoryURL := getPlatformInfoAndURL(platform, orgName, repoName)
 
@@ -651,6 +712,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		TotalCommentsF:   utils.FormatCodeLines(float64(byFileReport.TotalComments)),
 		TotalCodeLinesF:  utils.FormatCodeLines(float64(totalCodeLinesForReport)),
 		Languages:        formattedLanguages,
+		Files:            formattedFiles,
 		OtherBranches:    otherBranches,
 		GlobalReport:     globalInfo,
 		Platform:         platform,
@@ -735,12 +797,55 @@ func zipResults(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "Results.zip")
 }
 
+// buildLanguageSummary converts raw language data into a sorted, percentage-annotated slice.
+func buildLanguageSummary(rawData []LanguageData) []LanguageData {
+	totals := make(map[string]int)
+	for _, r := range rawData {
+		totals[r.Language] += r.CodeLines
+	}
+
+	totalExcl := 0
+	var languages []LanguageData
+	for lang, total := range totals {
+		if strings.TrimSpace(lang) != utils.LanguageExcludedFromTotalLOC {
+			totalExcl += total
+		}
+		languages = append(languages, LanguageData{
+			Language:   lang,
+			CodeLines:  total,
+			CodeLinesF: utils.FormatCodeLines(float64(total)),
+		})
+	}
+
+	applyLanguagePercentages(languages, totalExcl)
+
+	sort.Slice(languages, func(i, j int) bool {
+		return languages[i].CodeLines > languages[j].CodeLines
+	})
+	if len(languages) > 0 && languages[0].CodeLines > 0 {
+		maxLOC := float64(languages[0].CodeLines)
+		for i := range languages {
+			languages[i].RelativePct = float64(languages[i].CodeLines) / maxLOC * 100
+		}
+	}
+	return languages
+}
+
+// applyLanguagePercentages sets the Percentage field for each language entry.
+func applyLanguagePercentages(languages []LanguageData, totalExcludingJSON int) {
+	for i := range languages {
+		if strings.TrimSpace(languages[i].Language) == utils.LanguageExcludedFromTotalLOC || totalExcludingJSON == 0 {
+			languages[i].Percentage = 0
+		} else {
+			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalExcludingJSON) * 100
+		}
+	}
+}
+
 // loadApplicationData loads and processes all required data files
 func loadApplicationData() (PageData, error) {
 	var pageData PageData
-	ligneDeCodeParLangage := make(map[string]int)
 
-	// Reading data from the code_lines_by_language.json file
 	inputFileData, err := os.ReadFile(codeLinesLanguageFile)
 	if err != nil {
 		return pageData, fmt.Errorf("error reading code_lines_by_language.json file: %v", err)
@@ -751,38 +856,7 @@ func loadApplicationData() (PageData, error) {
 		return pageData, fmt.Errorf("error decoding JSON code_lines_by_language.json file: %v", err)
 	}
 
-	// Summarize results by language
-	for _, result := range languageData {
-		language := result.Language
-		codeLines := result.CodeLines
-		ligneDeCodeParLangage[language] += codeLines
-	}
-
-	var languages []LanguageData
-	totalLines := 0
-	totalLinesExcludingJSON := 0
-	for lang, total := range ligneDeCodeParLangage {
-		totalLines += total
-		if strings.TrimSpace(lang) != utils.LanguageExcludedFromTotalLOC {
-			totalLinesExcludingJSON += total
-		}
-		languages = append(languages, LanguageData{
-			Language:   lang,
-			CodeLines:  total,
-			CodeLinesF: utils.FormatCodeLines(float64(total)),
-		})
-	}
-
-	// Percentages use total excluding JSON to match SonarQube behavior
-	for i := range languages {
-		if strings.TrimSpace(languages[i].Language) == utils.LanguageExcludedFromTotalLOC {
-			languages[i].Percentage = 0
-		} else if totalLinesExcludingJSON > 0 {
-			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalLinesExcludingJSON) * 100
-		} else {
-			languages[i].Percentage = 0
-		}
-	}
+	languages := buildLanguageSummary(languageData)
 
 	data0, err := os.ReadFile(globalReportFile)
 	if err != nil {
@@ -794,18 +868,20 @@ func loadApplicationData() (PageData, error) {
 		return pageData, fmt.Errorf("error decoding JSON GlobalReport.json file: %v", err)
 	}
 
-	// Get repository data
 	repositoryData, err := getRepositoryData()
 	if err != nil {
 		fmt.Println("❌ Error loading repository data:", err)
-		repositoryData = []RepositoryData{} // Use empty slice if error
+		repositoryData = []RepositoryData{}
 	}
+
+	detectedPlatform, _, _ := detectPlatformAndReadAnalysis()
 
 	pageData = PageData{
 		Languages:       languages,
 		GlobalReport:    globalInfo,
 		Repositories:    repositoryData,
 		NoteLOCExcluded: utils.NoteExcludedFromTotal,
+		Platform:        detectedPlatform,
 	}
 
 	return pageData, nil
@@ -832,6 +908,27 @@ func setupHTTPHandlers(pageData PageData) {
 		http.Error(w, "❌ Method not allowed", http.StatusMethodNotAllowed)
 	})
 
+	http.HandleFunc("/reports/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/reports/")
+		var filePath string
+		switch name {
+		case "global-report.pdf":
+			filePath = "Results/GlobalReport.pdf"
+		case "repository-summary.pdf":
+			filePath = "Results/byfile-report/pdf-report/repository_summary.pdf"
+		case "repository-summary.csv":
+			filePath = "Results/byfile-report/csv-report/repository_summary.csv"
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			http.Error(w, "Report not yet available", http.StatusNotFound)
+			return
+		}
+		http.ServeFile(w, r, filePath)
+	})
+
 	// API Endpoint for Language Data
 	http.HandleFunc("/api/languages", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeHeader, applicationJSONType)
@@ -852,15 +949,22 @@ func setupHTTPHandlers(pageData PageData) {
 
 	// Repository Detail Page Handler
 	http.HandleFunc("/repository/", func(w http.ResponseWriter, r *http.Request) {
-		// Parse URL path to extract repository name and branch
-		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repository/"), "/")
-		if len(pathParts) < 2 {
+		// Parse URL path to extract repository name and branch.
+		// Branch names may contain "/" (e.g. feature/my-branch), so split on
+		// the first "/" only: everything after is the branch name.
+		rest := strings.TrimPrefix(r.URL.Path, "/repository/")
+		slashIdx := strings.Index(rest, "/")
+		if slashIdx < 0 {
 			http.Error(w, "Invalid repository URL", http.StatusBadRequest)
 			return
 		}
 
-		repoName := pathParts[0]
-		branchName := pathParts[1]
+		repoName := rest[:slashIdx]
+		branchName := rest[slashIdx+1:]
+		if repoName == "" || branchName == "" {
+			http.Error(w, "Invalid repository URL", http.StatusBadRequest)
+			return
+		}
 
 		// Get repository detail data
 		repoData, err := getRepositoryDetailData(repoName, branchName)
@@ -883,7 +987,11 @@ func setupHTTPHandlers(pageData PageData) {
 func handleServerStartup() {
 	port := getPort()
 	fmt.Println("✅ Launching web visualization...")
-	http.Handle("/dist/", http.StripPrefix("/dist/", http.FileServer(http.Dir("dist"))))
+	sub, err := fs.Sub(distFS, "dist")
+	if err != nil {
+		panic("embedded dist/ not found: " + err.Error())
+	}
+	http.Handle("/dist/", http.StripPrefix("/dist/", http.FileServer(http.FS(sub))))
 
 	if isPortOpen(port) {
 		handlePortConflict(port)
@@ -1093,15 +1201,24 @@ const htmlTemplate = `
       .repository-table-container .card-body {
           padding: 0;
       }
-      
+
       .repository-table-container .table-responsive {
           margin: 0;
       }
-      
+
       .repository-table-container .table {
           margin-top: 0;
           margin-bottom: 0;
       }
+      /* Language bar chart */
+      .lang-bar-row { margin-bottom: 0.6rem; }
+      .lang-bar-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px; gap:4px; }
+      .lang-bar-name { font-weight:600; font-size:0.85rem; max-width:56%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .lang-bar-meta { font-size:0.75rem; opacity:0.85; white-space:nowrap; text-align:right; }
+      .lang-bar-track { background:rgba(255,255,255,.18); border-radius:3px; height:5px; overflow:hidden; }
+      .lang-bar-fill { background:rgba(255,255,255,.85); border-radius:3px; height:5px; transition:width .4s ease; }
+      /* Reports dropdown — sharp rectangular corners */
+      .dropdown-menu { border-radius: 4px !important; }
     </style>
     <script src="/dist/vendors/chartjs/chart.js"></script>
     <script src="/dist/vendors/bootstrap/js/bootstrap.bundle.min.js"></script>
@@ -1109,11 +1226,22 @@ const htmlTemplate = `
   <body>
     <main class="main" id="top">
       <nav class="navbar navbar-expand-lg fixed-top navbar-dark" data-navbar-on-scroll="data-navbar-on-scroll">
-       <div class="container"><a class="navbar-brand" href="index.html"><img src="dist/img//Logo.png" alt="" /></a>
+       <div class="container"><a class="navbar-brand" href="index.html"><img src="dist/img/Logo.png" alt="" /></a>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><i class="fa-solid fa-bars text-white fs-3"></i></button>
           <div class="collapse navbar-collapse" id="navbarSupportedContent">
             <ul class="navbar-nav ms-auto mt-2 mt-lg-0">
-              <li class="nav-item"><a class="nav-link active" aria-current="page" title="Download Reports" href="/download" target="downloads">Reports</a></li>
+              <li class="nav-item dropdown">
+                <a class="nav-link dropdown-toggle" href="#" id="reportsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                  <i class="fas fa-file-pdf me-1"></i>Reports
+                </a>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="reportsDropdown">
+                  <li><a class="dropdown-item" href="/reports/global-report.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF</a></li>
+                  <li><a class="dropdown-item" href="/reports/repository-summary.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF</a></li>
+                  <li><a class="dropdown-item" href="/reports/repository-summary.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV</a></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item" href="/download"><i class="fas fa-file-archive me-2"></i>Download All ZIP</a></li>
+                </ul>
+              </li>
               <li class="nav-item"><a class="nav-link" aria-current="page" title="API REF" href="#" id="apiButton">API</a></li>
             </ul>
           </div>
@@ -1155,18 +1283,23 @@ const htmlTemplate = `
             </div>
             <div class="col-lg-6 mt-3 mt-lg-0">
                               <div class="card text-white bg-primary mb-4" style="max-width: 21rem;">
-                <h5 class="card-header text-white" style="padding: 1rem 1rem;"><i class="fas fa-code"></i> Languages</h5>
-                <div class="card-body text-white" style="padding: 1rem 1rem;">
-                    <ul>
+                <h5 class="card-header text-white" style="padding: 0.75rem 1rem;">
+                  <i class="fas fa-code"></i> Languages
+                  <small class="text-white-50" style="font-size:0.7rem;display:block;font-weight:400;margin-top:2px;">sorted by lines of code &darr;</small>
+                </h5>
+                <div class="card-body text-white" style="padding: 0.75rem 1rem; max-height:440px; overflow-y:auto;">
                     {{range .Languages}}
-                        {{if eq .Language "JSON"}}
-                        <li>{{.Language}}: (excluded from total) - {{.CodeLinesF}} LOC</li>
-                        {{else}}
-                        <li>{{.Language}}: {{printf "%.2f" .Percentage}}% - {{.CodeLinesF}} LOC</li>
-                        {{end}}
+                    <div class="lang-bar-row">
+                      <div class="lang-bar-header">
+                        <span class="lang-bar-name" title="{{.Language}}">{{.Language}}{{if eq .Language "JSON"}}&nbsp;<span style="font-size:0.68rem;opacity:0.65;font-weight:400;">(excl.)</span>{{end}}</span>
+                        <span class="lang-bar-meta">{{if ne .Language "JSON"}}{{printf "%.1f" .Percentage}}% · {{end}}{{.CodeLinesF}} LOC</span>
+                      </div>
+                      <div class="lang-bar-track">
+                        <div class="lang-bar-fill" style="width:{{printf "%.1f" .RelativePct}}%;"></div>
+                      </div>
+                    </div>
                     {{end}}
-                    </ul>
-                </div>    
+                </div>
               </div>
               <div class="text-center mt-3">
                 <a href="#repository-section" class="btn btn-outline-light btn-lg">
@@ -1217,10 +1350,11 @@ const htmlTemplate = `
                         </tr>
                       </thead>
                       <tbody id="repositoryTableBody">
+                        {{$platform := .Platform}}
                         {{range .Repositories}}
-                        <tr data-repository="{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
+                        <tr data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
                           <td>{{.Number}}</td>
-                          <td><a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{.Repository}}</a></td>
+                          <td><a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{if and (eq $platform "gitlab") .Org}}<span class="text-muted" style="font-size:0.85em;">{{.Org}}&thinsp;/&thinsp;</span>{{end}}{{.Repository}}</a></td>
                           <td>{{.Branch}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>
@@ -1486,7 +1620,6 @@ const htmlTemplate = `
                 sortTable(header.dataset.column);
             });
         });
-        
 
     </script>
   </body>
@@ -1587,12 +1720,11 @@ const repositoryDetailTemplate = `
   <body>
     <main class="main" id="top">
       <nav class="navbar navbar-expand-lg fixed-top navbar-dark" data-navbar-on-scroll="data-navbar-on-scroll">
-       <div class="container"><a class="navbar-brand" href="/"><img src="/dist/img//Logo.png" alt="" /></a>
+       <div class="container"><a class="navbar-brand" href="/"><img src="/dist/img/Logo.png" alt="" /></a>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><i class="fa-solid fa-bars text-white fs-3"></i></button>
           <div class="collapse navbar-collapse" id="navbarSupportedContent">
             <ul class="navbar-nav ms-auto mt-2 mt-lg-0">
               <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
-              <li class="nav-item"><a class="nav-link" href="/download" target="downloads">Reports</a></li>
               <li class="nav-item"><a class="nav-link" href="#" id="apiButton">API</a></li>
             </ul>
           </div>
@@ -1737,9 +1869,215 @@ const repositoryDetailTemplate = `
         </div>
       </section>
       {{end}}
-      
+
+      {{if .Files}}
+      <!-- File Tree Section -->
+      <section style="background-color:#f8f9fa;padding:3rem 0;">
+        <div class="container">
+          <div class="row">
+            <div class="col-12">
+              <h2 class="text-center mb-4">
+                <i class="fas fa-sitemap"></i> File Tree <small class="text-muted fs-6">({{len .Files}} files)</small>
+              </h2>
+              <div class="card shadow">
+                <div class="card-body p-0">
+                  <div class="px-3 pt-3 pb-2 d-flex gap-2 align-items-center border-bottom">
+                    <input type="text" id="treeSearch" class="form-control form-control-sm" placeholder="Search files and folders..." style="max-width:360px;">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="expandAll()">Expand all</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="collapseAll()">Collapse all</button>
+                    <span id="treeMatchCount" class="text-muted small ms-auto"></span>
+                  </div>
+                  <div style="overflow-y:auto;max-height:650px;">
+                    <table class="table table-sm mb-0" id="treeTable" style="border-collapse:collapse;">
+                      <thead style="position:sticky;top:0;background:#343a40;color:#fff;z-index:2;">
+                        <tr>
+                          <th style="padding:.5rem 1rem;font-weight:600;">Name</th>
+                          <th style="padding:.5rem 1rem;text-align:right;white-space:nowrap;font-weight:600;">Code Lines</th>
+                        </tr>
+                      </thead>
+                      <tbody id="treeBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <script>
+      (function(){
+        var RAW = [
+          {{range .Files}}{"p":{{.File | printf "%q"}},"c":{{.CodeLines}}},
+          {{end}}
+        ];
+
+        // ── Build tree ──────────────────────────────────────────────
+        function buildTree(files) {
+          var root = {name:'', children:{}, fileList:[], loc:0, isDir:true};
+          files.forEach(function(f){
+            var parts = f.p.replace(/\\/g,'/').split('/');
+            var node = root;
+            for (var i=0;i<parts.length-1;i++){
+              var seg=parts[i];
+              if(!node.children[seg]) node.children[seg]={name:seg,children:{},fileList:[],loc:0,isDir:true};
+              node=node.children[seg];
+            }
+            node.fileList.push({name:parts[parts.length-1],loc:f.c});
+          });
+          function sumLOC(n){
+            var t=0;
+            n.fileList.forEach(function(f){t+=f.loc;});
+            Object.values(n.children).forEach(function(c){t+=sumLOC(c);c.loc=c._sum;});
+            n._sum=t; return t;
+          }
+          sumLOC(root); root.loc=root._sum;
+          function fix(n){n.loc=n._sum; Object.values(n.children).forEach(fix);}
+          fix(root);
+          return root;
+        }
+
+        // ── Flatten tree to rows ─────────────────────────────────────
+        var allRows=[];
+        function flatten(node, depth, parentId){
+          var sorted = Object.keys(node.children).sort();
+          sorted.forEach(function(k){
+            var child=node.children[k];
+            var id='n'+(allRows.length);
+            allRows.push({id:id,parentId:parentId,depth:depth,name:child.name,loc:child.loc,isDir:true,open:false,visible:true,matched:true});
+            flatten(child,depth+1,id);
+          });
+          var sortedFiles=node.fileList.slice().sort(function(a,b){return b.loc-a.loc;});
+          sortedFiles.forEach(function(f){
+            allRows.push({id:'n'+(allRows.length),parentId:parentId,depth:depth,name:f.name,loc:f.loc,isDir:false,visible:true,matched:true});
+          });
+        }
+
+        var tree=buildTree(RAW);
+        flatten(tree,0,null);
+
+        // ── Render ───────────────────────────────────────────────────
+        var tbody=document.getElementById('treeBody');
+
+        function fmtLOC(n){
+          if(n===0) return '<span style="color:#aaa;">—</span>';
+          return n.toLocaleString();
+        }
+
+        function render(){
+          var html='';
+          allRows.forEach(function(r,i){
+            if(!r.visible) return;
+            var indent=r.depth*20;
+            var icon, toggle='';
+            if(r.isDir){
+              icon=r.open?'<i class="fas fa-folder-open" style="color:#f5a623;margin-right:6px;"></i>'
+                         :'<i class="fas fa-folder" style="color:#f5a623;margin-right:6px;"></i>';
+              toggle='<i class="fas fa-chevron-'+(r.open?'down':'right')+'" style="color:#aaa;font-size:.7rem;margin-right:6px;"></i>';
+            } else {
+              var ext=r.name.split('.').pop().toLowerCase();
+              icon='<i class="fas fa-file-code" style="color:#6c757d;margin-right:6px;"></i>';
+            }
+            var bg = r.matched && document.getElementById('treeSearch').value ? 'background:#fffde7;' : '';
+            var cursor = r.isDir ? 'cursor:pointer;' : '';
+            var nameHtml = r.isDir
+              ? '<span style="font-weight:600;">'+escHtml(r.name)+'</span>'
+              : '<span style="font-family:monospace;font-size:.85rem;">'+escHtml(r.name)+'</span>';
+            html += '<tr data-i="'+i+'" style="border-bottom:1px solid #e9ecef;'+cursor+bg+'" '
+              +(r.isDir?'onclick="toggleDir('+i+')"':'')+'>'
+              +'<td style="padding:.4rem 1rem .4rem '+(16+indent)+'px;">'
+              +toggle+icon+nameHtml+'</td>'
+              +'<td style="padding:.4rem 1rem;text-align:right;white-space:nowrap;font-size:.9rem;">'+fmtLOC(r.loc)+'</td>'
+              +'</tr>';
+          });
+          tbody.innerHTML=html;
+          updateMatchCount();
+        }
+
+        function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+        function getDescendantIds(i){
+          var depth=allRows[i].depth, ids=[];
+          for(var j=i+1;j<allRows.length;j++){
+            if(allRows[j].depth<=depth) break;
+            ids.push(j);
+          }
+          return ids;
+        }
+
+        window.toggleDir=function(i){
+          var r=allRows[i];
+          r.open=!r.open;
+          var desc=getDescendantIds(i);
+          if(r.open){
+            // show only direct children
+            desc.forEach(function(j){
+              if(allRows[j].depth===r.depth+1) allRows[j].visible=true;
+            });
+          } else {
+            // hide all descendants
+            desc.forEach(function(j){ allRows[j].visible=false; allRows[j].open=false; });
+          }
+          render();
+        };
+
+        window.expandAll=function(){
+          allRows.forEach(function(r){r.visible=true; if(r.isDir) r.open=true;});
+          render();
+        };
+        window.collapseAll=function(){
+          allRows.forEach(function(r){
+            if(r.depth===0) r.visible=true; else r.visible=false;
+            r.open=false;
+          });
+          render();
+        };
+
+        // ── Search ───────────────────────────────────────────────────
+        function updateMatchCount(){
+          var q=document.getElementById('treeSearch').value;
+          if(!q){document.getElementById('treeMatchCount').textContent='';return;}
+          var n=allRows.filter(function(r){return r.visible&&r.matched;}).length;
+          document.getElementById('treeMatchCount').textContent=n+' match'+(n===1?'':'es');
+        }
+
+        document.getElementById('treeSearch').addEventListener('input',function(){
+          var q=this.value.toLowerCase();
+          if(!q){
+            allRows.forEach(function(r){r.matched=true;});
+            collapseAll(); return;
+          }
+          // Mark matched rows and expose their ancestors
+          var matchedIdxs=new Set();
+          allRows.forEach(function(r,i){ r.matched=r.name.toLowerCase().includes(q); if(r.matched) matchedIdxs.add(i); });
+          // For each match, make all ancestors visible+open
+          matchedIdxs.forEach(function(i){
+            for(var j=i-1;j>=0;j--){
+              if(allRows[j].depth<allRows[i].depth&&allRows[j].isDir){
+                allRows[j].open=true; allRows[j].visible=true;
+                if(allRows[j].depth===0) break;
+              }
+            }
+            allRows[i].visible=true;
+          });
+          // Hide rows that are neither matched nor ancestors
+          allRows.forEach(function(r,i){
+            if(!matchedIdxs.has(i) && !(r.open&&r.isDir)) {
+              // show if parent is open and this row is matched or on the path to a match
+              var parentOpen=r.depth===0||true;
+              if(!r.matched) r.visible=r.open;
+            }
+          });
+          render();
+        });
+
+        // Initial render (root level only)
+        collapseAll();
+      })();
+      </script>
+      {{end}}
+
     </main>
-    
+
     <script src="/dist/vendors/bootstrap/js/bootstrap.bundle.min.js"></script>
   </body>
 </html>
