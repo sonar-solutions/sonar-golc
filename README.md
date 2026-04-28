@@ -304,11 +304,12 @@ The sections below show the minimum required fields for each platform. Save `con
 
 ```json
 "Azure": {
-  "Users": "your-login",
   "AccessToken": "your-pat",
   "Organization": "your-org"
 }
 ```
+
+> **Token scopes required:** Code: Read · Project and Team: Read
 
 ---
 
