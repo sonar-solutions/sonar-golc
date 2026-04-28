@@ -250,12 +250,14 @@ func isExcluded(projectName string, exclusionList map[string]bool) bool {
 }
 
 func SaveResult(result AnalysisResult) error {
-
+	const resultPath = "Results/config/analysis_result_gitlab.json"
 	loggers := utils.NewLogger()
-	// Open or create the file
-	file, err := os.Create("Results/config/analysis_result_gitlab.json")
+	if err := os.MkdirAll("Results/config", 0755); err != nil {
+		loggers.Errorf("❌ Error creating Results/config directory: %v", err)
+		return err
+	}
+	file, err := os.Create(resultPath)
 	if err != nil {
-
 		loggers.Errorf("❌ Error creating Analysis file:%v", err)
 		return err
 	}
@@ -266,7 +268,7 @@ func SaveResult(result AnalysisResult) error {
 
 	// Encode the result and write it to the file
 	if err := encoder.Encode(result); err != nil {
-		loggers.Errorf("❌ Error encoding JSON file <Results/config/analysis_result_gitlab.json> :%v", err)
+		loggers.Errorf("❌ Error encoding JSON file <%s>: %v", resultPath, err)
 		return err
 	}
 

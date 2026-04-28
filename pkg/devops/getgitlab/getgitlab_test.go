@@ -393,19 +393,17 @@ func TestGetAllGroupProjects(t *testing.T) {
 		case apiGroupGPath:
 			return http.StatusOK, map[string]any{"id": 1, "name": "g"}
 		case apiGroup1ProjectsPath:
+			// The implementation uses include_subgroups=true to fetch all projects
+			// in a single paginated call — return both the group project and the
+			// subgroup project when that parameter is present.
+			if r.URL.Query().Get("include_subgroups") == "true" {
+				return http.StatusOK, []map[string]any{
+					{"id": 10, "name": "proj1", "path_with_namespace": "g/proj1", "default_branch": "main", "empty_repo": false, "archived": false},
+					{"id": 20, "name": "subproj", "path_with_namespace": "g/sg/subproj", "default_branch": "main", "empty_repo": false, "archived": false},
+				}
+			}
 			return http.StatusOK, []map[string]any{
 				{"id": 10, "name": "proj1", "path_with_namespace": "g/proj1", "default_branch": "main", "empty_repo": false, "archived": false},
-			}
-		case apiGroup1SubgroupsPath:
-			return http.StatusOK, []map[string]any{
-				{"id": 2, "name": "sg"},
-			}
-		case apiGroup2SubgroupsPath:
-			// subgroup without further descendants
-			return http.StatusOK, []map[string]any{}
-		case apiGroup2ProjectsPath:
-			return http.StatusOK, []map[string]any{
-				{"id": 20, "name": "subproj", "path_with_namespace": "g/subproj", "default_branch": "main", "empty_repo": false, "archived": false},
 			}
 		default:
 			return 0, nil
