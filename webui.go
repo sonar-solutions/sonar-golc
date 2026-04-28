@@ -21,8 +21,17 @@ import (
 	"time"
 )
 
-const webuiPort = 8091
-const resultsAllPort = 8090
+var webuiPort = getEnvPort("GOLC_WEBUI_PORT", 8091)
+var resultsAllPort = getEnvPort("GOLC_RESULTS_PORT", 8090)
+
+func getEnvPort(envKey string, defaultVal int) int {
+	if s := os.Getenv(envKey); s != "" {
+		if p, err := strconv.Atoi(s); err == nil && p > 0 && p < 65536 {
+			return p
+		}
+	}
+	return defaultVal
+}
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -626,7 +635,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
-	_ = tmpl.Execute(w, nil)
+	_ = tmpl.Execute(w, map[string]interface{}{"ResultsAllPort": resultsAllPort})
 }
 
 func handleGetConfig(w http.ResponseWriter, r *http.Request) {
@@ -1656,7 +1665,7 @@ async function viewResults() {
     const data = await res.json();
     window.open(data.url, '_blank');
   } catch(e) {
-    window.open('http://localhost:8090', '_blank');
+    window.open('http://localhost:{{.ResultsAllPort}}', '_blank');
   }
 }
 

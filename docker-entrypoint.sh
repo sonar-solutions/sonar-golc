@@ -13,7 +13,7 @@ fi
 rm -rf /data/Results /data/Logs
 
 # Run analysis (config from /config via GOLC_CONFIG_FILE)
-/app/golc -devops "${GOLC_DEVOPS}"
+/app/webui --internal-run "${GOLC_DEVOPS}"
 
-# Serve results on PORT (default 8092)
+# Serve results on GOLC_RESULTS_PORT or PORT (default 8090)
 exec /app/ResultsAll

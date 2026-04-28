@@ -23,11 +23,13 @@ import (
 
 const defaultPort = 8090
 
-// getPort returns the server port from PORT env, or defaultPort.
+// getPort returns the server port from GOLC_RESULTS_PORT or PORT env, or defaultPort.
 func getPort() int {
-	if s := os.Getenv("PORT"); s != "" {
-		if p, err := strconv.Atoi(s); err == nil && p > 0 && p < 65536 {
-			return p
+	for _, key := range []string{"GOLC_RESULTS_PORT", "PORT"} {
+		if s := os.Getenv(key); s != "" {
+			if p, err := strconv.Atoi(s); err == nil && p > 0 && p < 65536 {
+				return p
+			}
 		}
 	}
 	return defaultPort

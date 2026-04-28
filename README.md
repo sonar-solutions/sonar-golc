@@ -130,13 +130,13 @@ golc_2.0_darwin_arm64/
 
 ## Docker
 
-Use the published image **`timothe/sonar-golc`** from Docker Hub. Config is provided via a mounted directory; the web UI is served on port 8092. Set the DevOps platform with the **`GOLC_DEVOPS`** environment variable.
+Use the published image **`timothe/sonar-golc`** from Docker Hub. Config is provided via a mounted directory; the results dashboard is served on port 8090. Set the DevOps platform with the **`GOLC_DEVOPS`** environment variable.
 
 ```bash
 mkdir -p config && cp config_sample.json config/config.json
 # Edit config/config.json with your tokens and organization
 
-docker run -p 8092:8092 \
+docker run -p 8090:8090 \
   -v "$(pwd)/config:/config:ro" \
   -e GOLC_DEVOPS=Github \
   timothe/sonar-golc
@@ -155,8 +155,26 @@ docker compose up
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GOLC_DEVOPS` | `Github` | Platform key: `Github`, `Gitlab`, `BitBucket`, `BitBucketSRV`, `Azure`, `File` |
+| `GOLC_RESULTS_PORT` | `8090` | Port for the ResultsAll dashboard (also accepts legacy `PORT`) |
+| `GOLC_WEBUI_PORT` | `8091` | Port for the Web UI (not applicable in Docker mode) |
 
 See [docs/docker.md](docs/docker.md) for full Docker usage details.
+
+---
+
+## Port Configuration
+
+Both binaries pick up their port from environment variables, falling back to defaults:
+
+| Variable | Binary | Default | Description |
+|----------|--------|---------|-------------|
+| `GOLC_WEBUI_PORT` | `webui` | `8091` | Web UI listening port |
+| `GOLC_RESULTS_PORT` | `ResultsAll` | `8090` | Results dashboard listening port |
+
+```bash
+GOLC_WEBUI_PORT=9001 ./webui
+GOLC_RESULTS_PORT=9002 ./ResultsAll
+```
 
 ---
 

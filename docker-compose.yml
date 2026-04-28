@@ -3,9 +3,11 @@ services:
     image: timothe/sonar-golc:latest # or :dev for the dev version (multi-arch: amd64 + arm64)
     container_name: sonar-golc
     ports:
-      - "8092:8092"
+      - "8090:8090"
     environment:
       GOLC_DEVOPS: Github # Github, Gitlab, BitBucket, File
+      # GOLC_RESULTS_PORT: 8090  # Override ResultsAll dashboard port
+      # GOLC_WEBUI_PORT: 8091    # Override Web UI port (not used in Docker mode)
     volumes:
       - /path/to/your/config:/config:ro
     restart: "unless-stopped"

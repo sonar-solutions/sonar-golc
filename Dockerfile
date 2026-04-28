@@ -1,5 +1,5 @@
 # Build stage: always run on the host arch (amd64 on GitHub) so we cross-compile instead of using QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache ca-certificates
 
@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -tags=golc -ldflags "-X main.version1=1.0.9" -o golc golc.go && \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -tags=webui -ldflags "-X main.version=v2.0" -o webui webui.go golc.go && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -tags=resultsall -o ResultsAll ResultsAll.go
 
 # Run stage: minimal Alpine for fewest vulnerabilities and small size
@@ -22,7 +22,7 @@ RUN apk add --no-cache ca-certificates && \
 
 WORKDIR /app
 
-COPY --from=builder /build/golc /build/ResultsAll ./
+COPY --from=builder /build/webui /build/ResultsAll ./
 COPY --from=builder /build/dist ./dist
 COPY --from=builder /build/imgs ./imgs
 COPY docker-entrypoint.sh ./
@@ -38,8 +38,9 @@ VOLUME ["/config", "/data"]
 
 WORKDIR /data
 
-# Entrypoint copies dist/imgs into /data then runs golc then ResultsAll (all from /data)
+# GOLC_WEBUI_PORT (default 8091): web UI port (not used in Docker mode)
+# GOLC_RESULTS_PORT / PORT (default 8090): ResultsAll dashboard port
 
-EXPOSE 8092
+EXPOSE 8090
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
