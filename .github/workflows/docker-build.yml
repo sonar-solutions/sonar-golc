@@ -3,8 +3,6 @@ name: Build and Push Docker Image
 on:
   push:
     branches:
-      - docker-support # temporary branch for testing
-      - dev
       - main
 
 jobs:
