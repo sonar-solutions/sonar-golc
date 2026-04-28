@@ -16,6 +16,7 @@ import (
 )
 
 type ProjectBranch struct {
+	Org         string
 	ProjectKey  string
 	RepoSlug    string
 	MainBranch  string
@@ -105,6 +106,7 @@ type ParamsReposDC struct {
 	Branch           string
 	Spin             *spinner.Spinner
 	DefaultB         bool
+	Org              string
 }
 
 type BranchResponse struct {
@@ -177,6 +179,7 @@ type ParamsReposProjectDC struct {
 	Spin             *spinner.Spinner
 	Branch           string
 	DefaultB         bool
+	Org              string
 }
 
 type FetchParams struct {
@@ -237,7 +240,7 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 	result.NumRepositories = nbRepos
 	result.ProjectBranches = importantBranches
 
-	if err := saveAnalysisResult1("Results/config/analysis_repos.json", result); err != nil {
+	if err := saveAnalysisResult1("Results/config/analysis_result_bitbucket_dc.json", result); err != nil {
 		loggers.Errorf("❌ Error creating Analysis file:%v", err)
 		return importantBranches, nbRepos, emptyRepo
 	}
@@ -278,6 +281,7 @@ func processRepo(projectKey string, repo Repo, parms ParamsReposProjectDC, bitbu
 	loggers.Infof("\t     ✅ The largest branch of the repo is <%s> of size : %s", largestRepoBranch, utils.FormatSize(int64(largestRepoSize)))
 
 	*importantBranches = append(*importantBranches, ProjectBranch{
+		Org:         parms.Org,
 		ProjectKey:  projectKey,
 		RepoSlug:    repo.Slug,
 		MainBranch:  largestRepoBranch,
@@ -380,6 +384,7 @@ func GetRepos(project string, repos []Repo, parms ParamsReposDC, bitbucketURLBas
 
 		fmt.Printf("\t     ✅ The largest branch of the repo is <%s> of size : %s\n", largestRepoBranch, utils.FormatSize(int64(largestRepoSize)))
 		importantBranches = append(importantBranches, ProjectBranch{
+			Org:         parms.Org,
 			ProjectKey:  project,
 			RepoSlug:    repo.Slug,
 			MainBranch:  largestRepoBranch,
@@ -523,7 +528,7 @@ func findLargestBranch1(projectKey, repoSlug string, branches []Branch, parms Pa
 }
 
 func saveAnalysisResult(result AnalysisResult) error {
-	file, err := os.Create("Results/config/analysis_repos_bitbucketdc.json")
+	file, err := os.Create("Results/config/analysis_result_bitbucket_dc.json")
 	if err != nil {
 		return err
 	}
@@ -585,6 +590,7 @@ func GetProjectBitbucketList(platformConfig map[string]interface{}, exclusionFil
 			Spin:             spin,
 			Branch:           platformConfig["Branch"].(string),
 			DefaultB:         platformConfig["DefaultBranch"].(bool),
+			Org:              platformConfig["Organization"].(string),
 		}
 		importantBranches, nbRepos, _ = GetReposProject(projects, parms, bitbucketURLBase, nbRepos, exclusionList)
 	} else {
@@ -599,6 +605,7 @@ func GetProjectBitbucketList(platformConfig map[string]interface{}, exclusionFil
 			Branch:           platformConfig["Branch"].(string),
 			Spin:             spin,
 			DefaultB:         platformConfig["DefaultBranch"].(bool),
+			Org:              platformConfig["Organization"].(string),
 		}
 		importantBranches, nbRepos, _ = GetRepos(platformConfig["Project"].(string), repos, parms, bitbucketURLBase, exclusionList)
 

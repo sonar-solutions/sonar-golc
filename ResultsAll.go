@@ -144,6 +144,18 @@ type BranchData struct {
 	CodeLinesF  string `json:"CodeLinesF"`
 }
 
+type FileDetail struct {
+	File        string `json:"File"`
+	Lines       int    `json:"Lines"`
+	BlankLines  int    `json:"BlankLines"`
+	Comments    int    `json:"Comments"`
+	CodeLines   int    `json:"CodeLines"`
+	LinesF      string `json:"LinesF"`
+	BlankLinesF string `json:"BlankLinesF"`
+	CommentsF   string `json:"CommentsF"`
+	CodeLinesF  string `json:"CodeLinesF"`
+}
+
 type RepositoryDetailData struct {
 	Repository       string                   `json:"Repository"`
 	MainBranch       string                   `json:"MainBranch"`
@@ -157,12 +169,13 @@ type RepositoryDetailData struct {
 	TotalCommentsF   string                   `json:"TotalCommentsF"`
 	TotalCodeLinesF  string                   `json:"TotalCodeLinesF"`
 	Languages        []RepositoryLanguageData `json:"Languages"`
+	Files            []FileDetail             `json:"Files"`
 	OtherBranches    []BranchData             `json:"OtherBranches"`
 	GlobalReport     Globalinfo               `json:"GlobalReport"`
 	Platform         string                   `json:"Platform"`
 	PlatformIcon     string                   `json:"PlatformIcon"`
 	RepositoryURL    string                   `json:"RepositoryURL"`
-	NoteLOCExcluded  string                   `json:"NoteLOCExcluded"` // Note that JSON is excluded from total (SonarQube behavior)
+	NoteLOCExcluded  string                   `json:"NoteLOCExcluded"`
 }
 
 type PageData struct {
@@ -233,12 +246,26 @@ func getRepositoryData() ([]RepositoryData, error) {
 	for _, branch := range repoMap {
 		i++
 		// Construct filename for byfile report using platform-specific logic
-		firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
-		fileName := buildSecurePath(byFileReportDir,
-			fmt.Sprintf("Result_%s_%s_%s_byfile.json",
-				sanitizePathComponent(firstPart),
-				sanitizePathComponent(branch.RepoSlug),
-				sanitizePathComponent(branch.MainBranch)))
+		var fileName, byLanguagePath string
+		if platform == "file" {
+			// File mode uses simpler naming: Result_{slug}_byfile.json
+			fileName = buildSecurePath(byFileReportDir,
+				fmt.Sprintf("Result_%s_byfile.json", sanitizePathComponent(branch.RepoSlug)))
+			byLanguagePath = buildSecurePath(byLanguageReportDir,
+				fmt.Sprintf("Result_%s.json", sanitizePathComponent(branch.RepoSlug)))
+		} else {
+			firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
+			fileName = buildSecurePath(byFileReportDir,
+				fmt.Sprintf("Result_%s_%s_%s_byfile.json",
+					sanitizePathComponent(firstPart),
+					sanitizePathComponent(branch.RepoSlug),
+					sanitizePathComponent(branch.MainBranch)))
+			byLanguagePath = buildSecurePath(byLanguageReportDir,
+				fmt.Sprintf("Result_%s_%s_%s.json",
+					sanitizePathComponent(firstPart),
+					sanitizePathComponent(branch.RepoSlug),
+					sanitizePathComponent(branch.MainBranch)))
+		}
 
 		// Read the byfile report
 		fileData, err := os.ReadFile(fileName)
@@ -263,11 +290,6 @@ func getRepositoryData() ([]RepositoryData, error) {
 
 		// Code lines for report total: exclude JSON to match SonarQube behavior
 		codeLinesForReport := reportData.TotalCodeLines
-		byLanguagePath := buildSecurePath(byLanguageReportDir,
-			fmt.Sprintf("Result_%s_%s_%s.json",
-				sanitizePathComponent(firstPart),
-				sanitizePathComponent(branch.RepoSlug),
-				sanitizePathComponent(branch.MainBranch)))
 		if langData, err := os.ReadFile(byLanguagePath); err == nil {
 			var byLang struct {
 				Results []struct {
@@ -540,11 +562,17 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 	} else {
 		firstPart = getFirstPartForFilename(platform, orgName, repoName)
 	}
-	byFileReportPath := buildSecurePath(byFileReportDir,
-		fmt.Sprintf("Result_%s_%s_%s_byfile.json",
-			sanitizePathComponent(firstPart),
-			sanitizePathComponent(repoName),
-			sanitizePathComponent(branchName)))
+	var byFileReportPath string
+	if platform == "file" {
+		byFileReportPath = buildSecurePath(byFileReportDir,
+			fmt.Sprintf("Result_%s_byfile.json", sanitizePathComponent(repoName)))
+	} else {
+		byFileReportPath = buildSecurePath(byFileReportDir,
+			fmt.Sprintf("Result_%s_%s_%s_byfile.json",
+				sanitizePathComponent(firstPart),
+				sanitizePathComponent(repoName),
+				sanitizePathComponent(branchName)))
+	}
 
 	byFileData, err := os.ReadFile(byFileReportPath)
 	if err != nil {
@@ -571,11 +599,17 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 	}
 
 	// Read the bylanguage report for language breakdown
-	byLanguageReportPath := buildSecurePath(byLanguageReportDir,
-		fmt.Sprintf("Result_%s_%s_%s.json",
-			sanitizePathComponent(firstPart),
-			sanitizePathComponent(repoName),
-			sanitizePathComponent(branchName)))
+	var byLanguageReportPath string
+	if platform == "file" {
+		byLanguageReportPath = buildSecurePath(byLanguageReportDir,
+			fmt.Sprintf("Result_%s.json", sanitizePathComponent(repoName)))
+	} else {
+		byLanguageReportPath = buildSecurePath(byLanguageReportDir,
+			fmt.Sprintf("Result_%s_%s_%s.json",
+				sanitizePathComponent(firstPart),
+				sanitizePathComponent(repoName),
+				sanitizePathComponent(branchName)))
+	}
 
 	languageData, err := os.ReadFile(byLanguageReportPath)
 	if err != nil {
@@ -627,6 +661,22 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		formattedLanguages = append(formattedLanguages, formattedLang)
 	}
 
+	// Build per-file list (populated when byfile report has file-level Results)
+	var formattedFiles []FileDetail
+	for _, f := range byFileReport.Results {
+		formattedFiles = append(formattedFiles, FileDetail{
+			File:        f.File,
+			Lines:       f.Lines,
+			BlankLines:  f.BlankLines,
+			Comments:    f.Comments,
+			CodeLines:   f.CodeLines,
+			LinesF:      utils.FormatCodeLines(float64(f.Lines)),
+			BlankLinesF: utils.FormatCodeLines(float64(f.BlankLines)),
+			CommentsF:   utils.FormatCodeLines(float64(f.Comments)),
+			CodeLinesF:  utils.FormatCodeLines(float64(f.CodeLines)),
+		})
+	}
+
 	// Get platform info and repository URL
 	platformIcon, repositoryURL := getPlatformInfoAndURL(platform, orgName, repoName)
 
@@ -655,6 +705,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		TotalCommentsF:   utils.FormatCodeLines(float64(byFileReport.TotalComments)),
 		TotalCodeLinesF:  utils.FormatCodeLines(float64(totalCodeLinesForReport)),
 		Languages:        formattedLanguages,
+		Files:            formattedFiles,
 		OtherBranches:    otherBranches,
 		GlobalReport:     globalInfo,
 		Platform:         platform,
@@ -1801,9 +1852,215 @@ const repositoryDetailTemplate = `
         </div>
       </section>
       {{end}}
-      
+
+      {{if .Files}}
+      <!-- File Tree Section -->
+      <section style="background-color:#f8f9fa;padding:3rem 0;">
+        <div class="container">
+          <div class="row">
+            <div class="col-12">
+              <h2 class="text-center mb-4">
+                <i class="fas fa-sitemap"></i> File Tree <small class="text-muted fs-6">({{len .Files}} files)</small>
+              </h2>
+              <div class="card shadow">
+                <div class="card-body p-0">
+                  <div class="px-3 pt-3 pb-2 d-flex gap-2 align-items-center border-bottom">
+                    <input type="text" id="treeSearch" class="form-control form-control-sm" placeholder="Search files and folders..." style="max-width:360px;">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="expandAll()">Expand all</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="collapseAll()">Collapse all</button>
+                    <span id="treeMatchCount" class="text-muted small ms-auto"></span>
+                  </div>
+                  <div style="overflow-y:auto;max-height:650px;">
+                    <table class="table table-sm mb-0" id="treeTable" style="border-collapse:collapse;">
+                      <thead style="position:sticky;top:0;background:#343a40;color:#fff;z-index:2;">
+                        <tr>
+                          <th style="padding:.5rem 1rem;font-weight:600;">Name</th>
+                          <th style="padding:.5rem 1rem;text-align:right;white-space:nowrap;font-weight:600;">Code Lines</th>
+                        </tr>
+                      </thead>
+                      <tbody id="treeBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <script>
+      (function(){
+        var RAW = [
+          {{range .Files}}{"p":{{.File | printf "%q"}},"c":{{.CodeLines}}},
+          {{end}}
+        ];
+
+        // ── Build tree ──────────────────────────────────────────────
+        function buildTree(files) {
+          var root = {name:'', children:{}, fileList:[], loc:0, isDir:true};
+          files.forEach(function(f){
+            var parts = f.p.replace(/\\/g,'/').split('/');
+            var node = root;
+            for (var i=0;i<parts.length-1;i++){
+              var seg=parts[i];
+              if(!node.children[seg]) node.children[seg]={name:seg,children:{},fileList:[],loc:0,isDir:true};
+              node=node.children[seg];
+            }
+            node.fileList.push({name:parts[parts.length-1],loc:f.c});
+          });
+          function sumLOC(n){
+            var t=0;
+            n.fileList.forEach(function(f){t+=f.loc;});
+            Object.values(n.children).forEach(function(c){t+=sumLOC(c);c.loc=c._sum;});
+            n._sum=t; return t;
+          }
+          sumLOC(root); root.loc=root._sum;
+          function fix(n){n.loc=n._sum; Object.values(n.children).forEach(fix);}
+          fix(root);
+          return root;
+        }
+
+        // ── Flatten tree to rows ─────────────────────────────────────
+        var allRows=[];
+        function flatten(node, depth, parentId){
+          var sorted = Object.keys(node.children).sort();
+          sorted.forEach(function(k){
+            var child=node.children[k];
+            var id='n'+(allRows.length);
+            allRows.push({id:id,parentId:parentId,depth:depth,name:child.name,loc:child.loc,isDir:true,open:false,visible:true,matched:true});
+            flatten(child,depth+1,id);
+          });
+          var sortedFiles=node.fileList.slice().sort(function(a,b){return b.loc-a.loc;});
+          sortedFiles.forEach(function(f){
+            allRows.push({id:'n'+(allRows.length),parentId:parentId,depth:depth,name:f.name,loc:f.loc,isDir:false,visible:true,matched:true});
+          });
+        }
+
+        var tree=buildTree(RAW);
+        flatten(tree,0,null);
+
+        // ── Render ───────────────────────────────────────────────────
+        var tbody=document.getElementById('treeBody');
+
+        function fmtLOC(n){
+          if(n===0) return '<span style="color:#aaa;">—</span>';
+          return n.toLocaleString();
+        }
+
+        function render(){
+          var html='';
+          allRows.forEach(function(r,i){
+            if(!r.visible) return;
+            var indent=r.depth*20;
+            var icon, toggle='';
+            if(r.isDir){
+              icon=r.open?'<i class="fas fa-folder-open" style="color:#f5a623;margin-right:6px;"></i>'
+                         :'<i class="fas fa-folder" style="color:#f5a623;margin-right:6px;"></i>';
+              toggle='<i class="fas fa-chevron-'+(r.open?'down':'right')+'" style="color:#aaa;font-size:.7rem;margin-right:6px;"></i>';
+            } else {
+              var ext=r.name.split('.').pop().toLowerCase();
+              icon='<i class="fas fa-file-code" style="color:#6c757d;margin-right:6px;"></i>';
+            }
+            var bg = r.matched && document.getElementById('treeSearch').value ? 'background:#fffde7;' : '';
+            var cursor = r.isDir ? 'cursor:pointer;' : '';
+            var nameHtml = r.isDir
+              ? '<span style="font-weight:600;">'+escHtml(r.name)+'</span>'
+              : '<span style="font-family:monospace;font-size:.85rem;">'+escHtml(r.name)+'</span>';
+            html += '<tr data-i="'+i+'" style="border-bottom:1px solid #e9ecef;'+cursor+bg+'" '
+              +(r.isDir?'onclick="toggleDir('+i+')"':'')+'>'
+              +'<td style="padding:.4rem 1rem .4rem '+(16+indent)+'px;">'
+              +toggle+icon+nameHtml+'</td>'
+              +'<td style="padding:.4rem 1rem;text-align:right;white-space:nowrap;font-size:.9rem;">'+fmtLOC(r.loc)+'</td>'
+              +'</tr>';
+          });
+          tbody.innerHTML=html;
+          updateMatchCount();
+        }
+
+        function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+        function getDescendantIds(i){
+          var depth=allRows[i].depth, ids=[];
+          for(var j=i+1;j<allRows.length;j++){
+            if(allRows[j].depth<=depth) break;
+            ids.push(j);
+          }
+          return ids;
+        }
+
+        window.toggleDir=function(i){
+          var r=allRows[i];
+          r.open=!r.open;
+          var desc=getDescendantIds(i);
+          if(r.open){
+            // show only direct children
+            desc.forEach(function(j){
+              if(allRows[j].depth===r.depth+1) allRows[j].visible=true;
+            });
+          } else {
+            // hide all descendants
+            desc.forEach(function(j){ allRows[j].visible=false; allRows[j].open=false; });
+          }
+          render();
+        };
+
+        window.expandAll=function(){
+          allRows.forEach(function(r){r.visible=true; if(r.isDir) r.open=true;});
+          render();
+        };
+        window.collapseAll=function(){
+          allRows.forEach(function(r){
+            if(r.depth===0) r.visible=true; else r.visible=false;
+            r.open=false;
+          });
+          render();
+        };
+
+        // ── Search ───────────────────────────────────────────────────
+        function updateMatchCount(){
+          var q=document.getElementById('treeSearch').value;
+          if(!q){document.getElementById('treeMatchCount').textContent='';return;}
+          var n=allRows.filter(function(r){return r.visible&&r.matched;}).length;
+          document.getElementById('treeMatchCount').textContent=n+' match'+(n===1?'':'es');
+        }
+
+        document.getElementById('treeSearch').addEventListener('input',function(){
+          var q=this.value.toLowerCase();
+          if(!q){
+            allRows.forEach(function(r){r.matched=true;});
+            collapseAll(); return;
+          }
+          // Mark matched rows and expose their ancestors
+          var matchedIdxs=new Set();
+          allRows.forEach(function(r,i){ r.matched=r.name.toLowerCase().includes(q); if(r.matched) matchedIdxs.add(i); });
+          // For each match, make all ancestors visible+open
+          matchedIdxs.forEach(function(i){
+            for(var j=i-1;j>=0;j--){
+              if(allRows[j].depth<allRows[i].depth&&allRows[j].isDir){
+                allRows[j].open=true; allRows[j].visible=true;
+                if(allRows[j].depth===0) break;
+              }
+            }
+            allRows[i].visible=true;
+          });
+          // Hide rows that are neither matched nor ancestors
+          allRows.forEach(function(r,i){
+            if(!matchedIdxs.has(i) && !(r.open&&r.isDir)) {
+              // show if parent is open and this row is matched or on the path to a match
+              var parentOpen=r.depth===0||true;
+              if(!r.matched) r.visible=r.open;
+            }
+          });
+          render();
+        });
+
+        // Initial render (root level only)
+        collapseAll();
+      })();
+      </script>
+      {{end}}
+
     </main>
-    
+
     <script src="/dist/vendors/bootstrap/js/bootstrap.bundle.min.js"></script>
   </body>
 </html>

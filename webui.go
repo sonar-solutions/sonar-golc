@@ -115,45 +115,45 @@ var platformDefaults = map[string]map[string]interface{}{
 		"Baseapi": "github.com", "Protocol": "https", "FileExclusion": ".cloc_github_ignore",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
-		"DefaultBranch": true, "Stats": false, "ResultByFile": false,
+		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"GithubEnterprise": {
 		"DevOps": "github", "Apiver": "2022-11-28", "FileExclusion": ".cloc_github_ignore",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
-		"DefaultBranch": true, "Stats": false, "ResultByFile": false,
+		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"Gitlab": {
 		"DevOps": "gitlab", "Url": "https://gitlab.com/", "Apiver": "v4",
 		"Baseapi": "api/", "Protocol": "https", "FileExclusion": ".cloc_gitlab_ignore",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
-		"DefaultBranch": true, "Stats": false, "ResultByFile": false,
+		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"BitBucket": {
 		"DevOps": "bitbucket", "Url": "https://api.bitbucket.org/", "Apiver": "2.0",
 		"Baseapi": "bitbucket.org", "Protocol": "https", "FileExclusion": ".cloc_bitbucket_ignore",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
-		"DefaultBranch": true, "Stats": false, "ResultByFile": false,
+		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"BitBucketSRV": {
 		"DevOps": "bitbucket_dc", "Apiver": "1.0", "Baseapi": "rest/api/",
 		"FileExclusion": ".cloc_bitbucketdc_ignore",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-5), "Factor": float64(33),
-		"DefaultBranch": true, "Stats": false, "ResultByFile": false,
+		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"Azure": {
 		"DevOps": "azure", "Url": "https://dev.azure.com/", "Apiver": "7.1",
 		"Baseapi": "_apis/git/", "Protocol": "https", "FileExclusion": ".cloc_azure_ignore",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
-		"DefaultBranch": true, "Stats": false, "ResultByFile": false,
+		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"File": {
 		"DevOps": "file", "FileExclusion": ".cloc_file_ignore", "FileLoad": ".cloc_file_load",
-		"ResultAll": true, "ResultByFile": false,
+		"ResultAll": true, "ResultByFile": true, "ScanSubDirs": true,
 	},
 }
 
@@ -1135,8 +1135,7 @@ const basicFields = {
                      {id:'Protocol',label:'Protocol',ph:'https'}],
   Azure:            [{id:'AccessToken',label:'Personal Access Token <small class="text-muted">— requires <strong>Code: Read</strong> &amp; <strong>Project and Team: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'}],
-  File:             [{id:'Organization',label:'Organization / Label',ph:'my-org'},
-                     {id:'Directory',label:'Directory to analyze',ph:'../my-repos/.'}],
+  File:             [{id:'Organization',label:'Organization / Label',ph:'my-org'}],
 };
 
 // platforms that support Project & Repos fields in advanced
@@ -1245,6 +1244,90 @@ function buildBasicFields(key, saved) {
     row.appendChild(col);
   });
   container.appendChild(row);
+
+  // File mode: append multi-directory widget after the standard fields
+  if (key === 'File') {
+    buildFileDirectories(saved);
+  }
+}
+
+function buildFileDirectories(saved) {
+  const container = document.getElementById('basic-fields');
+  const wrap = document.createElement('div');
+  wrap.id = 'file-dirs-wrap';
+  wrap.className = 'mt-3';
+
+  const labelRow = document.createElement('div');
+  labelRow.className = 'd-flex align-items-center gap-2 mb-1';
+  labelRow.innerHTML = '<label class="form-label mb-0" style="font-weight:600;">Directories to analyze</label>'
+    + '<button type="button" class="btn btn-sm" id="file-dirs-add"'
+    + ' style="background:rgba(99,102,241,.18);color:#a5b4fc;border:1px solid rgba(99,102,241,.35);padding:1px 10px;font-size:.8rem;">'
+    + '<i class="fas fa-plus me-1"></i>Add directory</button>';
+  wrap.appendChild(labelRow);
+
+  const hint = document.createElement('div');
+  hint.className = 'text-muted mb-2';
+  hint.style.fontSize = '.78rem';
+  hint.innerHTML = 'Enter the <strong>absolute or relative path</strong> to each local directory you want to count. '
+    + 'Use <code>.</code> for the current folder. '
+    + 'Examples: <code>/home/user/repos/project</code> (Linux/Mac) &nbsp;|&nbsp; <code>C:\\Users\\user\\repos\\project</code> (Windows). '
+    + 'Add multiple directories by clicking <em>Add directory</em> — each will be counted and reported separately.';
+  wrap.appendChild(hint);
+
+  // Scan subdirectories toggle
+  const subDirToggle = document.createElement('div');
+  subDirToggle.className = 'form-check form-switch mb-3';
+  const scanSaved = !(saved && saved.ScanSubDirs === false);
+  subDirToggle.innerHTML = '<input class="form-check-input" type="checkbox" id="file-scanSubDirs"'
+    + (scanSaved ? ' checked' : '') + '>'
+    + '<label class="form-check-label form-label mb-0" for="file-scanSubDirs">'
+    + 'Scan immediate subdirectories as separate repos'
+    + ' <small class="text-muted">— enable when the path is a parent folder containing multiple projects (e.g. <code>~/repos</code>); '
+    + 'disable when the path itself is the project</small></label>';
+  wrap.appendChild(subDirToggle);
+
+  const list = document.createElement('div');
+  list.id = 'file-dirs-list';
+  wrap.appendChild(list);
+
+  container.appendChild(wrap);
+
+  // Restore saved directories (stored as \n-separated string in Directory field)
+  const savedDirs = (saved && saved.Directory) ? saved.Directory.split('\n').filter(Boolean) : [];
+  const initial = savedDirs.length ? savedDirs : [''];
+  initial.forEach(val => addDirRow(val));
+
+  document.getElementById('file-dirs-add').addEventListener('click', () => addDirRow(''));
+}
+
+function addDirRow(val) {
+  const list = document.getElementById('file-dirs-list');
+  const idx = list.children.length;
+  const row = document.createElement('div');
+  row.className = 'd-flex gap-2 mb-2 align-items-center file-dir-row';
+
+  const input = document.createElement('input');
+  input.className = 'form-control';
+  input.type = 'text';
+  input.placeholder = idx === 0 ? '/path/to/project  or  C:\\path\\to\\project' : 'Path to another directory...';
+  input.dataset.dirIdx = idx;
+  if (val) input.value = val;
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-sm';
+  removeBtn.style.cssText = 'background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.3);flex-shrink:0;padding:4px 10px;';
+  removeBtn.innerHTML = '<i class="fas fa-minus"></i>';
+  removeBtn.title = 'Remove this directory';
+  removeBtn.addEventListener('click', () => {
+    if (document.querySelectorAll('.file-dir-row').length > 1) {
+      row.remove();
+    }
+  });
+
+  row.appendChild(input);
+  row.appendChild(removeBtn);
+  list.appendChild(row);
 }
 
 const PRESET_TEST_PATHS   = ['test','tests','__tests__','spec','specs','e2e','testdata','fixtures','mocks','__mocks__','integration'];
@@ -1268,7 +1351,7 @@ function syncPresetPaths() {
 function populateAdvanced(key, saved) {
   const defaults = {DefaultBranch:true,Branch:'',Multithreading:true,Workers:10,
     FileExclusion:'',ExtExclusion:[],ExcludePaths:[],ExcludeTests:false,ExcludeVendor:false,
-    Repos:'',Project:'',ResultByFile:false};
+    Repos:'',Project:'',ResultByFile:true};
   const cfg = Object.assign({}, defaults, saved);
 
   document.getElementById('adv-defaultBranch').checked = !!cfg.DefaultBranch;
@@ -1341,6 +1424,14 @@ function gatherConfig() {
   fields.forEach(f => {
     cfg[f.id] = document.getElementById('f-'+f.id) ? document.getElementById('f-'+f.id).value.trim() : '';
   });
+  // File mode: collect multi-directory inputs and scan-subdirs toggle
+  if (currentPlatform === 'File') {
+    const dirs = Array.from(document.querySelectorAll('.file-dir-row input'))
+      .map(el => el.value.trim()).filter(Boolean);
+    cfg.Directory = dirs.join('\n');
+    const scanEl = document.getElementById('file-scanSubDirs');
+    cfg.ScanSubDirs = scanEl ? scanEl.checked : true;
+  }
   // Bitbucket Cloud: Organization = Workspace (same value, one field removed from UI)
   if (currentPlatform === 'BitBucket') {
     cfg.Organization = cfg.Workspace;

@@ -677,9 +677,46 @@ func AnalyseReposListAzure(DestinationResult string, platformConfig map[string]i
 	return AnalyseReposList(DestinationResult, platformConfig, repoInterfaces, analyseAzurebRepo)
 }
 
+/* ---------------- File analysis result serialisation ---------------- */
+
+type fileProjectBranch struct {
+	Org         string `json:"Org"`
+	ProjectKey  string `json:"ProjectKey"`
+	RepoSlug    string `json:"RepoSlug"`
+	MainBranch  string `json:"MainBranch"`
+	LargestSize int64  `json:"LargestSize"`
+}
+
+type fileAnalysisResult struct {
+	NumRepositories int                  `json:"NumRepositories"`
+	ProjectBranches []fileProjectBranch  `json:"ProjectBranches"`
+}
+
+func saveFileAnalysisResult(destDir, org string, dirs []string) error {
+	result := fileAnalysisResult{}
+	for _, d := range dirs {
+		result.ProjectBranches = append(result.ProjectBranches, fileProjectBranch{
+			Org:      org,
+			RepoSlug: filepath.Base(d),
+		})
+	}
+	result.NumRepositories = len(result.ProjectBranches)
+
+	configDir := filepath.Join(destDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(filepath.Join(configDir, "analysis_result_file.json"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return json.NewEncoder(f).Encode(result)
+}
+
 /* ---------------- Analyse Directory ---------------- */
 
-func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool) {
+func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion []string, ResultByFile bool, ResultAll bool, destDir string) {
 
 	type Configuration struct {
 		ExcludeExtensions []string
@@ -720,12 +757,15 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 				OrderByComment:    false,
 				Order:             "DESC",
 				OutputName:        outputFileName,
-				OutputPath:        "Results",
+				OutputPath:        destDir,
 				ReportFormats:     []string{"json"},
 				Branch:            "",
 				Token:             "",
 				Cloned:            false,
 				Repopath:          "",
+			}
+			if ResultAll {
+				params.ByFile = true
 			}
 
 			gc, err := goloc.NewGCloc(params, assets.Languages)
@@ -736,34 +776,33 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 
 				if ResultAll {
 
+					// First run: byfile report (ByFile=true)
 					if err := gc.Run(); err != nil {
 						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis with ByAll = true: %v", err)
-
+						logger.Errorf("❌ Error during analysis (byfile pass): %v", err)
 						return
 					}
 
-					// Second call to Run with ByFile = false
-					params.ByFile = true
-
-					params.Cloned = false
+					// Second run: bylanguage report (ByFile=false)
+					params.ByFile = false
+					params.Cloned = true
 					params.Repopath = gc.Repopath
 					params.RepopathDisposable = gc.RepopathDisposable
 
 					gc, err = goloc.NewGCloc(params, assets.Languages)
 					if err != nil {
 						fmt.Print("\n")
-						logger.Errorf("❌ Error initializing GCloc for ByFile = false: %v", err)
+						logger.Errorf("❌ Error initializing GCloc for bylanguage pass: %v", err)
 						return
 					}
 
 					if err := gc.Run(); err != nil {
 						fmt.Print("\n")
-						logger.Errorf("❌ Error during analysis with ByFile = false: %v", err)
+						logger.Errorf("❌ Error during analysis (bylanguage pass): %v", err)
 						return
 					}
 				} else {
-					// If ByAll = false, just run normally
+					// ResultAll=false: single pass (byfile or bylanguage depending on ResultByFile)
 					if err := gc.Run(); err != nil {
 						fmt.Print("\n")
 						logger.Errorf("❌ Error during analysis: %v", err)
@@ -1267,16 +1306,51 @@ func main() {
 				ListDirectory = append(ListDirectory, platformConfig["Directory"].(string))
 			}
 		} else {
-			if len(platformConfig["Directory"].(string)) == 0 {
+			dirField := platformConfig["Directory"].(string)
+			if len(dirField) == 0 {
 				logger.Error("❌ No analysis possible, no directory, specified file or specified loading file")
 				os.Exit(1)
 			} else {
-
-				ListDirectory = append(ListDirectory, platformConfig["Directory"].(string))
+				for _, d := range strings.Split(dirField, "\n") {
+					if d = strings.TrimSpace(d); d != "" {
+						ListDirectory = append(ListDirectory, d)
+					}
+				}
+			}
+		}
+		// Expand to immediate subdirectories when ScanSubDirs is set
+		scanSubDirs, _ := platformConfig["ScanSubDirs"].(bool)
+		if scanSubDirs {
+			var expanded []string
+			for _, d := range ListDirectory {
+				entries, err := os.ReadDir(d)
+				if err != nil {
+					logger.Errorf("❌ Cannot read directory <%s>: %v", d, err)
+					continue
+				}
+				found := false
+				for _, e := range entries {
+					if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+						expanded = append(expanded, filepath.Join(d, e.Name()))
+						found = true
+					}
+				}
+				if !found {
+					// No subdirectories — analyze the directory itself
+					expanded = append(expanded, d)
+				}
+			}
+			if len(expanded) > 0 {
+				ListDirectory = expanded
 			}
 		}
 		startTime = time.Now()
-		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool), DestinationResult)
+
+		// Write analysis_result_file.json so ResultsAll can list the repos
+		if err := saveFileAnalysisResult(DestinationResult, platformConfig["Organization"].(string), ListDirectory); err != nil {
+			logger.Errorf("❌ Failed to write analysis_result_file.json: %v", err)
+		}
 	}
 
 	/*---------------------------------- End Select type of DevOps Platform ----------------------------------------------------*/
@@ -1367,7 +1441,12 @@ func main() {
 	if totalCodeLinesSum1 == "0" {
 		spin.Stop()
 		fmt.Println("\n --------------------------------------------------------------------")
-		logger.Error("  ❌ There is definitely a problem, 0 lines of code are reported ???")
+		logger.Errorf("  ❌ Analysis produced 0 lines of code. Possible causes:")
+		logger.Errorf("     • The directory/repository path does not exist or is empty")
+		logger.Errorf("     • All files were excluded by the exclusion rules")
+		logger.Errorf("     • The token lacks read access to the repositories")
+		logger.Errorf("     • No source files with recognised extensions were found")
+		logger.Errorf("     • Check the logs above for per-repo errors")
 		fmt.Println("\n --------------------------------------------------------------------")
 		os.Exit(1)
 	}
