@@ -557,7 +557,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		}
 	}
 
-	if orgName == "" {
+	if foundBranch == nil {
 		return nil, fmt.Errorf("repository %s not found in analysis results", repoName)
 	}
 
