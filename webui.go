@@ -1085,8 +1085,8 @@ const htmlTemplate = `<!DOCTYPE html>
   .btn-stop { background:linear-gradient(135deg,#dc2626,#b91c1c); border:none; border-radius:8px; font-weight:600; color:#fff !important; }
   .btn-stop:hover { background:linear-gradient(135deg,#b91c1c,#991b1b); color:#fff !important; }
   .btn-success-view { background:linear-gradient(135deg,#059669,#0d6efd); border:none; border-radius:9999px;
-    font-weight:600; padding:.375rem .75rem; color:#fff; }
-  .btn-success-view:hover { background:linear-gradient(135deg,#047857,#0b5ed7); color:#fff; }
+    font-weight:700; font-size:1.1rem; padding:.6rem 2.2rem; color:#fff; box-shadow:0 4px 14px rgba(13,110,253,.35); }
+  .btn-success-view:hover { background:linear-gradient(135deg,#047857,#0b5ed7); color:#fff; box-shadow:0 6px 18px rgba(13,110,253,.5); }
   .btn-download-log { border:2px solid #0d6efd; color:#6ea8fe; background:transparent;
     border-radius:9999px; font-weight:600; padding:.375rem .75rem; }
   .btn-download-log:hover { border-color:#0a58ca; color:#9ec5fe; background:rgba(13,110,253,.12); }
