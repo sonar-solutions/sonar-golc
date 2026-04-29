@@ -986,8 +986,10 @@ func runGolcInProcess(platform string) {
 		}
 	}
 	_ = os.Remove("Logs/Logs.log")
+	_ = os.Remove("Logs/debug.log")
 	logger = utils.NewLogger()
-	logger.SetLevel(AppConfig.Logging.Level)
+	// Do not override the level: NewLogger sets DebugLevel so all entries reach the hooks.
+	// The infoAndAbove hook already gates what appears on stdout/SSE.
 	logger.Info("✅ Configuration loaded successfully and version matched!")
 
 	// Resolve platform config
@@ -1208,6 +1210,9 @@ func runGolcInProcess(platform string) {
 				}
 			}
 		}
+		logger.Debugf("→ file mode: %d exclusion(s) loaded", len(ListExclusion))
+		logger.Debugf("→ file mode: %d director(ies) to scan", len(ListDirectory))
+
 		// Expand to immediate subdirectories when ScanSubDirs is set
 		scanSubDirs, _ := platformConfig["ScanSubDirs"].(bool)
 		if scanSubDirs {
@@ -1232,7 +1237,11 @@ func runGolcInProcess(platform string) {
 			}
 			if len(expanded) > 0 {
 				ListDirectory = expanded
+				logger.Debugf("→ file mode: ScanSubDirs expanded to %d director(ies)", len(ListDirectory))
 			}
+		}
+		for _, d := range ListDirectory {
+			logger.Debugf("→ directory %s: analyzing", d)
 		}
 		startTime = time.Now()
 		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, getStringSliceConfig(platformConfig, "FolderKeywords"), getStringSliceConfig(platformConfig, "FileNamePatterns"), platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool), DestinationResult)
@@ -1432,16 +1441,5 @@ func runGolcInProcess(platform string) {
 		logger.Errorf("❌ Error writing to file:%v", err)
 		return
 	}
-
-	/*if platformConfig["ResultByFile"].(bool) {
-		logger.Infof(" ℹ️  To generate and visualize results on a web interface, follow these steps: ")
-		logger.Infof("\t✅ run : ResultByfiles")
-	} else {*/
-
-	logger.Infof(" ℹ️  To generate and visualize results on a web interface, follow these steps: ")
-	logger.Infof("\t✅ run : ResultsAll")
-	//}
-	//fmt.Println("\nℹ️  To generate and visualize results on a web interface, follow these steps: ")
-	//fmt.Println("\t✅ run : ResultsAll")
 
 }

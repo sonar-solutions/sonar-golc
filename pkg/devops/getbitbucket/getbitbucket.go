@@ -420,6 +420,7 @@ func getAllProjects(client *bitbucket.Client, workspace string, exclusionList *u
 func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase string, exclusionList *utils.ExclusionList) ([]Projectc, int, error) {
 	var projects []Projectc
 	var excludedCount int
+	loggers := utils.NewLogger()
 
 	url := fmt.Sprintf("%sworkspaces/%s/projects", bitbucketURLBase, workspace)
 
@@ -429,11 +430,13 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 	}
 	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
+	loggers.Debugf("GET %s", url)
 	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
+	loggers.Debugf("GET %s → %s", url, resp.Status)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -518,6 +521,7 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 func getSepecificProjectsWithAuth(workspace, projectKeys, accessToken, users, bitbucketURLBase string, exclusionList *utils.ExclusionList) ([]Projectc, int, error) {
 	var projects []Projectc
 	var excludedCount int
+	loggers := utils.NewLogger()
 
 	// Split projectKeys by comma if multiple projects are specified
 	projectKeyList := strings.Split(projectKeys, ",")
@@ -536,10 +540,12 @@ func getSepecificProjectsWithAuth(workspace, projectKeys, accessToken, users, bi
 		}
 		req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
+		loggers.Debugf("GET %s", url)
 		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
 			continue
 		}
+		loggers.Debugf("GET %s → %s", url, resp.Status)
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
@@ -800,6 +806,7 @@ func listRepos(parms ParamsProjectBitbucket, projectKey string, reposRes *bitbuc
 		for _, repo := range reposRes.Items {
 			repoCopy := repo
 			if isRepoExcluded(parms.Exclusionlist, projectKey, repo.Slug) {
+				loggers.Debugf("→ repo %s/%s: skipped (excluded)", projectKey, repo.Slug)
 				excludedCount++
 				continue
 			}
@@ -809,9 +816,11 @@ func listRepos(parms ParamsProjectBitbucket, projectKey string, reposRes *bitbuc
 				loggers.Errorf("❌ Error when Testing if repo is empty %s: %v\n", repo.Slug, err)
 			}
 			if isEmpty {
+				loggers.Debugf("→ repo %s/%s: skipped (empty)", projectKey, repo.Slug)
 				emptyOrArchivedCount++
 				continue
 			}
+			loggers.Debugf("→ repo %s/%s: analyzing", projectKey, repo.Slug)
 			allRepos = append(allRepos, &repoCopy)
 		}
 	} else {

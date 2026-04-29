@@ -289,6 +289,7 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 	for _, repo := range parms.Repos {
 		repoName := *repo.Name
 		if repo.GetArchived() {
+			loggers.Debugf("→ repo %s: skipped (archived)", repoName)
 			cptarchiv++
 			continue
 		}
@@ -302,7 +303,11 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 			fmt.Print(err.Error())
 			continue
 		}
+		if isEmpty {
+			loggers.Debugf("→ repo %s: skipped (empty)", repoName)
+		}
 		if !isEmpty {
+			loggers.Debugf("→ repo %s: analyzing", repoName)
 			largestRepoBranch, repoBranches := analyzeRepoBranches(parms, ctx, client, repo, cpt, spin1)
 			importantBranches = append(importantBranches, ProjectBranch{
 				Org:         parms.Organization,

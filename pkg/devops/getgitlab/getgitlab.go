@@ -458,12 +458,14 @@ func analyzeMainBranchForProjects(client *gitlab.Client, projects []*gitlab.Proj
 				spin1.Prefix = messageB
 				spin1.Start()
 
+		loggers.Debugf("→ project %s: analyzing", project.Name)
 		mainBranch, largestSize, nbrsize, err := getMainBranchDetails(client, project, since, until)
 				if err != nil {
 					spin1.Stop()
 			loggers.Errorf("%s", err.Error())
 			continue
 				}
+		loggers.Debugf("→ project %s: branch selected %s (largest=%d, total=%d)", project.Name, mainBranch, largestSize, nbrsize)
 		result = append(result, ProjectBranch{
 			Org:         org,
 					Namespace:   project.PathWithNamespace,

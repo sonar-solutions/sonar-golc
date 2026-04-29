@@ -10,43 +10,85 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// CustomFormatter writes coloured log lines to terminal/SSE output.
 type CustomFormatter struct{}
 
-// Format formate l'enregistrement log
 func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) {
-	// Définir la couleur en fonction du niveau de log
+	msg := entry.Message
 	switch entry.Level {
 	case logrus.DebugLevel:
-		entry.Message = color.HiBlueString(entry.Message)
+		msg = color.HiBlueString(msg)
 	case logrus.InfoLevel:
-		entry.Message = color.WhiteString(entry.Message)
+		msg = color.WhiteString(msg)
 	case logrus.WarnLevel:
-		entry.Message = color.YellowString(entry.Message)
+		msg = color.YellowString(msg)
 	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
-		entry.Message = color.RedString(entry.Message)
+		msg = color.RedString(msg)
 	}
-
-	// Formater le temps
 	timestamp := entry.Time.Format("2006-01-02 15:04:05")
-
-	// Construire le message final
-	msg := fmt.Sprintf("[%s] %s %s\n", timestamp, strings.ToUpper(entry.Level.String()), entry.Message)
-	return []byte(msg), nil
+	line := fmt.Sprintf("[%s] %s %s\n", timestamp, strings.ToUpper(entry.Level.String()), msg)
+	return []byte(line), nil
 }
 
+// plainFormatter writes plain (no ANSI colour) log lines — used for debug.log.
+type plainFormatter struct{}
+
+func (f *plainFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	timestamp := entry.Time.Format("2006-01-02 15:04:05")
+	line := fmt.Sprintf("[%s] %s %s\n", timestamp, strings.ToUpper(entry.Level.String()), entry.Message)
+	return []byte(line), nil
+}
+
+// writerHook routes log entries matching the given levels to a writer.
+type writerHook struct {
+	writer    io.Writer
+	formatter logrus.Formatter
+	levels    []logrus.Level
+}
+
+func (h *writerHook) Levels() []logrus.Level { return h.levels }
+
+func (h *writerHook) Fire(entry *logrus.Entry) error {
+	b, err := h.formatter.Format(entry)
+	if err != nil {
+		return err
+	}
+	_, err = h.writer.Write(b)
+	return err
+}
+
+var infoAndAbove = []logrus.Level{
+	logrus.PanicLevel, logrus.FatalLevel, logrus.ErrorLevel,
+	logrus.WarnLevel, logrus.InfoLevel,
+}
+
+var allLevels = []logrus.Level{
+	logrus.PanicLevel, logrus.FatalLevel, logrus.ErrorLevel,
+	logrus.WarnLevel, logrus.InfoLevel, logrus.DebugLevel, logrus.TraceLevel,
+}
+
+// NewLogger returns a logger that:
+//   - writes Info+ (coloured) to stdout and Logs/Logs.log  — visible in the UI SSE stream
+//   - writes Debug+ (plain text) to Logs/debug.log         — downloadable from the UI
 func NewLogger() *logrus.Logger {
 	logger := logrus.New()
-	logger.SetFormatter(&CustomFormatter{})
-
 	logger.SetLevel(logrus.DebugLevel)
+	logger.SetOutput(io.Discard) // all output goes through hooks
 
-	logFile, err := os.OpenFile("Logs/Logs.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		// Fallback to stdout only when log file cannot be created (e.g. read-only fs, Docker)
-		logger.SetOutput(os.Stdout)
-		return logger
+	coloured := &CustomFormatter{}
+	plain := &plainFormatter{}
+
+	// Info+ → stdout (+ Logs.log when available)
+	var mainOut io.Writer = os.Stdout
+	if logFile, err := os.OpenFile("Logs/Logs.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+		mainOut = io.MultiWriter(os.Stdout, logFile)
+	}
+	logger.AddHook(&writerHook{writer: mainOut, formatter: coloured, levels: infoAndAbove})
+
+	// Debug+ → Logs/debug.log (plain, all levels)
+	if debugFile, err := os.OpenFile("Logs/debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+		logger.AddHook(&writerHook{writer: debugFile, formatter: plain, levels: allLevels})
 	}
 
-	logger.SetOutput(io.MultiWriter(os.Stdout, logFile))
 	return logger
 }

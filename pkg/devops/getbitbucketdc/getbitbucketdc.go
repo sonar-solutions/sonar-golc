@@ -226,6 +226,7 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 		loggers.Infof("\t  ✅ The number of Repo(s) found is: %d", len(repos))
 
 		for _, repo := range repos {
+			loggers.Debugf("→ repo %s/%s: analyzing", project.Key, repo.Name)
 			if err := processRepo(project.Key, repo, parms, bitbucketURLBase, spin1, &importantBranches); err != nil {
 				if err == ErrEmptyRepo {
 					emptyRepo++
@@ -811,6 +812,7 @@ func fetchOneRepos(url string, accessToken string, exclusionList *utils.Exclusio
 
 func fetchProjects(url string, accessToken string, isProjectResponse bool) (interface{}, error) {
 	var projectsResp interface{}
+	loggers := utils.NewLogger()
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -818,11 +820,13 @@ func fetchProjects(url string, accessToken string, isProjectResponse bool) (inte
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
+	loggers.Debugf("GET %s", url)
 	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	loggers.Debugf("GET %s → %s", url, resp.Status)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -866,6 +870,7 @@ func isRepoExcluded(exclusionList *utils.ExclusionList, repo string) bool {
 
 func fetchAllRepos(url string, accessToken string, exclusionList *utils.ExclusionList) ([]Repo, error) {
 	var allRepos []Repo
+	loggers := utils.NewLogger()
 	for {
 		reposResp, err := fetchRepos(url, accessToken, true)
 		if err != nil {
@@ -878,7 +883,9 @@ func fetchAllRepos(url string, accessToken string, exclusionList *utils.Exclusio
 			if len(exclusionList.Projects) == 0 && len(exclusionList.Repos) == 0 {
 				allRepos = append(allRepos, repo)
 			} else {
-				if !isRepoExcluded(exclusionList, KEYTEST) {
+				if isRepoExcluded(exclusionList, KEYTEST) {
+					loggers.Debugf("→ repo %s: skipped (excluded)", KEYTEST)
+				} else {
 					allRepos = append(allRepos, repo)
 				}
 			}
@@ -945,17 +952,20 @@ func fetchAllBranches(url string, accessToken string) ([]Branch, error) {
 }
 
 func fetchBranches(url string, accessToken string) (*BranchResponse, error) {
+	loggers := utils.NewLogger()
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
+	loggers.Debugf("GET %s", url)
 	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	loggers.Debugf("GET %s → %s", url, resp.Status)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

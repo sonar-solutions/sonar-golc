@@ -442,7 +442,7 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 		}
 
 		for _, repo := range repos {
-
+			loggers.Debugf("→ repo %s/%s: analyzing", *project.Name, *repo.Name)
 			largestRepoBranch, repobranches, brsize, err := analyzeRepoBranches(params, *project.Name, *repo.Name, gitClient, cpt, spin1)
 
 			if err != nil {
@@ -491,6 +491,7 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 	}
 
 	// Get repositories
+	loggers.Debugf("→ project %s: fetching repos from API", projectKey)
 	repos, err := gitClient.GetRepositories(parms.Context, git.GetRepositoriesArgs{
 		Project: &projectKey,
 	})
@@ -498,17 +499,20 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 		loggers.Errorf("Error get GetRepositories ")
 		return 0, 0, 0, nil, err
 	}
+	loggers.Debugf("→ project %s: API returned %d repos", projectKey, len(*repos))
 
 	for _, repo := range *repos {
 		repoName := *repo.Name
 
 		// If SingleRepos is specified, skip repositories not in the list
 		if len(parms.SingleRepos) > 0 && !contains(singleReposList, repoName) {
+			loggers.Debugf("→ repo %s/%s: skipped (not in single-repo filter)", projectKey, repoName)
 			continue
 		}
 
 		// check if exclude
 		if isRepoExcluded(parms.Exclusionlist, projectKey, repoName) {
+			loggers.Debugf("→ repo %s/%s: skipped (excluded)", projectKey, repoName)
 			excludedCount++
 			continue
 		}
@@ -520,6 +524,7 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 			return 0, 0, 0, nil, err
 		}
 		if isEmpty {
+			loggers.Debugf("→ repo %s/%s: skipped (empty)", projectKey, repoName)
 			emptyCount++
 			continue
 		}
