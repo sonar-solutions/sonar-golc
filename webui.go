@@ -271,7 +271,7 @@ var (
 	//   GitLab:          "TotalProject(s) that will be analyzed: N"
 	// Note: per-project "number of Repo(s) found is: N" lines are intentionally
 	// excluded here — they are handled by rePerProjectRepoCount below.
-	reTotal = regexp.MustCompile(`(?i)(?:number of (?:repositor|director)|TotalProject[^:]*|Total\s+(?:Repositor|Branch|Project)[^:]*)\D*(\d+)`)
+	reTotal = regexp.MustCompile(`(?i)(?:number of (?:repositor|director)|TotalProject[^:]*|Total\s+(?:Repositor|Project)[^:]*)\D*(\d+)`)
 
 	// GitLab only: "✅ Group <name>: N project(s) to analyze" — logged after
 	// filterValidProjects so the count reflects only repos that will actually be
@@ -1068,6 +1068,8 @@ const htmlTemplate = `<!DOCTYPE html>
   .btn-success-view:hover { background:linear-gradient(135deg,#047857,#0b5ed7); color:#fff; }
   .progress { height:10px; border-radius:99px; background:rgba(255,255,255,.08); }
   .progress-bar { border-radius:99px; background:linear-gradient(90deg,#0d6efd,#6366f1); transition:width .4s ease; }
+  @keyframes bar-scan { 0% { background-position:100% center; } 100% { background-position:-100% center; } }
+  .progress-bar.indeterminate { width:100% !important; background:linear-gradient(90deg,#0d6efd 0%,#6366f1 35%,#a78bfa 50%,#6366f1 65%,#0d6efd 100%); background-size:200% auto; animation:bar-scan 1.8s linear infinite; transition:none; }
   .log-terminal { background:#0a0e1a; border:1px solid rgba(255,255,255,.1); border-radius:10px;
     padding:1rem; height:420px; overflow-y:auto; font-family:monospace; font-size:.78rem;
     color:#94a3b8; line-height:1.6; }
@@ -1771,15 +1773,20 @@ function handleEvent(ev) {
 
 function updateProgress(ev) {
   const pct = ev.pct || 0;
-  document.getElementById('progressBar').style.width = pct+'%';
-  document.getElementById('progress-pct').textContent = pct+'%';
   // Use label (summary) for the bar; fall back to message when label is absent
   document.getElementById('progress-label').textContent = ev.label || ev.message || '';
+  // Width is managed by setPhase (indeterminate during identifying)
+  if (ev.phase !== 'identifying') {
+    document.getElementById('progressBar').style.width = pct+'%';
+    document.getElementById('progress-pct').textContent = pct+'%';
+  }
   if (ev.phase) setPhase(ev.phase, pct);
 }
 
 function setPhase(phase, pct) {
   const badge = document.getElementById('phase-badge');
+  const bar = document.getElementById('progressBar');
+  const pctEl = document.getElementById('progress-pct');
   const labels = {
     identifying: '<i class="fas fa-spinner fa-spin fa-sm"></i> Identifying repositories',
     analyzing:   '<i class="fas fa-spinner fa-spin fa-sm"></i> Analyzing repositories',
@@ -1790,9 +1797,15 @@ function setPhase(phase, pct) {
   };
   badge.className = 'phase-badge ' + (phase||'identifying');
   badge.innerHTML = labels[phase] || labels.identifying;
-  if (pct !== undefined) {
-    document.getElementById('progressBar').style.width = pct+'%';
-    document.getElementById('progress-pct').textContent = pct+'%';
+  if (phase === 'identifying') {
+    bar.classList.add('indeterminate');
+    pctEl.textContent = '';
+  } else {
+    bar.classList.remove('indeterminate');
+    if (pct !== undefined) {
+      bar.style.width = pct+'%';
+      pctEl.textContent = pct+'%';
+    }
   }
 }
 
