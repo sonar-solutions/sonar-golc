@@ -1390,12 +1390,13 @@ func runGolcInProcess(platform string) {
 		os.Exit(1)
 	}
 
-	// Generate Repository Summary Reports
-	// Ensure we pass the base Results directory to generate summary reports,
-	// since it creates outputs under <Results>/byfile-report/*.
-	err = utils.GenerateRepositorySummaryReports(baseResultsDir)
-	if err != nil {
-		logger.Errorf("❌ Error creating repository summary reports: %v", err)
+	// Repository summary reports are only applicable to DevOps platform modes,
+	// not file mode (which has no platform-specific analysis_result_*.json).
+	if platformConfig["DevOps"].(string) != "file" {
+		err = utils.GenerateRepositorySummaryReports(baseResultsDir)
+		if err != nil {
+			logger.Errorf("❌ Error creating repository summary reports: %v", err)
+		}
 	}
 
 	fmt.Printf("\n")
