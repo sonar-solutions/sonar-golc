@@ -1084,8 +1084,8 @@ const htmlTemplate = `<!DOCTYPE html>
   .btn-primary:hover { background:linear-gradient(135deg,#0b5ed7,#4f46e5); color:#fff !important; }
   .btn-stop { background:linear-gradient(135deg,#dc2626,#b91c1c); border:none; border-radius:8px; font-weight:600; color:#fff !important; }
   .btn-stop:hover { background:linear-gradient(135deg,#b91c1c,#991b1b); color:#fff !important; }
-  .btn-success-view { background:linear-gradient(135deg,#059669,#0d6efd); border:none; border-radius:8px;
-    font-weight:700; font-size:1.05rem; padding:.65rem 2rem; color:#fff; }
+  .btn-success-view { background:linear-gradient(135deg,#059669,#0d6efd); border:none; border-radius:9999px;
+    font-weight:600; padding:.375rem .75rem; color:#fff; }
   .btn-success-view:hover { background:linear-gradient(135deg,#047857,#0b5ed7); color:#fff; }
   .btn-download-log { border:2px solid #0d6efd; color:#6ea8fe; background:transparent;
     border-radius:9999px; font-weight:600; padding:.375rem .75rem; }
@@ -1364,11 +1364,11 @@ const htmlTemplate = `<!DOCTYPE html>
           <h5 id="result-title" style="color:#86efac;">Analysis Complete!</h5>
           <p id="result-msg" style="color:#94a3b8;font-size:.9rem;"></p>
           <div class="d-flex gap-3 justify-content-center align-items-center mt-3">
+            <button class="btn btn-download-log" onclick="goToStep(1)">
+              <i class="fas fa-redo me-2"></i>New Analysis
+            </button>
             <button class="btn btn-success-view" onclick="viewResults()">
               <i class="fas fa-chart-bar me-2"></i>View Results
-            </button>
-            <button class="btn btn-outline-secondary" onclick="goToStep(1)">
-              <i class="fas fa-redo me-2"></i>New Analysis
             </button>
             <a class="btn btn-download-log" href="/api/download-debug" download="debug.log">
               <i class="fas fa-bug me-2"></i>Download Debug Log

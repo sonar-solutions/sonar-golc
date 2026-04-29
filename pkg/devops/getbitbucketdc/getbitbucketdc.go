@@ -201,7 +201,7 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 	var importantBranches []ProjectBranch
 	emptyRepo := 0
 	result := AnalysisResult{}
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin1.Prefix = "Get Projects... "
@@ -251,7 +251,7 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 
 func processRepo(projectKey string, repo Repo, parms ParamsReposProjectDC, bitbucketURLBase string, spin1 *spinner.Spinner, importantBranches *[]ProjectBranch) error {
 
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	isEmpty, err := isRepositoryEmpty(projectKey, repo.Slug, parms.AccessToken, bitbucketURLBase, parms.APIVersion)
 	if err != nil {
 		return fmt.Errorf("testing if repo is empty %s: %w", repo.Name, err)
@@ -347,7 +347,7 @@ func GetRepos(project string, repos []Repo, parms ParamsReposDC, bitbucketURLBas
 	var largestRepoBranch string
 	var importantBranches []ProjectBranch
 	var branches []Branch
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	emptyRepo := 0
 	nbRepos := 1
 	result := AnalysisResult{}
@@ -406,7 +406,7 @@ func GetRepos(project string, repos []Repo, parms ParamsReposDC, bitbucketURLBas
 }
 
 func logAndExit(message string, spin *spinner.Spinner) {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	loggers.Errorln(message)
 	if spin != nil {
 		spin.Stop()
@@ -439,7 +439,7 @@ func getBranches(project, repoSlug string, parms ParamsReposDC) ([]Branch, error
 func getBranches1(projectKey string, repo Repo, parms ParamsReposProjectDC) ([]Branch, error) {
 	var branches []Branch
 	var err error
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	if parms.DefaultB {
 		urlbr := fmt.Sprintf("%s%s%s/projects/%s/repos/%s/branches?limit=100", parms.URL, parms.BaseAPI, parms.APIVersion, projectKey, repo.Slug)
@@ -466,7 +466,7 @@ func getBranches1(projectKey string, repo Repo, parms ParamsReposProjectDC) ([]B
 func findLargestBranch(project, repoSlug string, branches []Branch, parms ParamsReposDC) (int, string, error) {
 	var largestRepoSize int
 	var largestRepoBranch string
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	for _, branch := range branches {
 		parms.Spin.Prefix = fmt.Sprintf("\t   Analysis branch <%s> size...", branch.Name)
@@ -556,7 +556,7 @@ func GetProjectBitbucketList(platformConfig map[string]interface{}, exclusionFil
 	var exclusionList *utils.ExclusionList
 	var err error
 	var nbRepos int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	bitbucketURLBase := platformConfig["Url"].(string)
 	bitbucketURL := fmt.Sprintf("%s%s%s/projects", platformConfig["Url"].(string), platformConfig["Baseapi"].(string), platformConfig["Apiver"].(string))
@@ -667,7 +667,7 @@ func determineProjectsAndRepos(platformConfig map[string]interface{}, exclusionL
 func summarizeAnalysisResults(importantBranches []ProjectBranch, nbRepos int) []ProjectBranch {
 	var totalSize, largestRepoSize int
 	var largestRepoProject, largestRepoBranch, largestRepo string
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	for _, branch := range importantBranches {
 		if branch.LargestSize > largestRepoSize {
@@ -759,7 +759,7 @@ func fetchAllProjects(url string, accessToken string, exclusionList *utils.Exclu
 
 func fetchOnelProjects(url string, accessToken string, exclusionList *utils.ExclusionList) ([]Project, error) {
 	var allProjects []Project
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	projectsResp, err := fetchProjects(url, accessToken, false)
 	if err != nil {
@@ -784,7 +784,7 @@ func fetchOnelProjects(url string, accessToken string, exclusionList *utils.Excl
 
 func fetchOneRepos(url string, accessToken string, exclusionList *utils.ExclusionList) ([]Repo, error) {
 	var allRepos []Repo
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	reposResp, err := fetchRepos(url, accessToken, false)
 	if err != nil {
@@ -812,7 +812,7 @@ func fetchOneRepos(url string, accessToken string, exclusionList *utils.Exclusio
 
 func fetchProjects(url string, accessToken string, isProjectResponse bool) (interface{}, error) {
 	var projectsResp interface{}
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -870,7 +870,7 @@ func isRepoExcluded(exclusionList *utils.ExclusionList, repo string) bool {
 
 func fetchAllRepos(url string, accessToken string, exclusionList *utils.ExclusionList) ([]Repo, error) {
 	var allRepos []Repo
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	for {
 		reposResp, err := fetchRepos(url, accessToken, true)
 		if err != nil {
@@ -952,7 +952,7 @@ func fetchAllBranches(url string, accessToken string) ([]Branch, error) {
 }
 
 func fetchBranches(url string, accessToken string) (*BranchResponse, error) {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -1036,7 +1036,7 @@ func fetchFileResponse(url string, accessToken string) (FileResponse, error) {
 }
 func calculateTotalSize(files []File, params FetchParams) (int, error) {
 	var wg sync.WaitGroup
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	wg.Add(len(files))
 
 	totalSize := 0

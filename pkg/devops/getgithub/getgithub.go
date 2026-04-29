@@ -132,7 +132,7 @@ const MessageApiRate = "❗️ Rate limit exceeded. Waiting for rate limit reset
 const ApiHeader1 = "application/vnd.github.v3+json"
 const ErrorMesssage1 = "❌ Error saving repositories in file Results/config/analysis_repos_github.json: %v\n"
 
-//var loggers = utils.NewLogger()
+//var loggers = utils.SharedLogger()
 
 // Load repository ignore map from file
 func loadExclusionRepos1(filename string) (ExclusionRepos, error) {
@@ -278,7 +278,7 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 	var TotalBranches, notAnalyzedCount, emptyRepo, cpt, cptarchiv int
 	var importantBranches []ProjectBranch
 	cpt = 1
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin1.Color("green", "bold")
@@ -338,7 +338,7 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 	var branches []*github.Branch
 	var allEvents []*github.Event
 	var branchPushes map[string]*BranchInfoEvents
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	opt := &github.BranchListOptions{
 		ListOptions: github.ListOptions{PerPage: 100},
@@ -454,7 +454,7 @@ func getAllEvents(ctx context.Context, client *github.Client, repoName, organiza
 func countBranchPushes(events []*github.Event, period int) map[string]*BranchInfoEvents {
 	branchPushes := make(map[string]*BranchInfoEvents)
 	oneMonthAgo := time.Now().AddDate(0, period, 0)
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	for _, event := range events {
 		if event.CreatedAt != nil && event.CreatedAt.After(oneMonthAgo) {
@@ -495,7 +495,7 @@ func analyzeBranches(ctx context.Context, client *github.Client, parms ParamsRep
 
 func analyzeWithStats(ctx context.Context, client *github.Client, organization, repoName string, oneMonthAgo time.Time, info *BranchInfoEvents) {
 	contributorsStats, _, err := client.Repositories.ListContributorsStats(ctx, organization, repoName)
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	if err != nil {
 		if rateLimitErr, ok := err.(*github.AbuseRateLimitError); ok {
 			fmt.Println(MessageApiRate)
@@ -526,7 +526,7 @@ func analyzeWithoutStats(ctx context.Context, client *github.Client, organizatio
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 	var allCommits []*github.RepositoryCommit
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	for {
 		commits, resp, err := client.Repositories.ListCommits(ctx, organization, repoName, opt)
 		if err != nil {
@@ -579,7 +579,7 @@ func determineLargestBranch(parms ParamsReposGithub, repo *github.Repository, br
 // GetAllBranchesForRepositories takes a repository list and expands it to analyze all branches
 func GetAllBranchesForRepositories(platformConfig map[string]interface{}, repositories []ProjectBranch) ([]ProjectBranch, error) {
 	var allBranches []ProjectBranch
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	client := github.NewClient(nil).WithAuthToken(platformConfig["AccessToken"].(string))
 	ctx := context.Background()
@@ -726,7 +726,7 @@ type RepoProcessingStats struct {
 }
 
 func GetRepoGithubListAllBranches(platformConfig map[string]interface{}, exclusionfile string, fast bool) ([]ProjectBranch, error) {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	stats := &RepoProcessingStats{}
 
 	client := github.NewClient(nil).WithAuthToken(platformConfig["AccessToken"].(string))
@@ -809,7 +809,7 @@ func GetRepoGithubList(platformConfig map[string]interface{}, exclusionfile stri
 	var repositories []*github.Repository
 	var exclusionList ExclusionRepos
 	var err1 error
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	opt := &github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{PerPage: 100},
@@ -901,7 +901,7 @@ func loadExclusionList(exclusionfile string) (ExclusionList, error) {
 func loadExclusionFile(exclusionfile string, spin *spinner.Spinner) (ExclusionRepos, error) {
 	var exclusionList ExclusionRepos
 	var err error
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	if exclusionfile == "0" {
 		exclusionList = make(map[string]bool)
@@ -941,7 +941,7 @@ func initializeGithubClient(platformConfig map[string]interface{}) (context.Cont
 		// Create client for GitHub Enterprise Server
 		client, err := github.NewClient(nil).WithAuthToken(accessToken).WithEnterpriseURLs(baseURL, baseURL)
 		if err != nil {
-			loggers := utils.NewLogger()
+			loggers := utils.SharedLogger()
 			loggers.Errorf("❌ Failed to create GitHub Enterprise client: %v", err)
 			// Fallback to regular client
 			client = github.NewClient(nil).WithAuthToken(accessToken)
@@ -973,7 +973,7 @@ func fetchUserRepositories(ctx context.Context, client *github.Client, opt *gith
 
 func fetchAllRepositories(ctx context.Context, client *github.Client, organization string, opt *github.RepositoryListByOrgOptions) ([]*github.Repository, error) {
 	var repositories []*github.Repository
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	for {
 		repos, resp, err := client.Repositories.ListByOrg(ctx, organization, opt)
 		if err != nil {
@@ -991,7 +991,7 @@ func fetchAllRepositories(ctx context.Context, client *github.Client, organizati
 
 func fetchSingleRepository(ctx context.Context, client *github.Client, platformConfig map[string]interface{}) ([]*github.Repository, error) {
 	repos, _, err := client.Repositories.Get(ctx, platformConfig["Organization"].(string), platformConfig["Repos"].(string))
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	if err != nil {
 		loggers.Errorf("❌ Error fetching repository: %v\n", err)
 		return nil, err
@@ -1034,7 +1034,7 @@ func findLargestRepository(importantBranches []ProjectBranch, totalSize *int64) 
 }
 
 func printSummary(config PlatformConfig, stats SummaryStats) {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	fmt.Printf("\n")
 	loggers.Infof("✅ The largest Repository is <%s> in the organization <%s> with the branch <%s> ", stats.LargestRepo, config.Organization, stats.LargestRepoBranch)
@@ -1052,7 +1052,7 @@ func FastAnalys(platformConfig map[string]interface{}, exlusionfile string) erro
 	var err1 error
 	var emptyRepo int
 	nbRepos := 0
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	opt := &github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{PerPage: 100},
 	} // Number Object by page in API Request

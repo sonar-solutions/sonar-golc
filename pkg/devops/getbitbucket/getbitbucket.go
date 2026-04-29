@@ -140,7 +140,7 @@ func GetProjectBitbucketListCloud(platformConfig map[string]interface{}, exclusi
 	var exclusionList *utils.ExclusionList
 	var err error
 	var totalSize int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	//	result := AnalysisResult{}
 
@@ -241,7 +241,7 @@ func findLargestRepository(importantBranches []ProjectBranch, totalSize *int) (s
 
 func printSummary(Org string, stats SummaryStats) {
 
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	loggers.Infof("✅ The largest Repository is <%s> in the organization <%s> with the branch <%s> ", stats.LargestRepo, Org, stats.LargestRepoBranch)
 	loggers.Infof("✅ Total Repositories that will be analyzed: %d - Find empty : %d - Excluded : %d - Archived : %d", stats.NbRepos-stats.EmptyRepo-stats.TotalExclude-stats.TotalArchiv, stats.EmptyRepo, stats.TotalExclude, stats.TotalArchiv)
@@ -420,7 +420,7 @@ func getAllProjects(client *bitbucket.Client, workspace string, exclusionList *u
 func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase string, exclusionList *utils.ExclusionList) ([]Projectc, int, error) {
 	var projects []Projectc
 	var excludedCount int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	url := fmt.Sprintf("%sworkspaces/%s/projects", bitbucketURLBase, workspace)
 
@@ -521,7 +521,7 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 func getSepecificProjectsWithAuth(workspace, projectKeys, accessToken, users, bitbucketURLBase string, exclusionList *utils.ExclusionList) ([]Projectc, int, error) {
 	var projects []Projectc
 	var excludedCount int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	// Split projectKeys by comma if multiple projects are specified
 	projectKeyList := strings.Split(projectKeys, ",")
@@ -617,7 +617,7 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 	var importantBranches []ProjectBranch
 	var NBRrepo, TotalBranches int
 	var messageF = ""
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	NBRrepos := 0
 	cptarchiv := 0
 
@@ -799,7 +799,7 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 func listRepos(parms ParamsProjectBitbucket, projectKey string, reposRes *bitbucket.RepositoriesRes) (int, int, []*bitbucket.Repository, error) {
 	var allRepos []*bitbucket.Repository
 	var excludedCount, emptyOrArchivedCount int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	if len(parms.SingleRepos) == 0 {
 
@@ -931,7 +931,7 @@ func analyzeRepoBranches(parms ParamsProjectBitbucket, repo *bitbucket.Repositor
 	var largestRepoBranch string
 	var err error
 	var brsize, nbrbranche int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	spin1.Prefix = "\r Analyzing branches"
 	spin1.Start()
@@ -1031,7 +1031,7 @@ func getAllBranches(client *bitbucket.Client, workspace, repoSlug string) ([]*bi
 func determineLargestBranch(parms ParamsProjectBitbucket, repo *bitbucket.Repository, branches []*bitbucket.RepositoryBranch) (string, int) {
 	var largestRepoBranch string
 	var maxCommits, branchSize int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	for _, branch := range branches {
 		commits, err := getCommitsForLastMonth(parms.Client, parms.Workspace, repo.Slug, branch.Name, parms.Period)
@@ -1062,7 +1062,7 @@ func determineLargestBranch(parms ParamsProjectBitbucket, repo *bitbucket.Reposi
 func getCommitsForLastMonth(client *bitbucket.Client, workspace, repoSlug, branchName string, periode int) ([]interface{}, error) {
 	now := time.Now()
 	lastMonth := now.AddDate(0, -periode, 0)
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	commits, err := client.Repositories.Commits.GetCommits(&bitbucket.CommitsOptions{
 		Owner:       workspace,
@@ -1092,7 +1092,7 @@ func getCommitsForLastMonth(client *bitbucket.Client, workspace, repoSlug, branc
 
 func SaveResult(result AnalysisResult) error {
 
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	// Open or create the file
 	file, err := os.Create("Results/config/analysis_result_bitbucket.json")
 	if err != nil {

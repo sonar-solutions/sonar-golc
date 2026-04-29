@@ -5,10 +5,44 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 )
+
+// sharedLog is the process-wide singleton, reset once per analysis run.
+var (
+	sharedLog   *logrus.Logger
+	sharedLogMu sync.RWMutex
+)
+
+// ResetSharedLogger creates a fresh singleton logger, opening new file handles.
+// Call this once at the start of each analysis run, after Logs/ has been created.
+func ResetSharedLogger() {
+	sharedLogMu.Lock()
+	defer sharedLogMu.Unlock()
+	sharedLog = NewLogger()
+}
+
+// SharedLogger returns the process-wide singleton, initialising it on first use.
+// All platform packages should use this instead of NewLogger() to avoid FD leaks.
+func SharedLogger() *logrus.Logger {
+	sharedLogMu.RLock()
+	if sharedLog != nil {
+		l := sharedLog
+		sharedLogMu.RUnlock()
+		return l
+	}
+	sharedLogMu.RUnlock()
+
+	sharedLogMu.Lock()
+	defer sharedLogMu.Unlock()
+	if sharedLog == nil {
+		sharedLog = NewLogger()
+	}
+	return sharedLog
+}
 
 // CustomFormatter writes coloured log lines to terminal/SSE output.
 type CustomFormatter struct{}

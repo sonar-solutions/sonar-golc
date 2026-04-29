@@ -987,9 +987,8 @@ func runGolcInProcess(platform string) {
 	}
 	_ = os.Remove("Logs/Logs.log")
 	_ = os.Remove("Logs/debug.log")
-	logger = utils.NewLogger()
-	// Do not override the level: NewLogger sets DebugLevel so all entries reach the hooks.
-	// The infoAndAbove hook already gates what appears on stdout/SSE.
+	utils.ResetSharedLogger()
+	logger = utils.SharedLogger()
 	logger.Info("✅ Configuration loaded successfully and version matched!")
 
 	// Resolve platform config
