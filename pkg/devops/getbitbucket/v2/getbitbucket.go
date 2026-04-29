@@ -117,6 +117,14 @@ type Reposize struct {
 
 const PrefixMsg = "Get Projects..."
 
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
 func isRepoExcluded(exclusionList *utils.ExclusionList, projectKey, repoKey string) bool {
 	_, repoExcluded := exclusionList.Repos[projectKey+"/"+repoKey]
 	return repoExcluded
@@ -321,8 +329,7 @@ func GetSize(parms ParamsProjectBitbucket, repo *bitbucket.Repository) (int, err
 	}
 	req.Header.Set("Authorization", getAuthHeader(parms.Users, parms.AccessToken))
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -427,8 +434,7 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 	}
 	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -474,7 +480,7 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 		}
 		req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-		resp, err := client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			break
 		}
@@ -534,8 +540,7 @@ func getSepecificProjectsWithAuth(workspace, projectKeys, accessToken, users, bi
 		}
 		req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -703,8 +708,7 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 		}
 		req.Header.Set("Authorization", getAuthHeader(parms.Users, parms.AccessToken))
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return 0, 0, nil, err
 		}
@@ -891,8 +895,7 @@ func fetchFiles(url string, accessToken string, users string) (*Response1, error
 	}
 	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

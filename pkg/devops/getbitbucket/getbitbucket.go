@@ -168,6 +168,14 @@ type SizeResponse struct {
 
 const PrefixMsg = "Get Projects..."
 
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
 func loadExclusionList(filename string) (*ExclusionList, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -707,8 +715,7 @@ func ifExistBranches(repoURL, accessToken string) ([]Branch, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -772,8 +779,7 @@ func CloudProjects(url string, accessToken string, isProjectResponse bool) (inte
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -860,8 +866,7 @@ func CloudRepos(url string, accessToken string, isProjectResponse bool) (interfa
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -909,8 +914,7 @@ func CloudBranches(url string, accessToken string) (*BranchResponse, error) {
 	//fmt.Println(url)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -970,8 +974,7 @@ func fetchFiles(url string, accessToken string) (*Response1, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,8 +1008,7 @@ func fetchBranchSize(workspace, repoSlug, branchName, accessToken, url, apiver s
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -1067,8 +1069,7 @@ func fetchBranchSize1(workspace, repoSlug, accessToken, url, apiver string) (int
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -1102,8 +1103,7 @@ func fetchDirectorySize(workspace string, repoSlug string, branchName string, co
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}

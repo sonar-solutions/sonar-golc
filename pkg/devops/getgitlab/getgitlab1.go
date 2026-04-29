@@ -8,9 +8,18 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const baseURL = "gitlab.com/api/v4"
+
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
 
 type Repository struct {
 	ID            int    `json:"id"`
@@ -33,8 +42,7 @@ func FetchRepositoriesGitlab(url string, page int, accessToken string) ([]Reposi
 	req, _ := http.NewRequest("GET", url1, nil)
 	req.Header.Set("Authorization", ""+accessToken+":")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fmt.Print("-- Stack: getgitlab.FetchRepositoriesGitlab Request API -- ")
 		return nil, "", err
@@ -97,8 +105,7 @@ func GetRepositoryBranches(accessToken, repositoryName string, repositoryID int)
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", ""+accessToken+":")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

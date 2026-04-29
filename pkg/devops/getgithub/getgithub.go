@@ -134,6 +134,14 @@ const ErrorMesssage1 = "❌ Error saving repositories in file Results/config/ana
 
 //var loggers = utils.NewLogger()
 
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
 // Load repository ignore map from file
 func loadExclusionRepos1(filename string) (ExclusionRepos, error) {
 	ignoreMap := make(ExclusionRepos)
@@ -1320,7 +1328,6 @@ func sortRepositoriesByUpdatedAt(repos []*github.Repository) {
 
 func GithubAllBranches(url, AccessToken, apiver string) ([]Branch, error) {
 
-	client := http.Client{}
 	var branches []Branch
 
 	for {
@@ -1332,7 +1339,7 @@ func GithubAllBranches(url, AccessToken, apiver string) ([]Branch, error) {
 		req.Header.Set("Authorization", "token "+AccessToken)
 		req.Header.Set("X-GitHub-Api-Version", apiver)
 
-		resp, err := client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
