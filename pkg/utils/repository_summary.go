@@ -77,7 +77,8 @@ func detectPlatformAndReadAnalysis() (string, []byte, error) {
 		"azure":       "Results/config/analysis_result_azure.json",
 		"bitbucket":   "Results/config/analysis_result_bitbucket.json",
 		"gitlab":      "Results/config/analysis_result_gitlab.json",
-		"bitbucketdc": "Results/config/analysis_repos_bitbucketdc.json", // Different naming pattern
+		"bitbucketdc": "Results/config/analysis_repos_bitbucketdc.json",
+		"file":        "Results/config/analysis_result_file.json",
 	}
 
 	for platform, fileName := range platformFiles {
@@ -143,13 +144,23 @@ func getRepositoryData() ([]RepositoryData, error) {
 	i := 0
 	for _, branch := range repoMap {
 		i++
-		// Construct filename for byfile report using platform-specific logic
-		firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
-		fileName := fmt.Sprintf("Results/byfile-report/Result_%s_%s_%s_byfile.json",
-			firstPart, branch.RepoSlug, branch.MainBranch)
+		// Construct file paths using platform-specific naming.
+		// File mode uses a shorter pattern (no project key or branch suffix)
+		// because goloc names files as Result_<dirname>_byfile.json in that mode.
+		var byfilePath, byLanguagePath string
+		if platform == "file" {
+			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s_byfile.json", branch.RepoSlug)
+			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s.json", branch.RepoSlug)
+		} else {
+			firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
+			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s_%s_%s_byfile.json",
+				firstPart, branch.RepoSlug, branch.MainBranch)
+			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s_%s_%s.json",
+				firstPart, branch.RepoSlug, branch.MainBranch)
+		}
 
 		// Read the byfile report
-		fileData, err := os.ReadFile(fileName)
+		fileData, err := os.ReadFile(byfilePath)
 		if err != nil {
 			// Skip this repository if file doesn't exist
 			continue
@@ -171,8 +182,6 @@ func getRepositoryData() ([]RepositoryData, error) {
 
 		// Code lines for report total: exclude JSON to match SonarQube behavior
 		codeLinesForReport := reportData.TotalCodeLines
-		byLanguagePath := fmt.Sprintf("Results/bylanguage-report/Result_%s_%s_%s.json",
-			firstPart, branch.RepoSlug, branch.MainBranch)
 		if langData, err := os.ReadFile(byLanguagePath); err == nil {
 			var byLang struct {
 				Results []struct {

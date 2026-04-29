@@ -113,7 +113,7 @@ func getAllGroupProjects(client *gitlab.Client, groupName string) ([]*gitlab.Pro
 	if err != nil {
 		return nil, err
 	}
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	loggers.Infof("🔍 Group <%s> → resolved to ID %d (full path: %s)", groupName, group.ID, group.FullPath)
 	projects, err := listGroupProjectsWithSubgroups(client, group.ID)
 	if err != nil {
@@ -260,7 +260,7 @@ func isExcluded(projectName string, exclusionList map[string]bool) bool {
 
 func SaveResult(result AnalysisResult) error {
 	const resultPath = "Results/config/analysis_result_gitlab.json"
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	if err := os.MkdirAll("Results/config", 0755); err != nil {
 		loggers.Errorf("❌ Error creating Results/config directory: %v", err)
 		return err
@@ -327,7 +327,7 @@ func analyzeProj(analyzeProject AnalyzeProject) (ProjectBranch, int, int, int) {
 func processProject(analyzeProject AnalyzeProject, cpt int, spin1 *spinner.Spinner, projectBranches []ProjectBranch, emptyRepos, archivedRepos, excludedProjects *int) ([]ProjectBranch, int) {
 	projectBranche, ExcludedProject, EmptyRepos, ArchivedRepos := analyzeProj(analyzeProject)
 
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	if EmptyRepos > 0 {
 		(*emptyRepos)++
@@ -350,7 +350,7 @@ func processProject(analyzeProject AnalyzeProject, cpt int, spin1 *spinner.Spinn
 }
 
 func isProjectExcludedOrInvalid(project *gitlab.Project, exclusionList ExclusionRepos, emptyRepos, archivedRepos *int) (bool, bool, bool) {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	if isExcluded(project.PathWithNamespace, exclusionList) {
 		loggers.Infof("⏭️  Skipping <%s>: in exclusion list", project.Name)
 		return true, false, false
@@ -451,19 +451,21 @@ func filterValidProjects(projects []*gitlab.Project, exclusionList ExclusionRepo
 func analyzeMainBranchForProjects(client *gitlab.Client, projects []*gitlab.Project, org string, since, until time.Time, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 	var result []ProjectBranch
 	totalBranches := 0
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	cpt := 1
 	for _, project := range projects {
 				messageB := fmt.Sprintf(Message2, project.Name)
 				spin1.Prefix = messageB
 				spin1.Start()
 
+		loggers.Debugf("→ project %s: analyzing", project.Name)
 		mainBranch, largestSize, nbrsize, err := getMainBranchDetails(client, project, since, until)
 				if err != nil {
 					spin1.Stop()
 			loggers.Errorf("%s", err.Error())
 			continue
 				}
+		loggers.Debugf("→ project %s: branch selected %s (largest=%d, total=%d)", project.Name, mainBranch, largestSize, nbrsize)
 		result = append(result, ProjectBranch{
 			Org:         org,
 					Namespace:   project.PathWithNamespace,
@@ -482,7 +484,7 @@ func analyzeMainBranchForProjects(client *gitlab.Client, projects []*gitlab.Proj
 // analyzeSpecificBranchForProjects computes the size for a given branch across projects.
 func analyzeSpecificBranchForProjects(client *gitlab.Client, projects []*gitlab.Project, org, branch string, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 	var result []ProjectBranch
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	cpt := 1
 	totalBranches := 0
 	for _, project := range projects {
@@ -552,7 +554,7 @@ type nonDefaultCtx struct {
 func nonDefaultAllProjectsAllBranches(ctx nonDefaultCtx) ([]ProjectBranch, int) {
 	return analyzeOrgsWithProjects(ctx, func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 		valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
-		utils.NewLogger().Infof(msgGroupToAnalyze, org, len(valid))
+		utils.SharedLogger().Infof(msgGroupToAnalyze, org, len(valid))
 		return analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
 	})
 }
@@ -583,7 +585,7 @@ func nonDefaultSpecificProjectAllBranches(ctx nonDefaultCtx) ([]ProjectBranch, i
 		found = true
 	}
 	if !found {
-		utils.NewLogger().Fatalf(MessageError2b, ctx.config["Project"].(string))
+		utils.SharedLogger().Fatalf(MessageError2b, ctx.config["Project"].(string))
 	}
 	return projectBranches, totalBranches
 }
@@ -603,7 +605,7 @@ func nonDefaultSpecificProjectSpecificBranch(ctx nonDefaultCtx) ([]ProjectBranch
 		})
 		totalBranches = 1
 	} else {
-		utils.NewLogger().Fatalf(MessageError2b, ctx.config["Project"].(string))
+		utils.SharedLogger().Fatalf(MessageError2b, ctx.config["Project"].(string))
 	}
 	return projectBranches, totalBranches
 }
@@ -613,7 +615,7 @@ func nonDefaultAllProjectsSpecificBranch(ctx nonDefaultCtx) ([]ProjectBranch, in
 	branch := ctx.config["Branch"].(string)
 	return analyzeOrgsWithProjects(ctx, func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 		valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
-		utils.NewLogger().Infof(msgGroupToAnalyze, org, len(valid))
+		utils.SharedLogger().Infof(msgGroupToAnalyze, org, len(valid))
 		return analyzeSpecificBranchForProjects(ctx.client, valid, org, branch, spin1)
 	})
 }
@@ -622,7 +624,7 @@ func nonDefaultAllProjectsSpecificBranch(ctx nonDefaultCtx) ([]ProjectBranch, in
 func analyzeOrgsWithProjects(ctx nonDefaultCtx, perOrg func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int)) ([]ProjectBranch, int) {
 	var projectBranches []ProjectBranch
 	totalBranches := 0
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	for _, org := range ctx.orgs {
 		projects, _, spin1, err := getProjectsAndAnalyze(ctx.client, org, ctx.spin)
 			if err != nil {
@@ -712,7 +714,7 @@ type defaultCtx struct {
 func handleDefaultBranchCase(ctx defaultCtx) ([]ProjectBranch, int) {
 	var projectBranches []ProjectBranch
 	totalBranches := 0
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	if ctx.config["Project"].(string) == "" {
 		for _, org := range ctx.orgs {
@@ -770,7 +772,7 @@ func GetRepoGitLabList(platformConfig map[string]interface{}, exclusionfile stri
 	var exclusionList ExclusionRepos
 	var err1 error
 	var totalSize int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	excludedProjects := 0
 	result := AnalysisResult{}
@@ -887,7 +889,7 @@ func GetRepoGitLabList(platformConfig map[string]interface{}, exclusionfile stri
 func getProjectsAndAnalyze(gitlabClient *gitlab.Client, organization string, spin *spinner.Spinner) ([]*gitlab.Project, int, *spinner.Spinner, error) {
 
 	cpt := 1
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	projects, err := getAllGroupProjects(gitlabClient, organization)
 	if err != nil {

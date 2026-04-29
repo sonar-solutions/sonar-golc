@@ -213,7 +213,7 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 	var largestRepoBranch, largesRepo string
 	var exclusionList *utils.ExclusionList
 	var err error
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	ApiURL := platformConfig["Url"].(string) + platformConfig["Organization"].(string)
 
@@ -375,7 +375,7 @@ func findLargestRepository(importantBranches []ProjectBranch, totalSize *int64) 
 
 func printSummary(Org string, stats SummaryStats) {
 
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	loggers.Infof("✅ The largest Repository is <%s> in the organization <%s> with the branch <%s> ", stats.LargestRepo, Org, stats.LargestRepoBranch)
 	loggers.Infof("✅ Total Repositories that will be analyzed: %d - Find empty : %d - Excluded : %d - Archived : %d", stats.NbRepos-stats.EmptyRepo-stats.TotalExclude-stats.TotalArchiv, stats.EmptyRepo, stats.TotalExclude, stats.TotalArchiv)
@@ -389,7 +389,7 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 	var importantBranches []ProjectBranch
 	var NBRrepo, TotalBranches int
 	var messageF = ""
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	NBRrepos := 0
 	cptarchiv := 0
@@ -442,7 +442,7 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 		}
 
 		for _, repo := range repos {
-
+			loggers.Debugf("→ repo %s/%s: analyzing", *project.Name, *repo.Name)
 			largestRepoBranch, repobranches, brsize, err := analyzeRepoBranches(params, *project.Name, *repo.Name, gitClient, cpt, spin1)
 
 			if err != nil {
@@ -482,7 +482,7 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient git.Client) (int, int, int, []git.GitRepository, error) {
 	var allRepos []git.GitRepository
 	var archivedCount, emptyCount, excludedCount int
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	// Convert SingleRepos to a slice if it's not empty
 	var singleReposList []string
@@ -491,6 +491,7 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 	}
 
 	// Get repositories
+	loggers.Debugf("→ project %s: fetching repos from API", projectKey)
 	repos, err := gitClient.GetRepositories(parms.Context, git.GetRepositoriesArgs{
 		Project: &projectKey,
 	})
@@ -498,17 +499,20 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 		loggers.Errorf("Error get GetRepositories ")
 		return 0, 0, 0, nil, err
 	}
+	loggers.Debugf("→ project %s: API returned %d repos", projectKey, len(*repos))
 
 	for _, repo := range *repos {
 		repoName := *repo.Name
 
 		// If SingleRepos is specified, skip repositories not in the list
 		if len(parms.SingleRepos) > 0 && !contains(singleReposList, repoName) {
+			loggers.Debugf("→ repo %s/%s: skipped (not in single-repo filter)", projectKey, repoName)
 			continue
 		}
 
 		// check if exclude
 		if isRepoExcluded(parms.Exclusionlist, projectKey, repoName) {
+			loggers.Debugf("→ repo %s/%s: skipped (excluded)", projectKey, repoName)
 			excludedCount++
 			continue
 		}
@@ -520,6 +524,7 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 			return 0, 0, 0, nil, err
 		}
 		if isEmpty {
+			loggers.Debugf("→ repo %s/%s: skipped (empty)", projectKey, repoName)
 			emptyCount++
 			continue
 		}
@@ -546,7 +551,7 @@ func analyzeRepoBranches(parms ParamsProjectAzure, projectKey string, repo strin
 	var nbrbranch int
 	var err error
 	var brsize int64
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	largestRepoBranch, brsize, nbrbranch, err = getMostImportantBranch(parms.Context, gitClient, projectKey, repo, parms.Period, parms.DefaultB, parms.SingleBranch)
 	if err != nil {
@@ -719,7 +724,7 @@ func getCommitCount(ctx context.Context, gitClient git.Client, projectID string,
 }
 func SaveResult(result AnalysisResult) error {
 
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	// Open or create the file
 	file, err := os.Create("Results/config/analysis_result_azure.json")
 	if err != nil {

@@ -243,7 +243,6 @@ func savePlatformConfig(platformKey string, platformCfg map[string]interface{}) 
 		// If config.json doesn't exist yet, build a minimal one
 		full = map[string]interface{}{
 			"platforms": map[string]interface{}{},
-			"Logging":   map[string]interface{}{"Level": "debug"},
 			"Release":   map[string]interface{}{"Version": "2.0"},
 		}
 	}
@@ -980,6 +979,19 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"url": fmt.Sprintf("http://localhost:%d", port)})
 }
 
+func handleDownloadDebug(w http.ResponseWriter, r *http.Request) {
+	const debugLog = "Logs/debug.log"
+	f, err := os.Open(debugLog)
+	if err != nil {
+		http.Error(w, "debug.log not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="debug.log"`)
+	_, _ = io.Copy(w, f)
+}
+
 var staticHandler = func() http.Handler {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
@@ -1013,6 +1025,7 @@ func main() {
 	mux.HandleFunc("/api/events", handleEvents)
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/open-results", handleOpenResults)
+	mux.HandleFunc("/api/download-debug", handleDownloadDebug)
 	mux.HandleFunc("/dist/", handleStatic)
 
 	port := findFreePort(webuiPort)
@@ -1070,9 +1083,12 @@ const htmlTemplate = `<!DOCTYPE html>
   .btn-primary:hover { background:linear-gradient(135deg,#0b5ed7,#4f46e5); color:#fff !important; }
   .btn-stop { background:linear-gradient(135deg,#dc2626,#b91c1c); border:none; border-radius:8px; font-weight:600; color:#fff !important; }
   .btn-stop:hover { background:linear-gradient(135deg,#b91c1c,#991b1b); color:#fff !important; }
-  .btn-success-view { background:linear-gradient(135deg,#059669,#0d6efd); border:none; border-radius:8px;
-    font-weight:700; font-size:1.05rem; padding:.65rem 2rem; color:#fff; }
-  .btn-success-view:hover { background:linear-gradient(135deg,#047857,#0b5ed7); color:#fff; }
+  .btn-success-view { background:linear-gradient(135deg,#059669,#0d6efd); border:none; border-radius:9999px;
+    font-weight:700; font-size:1.1rem; padding:.6rem 2.2rem; color:#fff; box-shadow:0 4px 14px rgba(13,110,253,.35); }
+  .btn-success-view:hover { background:linear-gradient(135deg,#047857,#0b5ed7); color:#fff; box-shadow:0 6px 18px rgba(13,110,253,.5); }
+  .btn-download-log { border:2px solid #0d6efd; color:#6ea8fe; background:transparent;
+    border-radius:9999px; font-weight:600; padding:.375rem .75rem; }
+  .btn-download-log:hover { border-color:#0a58ca; color:#9ec5fe; background:rgba(13,110,253,.12); }
   .progress { height:10px; border-radius:99px; background:rgba(255,255,255,.08); }
   .progress-bar { border-radius:99px; background:linear-gradient(90deg,#0d6efd,#6366f1); transition:width .4s ease; }
   @keyframes bar-scan { 0% { background-position:100% center; } 100% { background-position:-100% center; } }
@@ -1346,13 +1362,20 @@ const htmlTemplate = `<!DOCTYPE html>
           <div class="big-icon" id="result-icon">✅</div>
           <h5 id="result-title" style="color:#86efac;">Analysis Complete!</h5>
           <p id="result-msg" style="color:#94a3b8;font-size:.9rem;"></p>
-          <div class="d-flex gap-3 justify-content-center mt-3">
+          <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:1rem;align-items:center;margin-top:1rem;">
+            <div style="display:flex;justify-content:flex-end;">
+              <button class="btn btn-download-log" onclick="goToStep(1)">
+                <i class="fas fa-redo me-2"></i>New Analysis
+              </button>
+            </div>
             <button class="btn btn-success-view" onclick="viewResults()">
               <i class="fas fa-chart-bar me-2"></i>View Results
             </button>
-            <button class="btn btn-outline-secondary" onclick="goToStep(1)">
-              <i class="fas fa-redo me-2"></i>New Analysis
-            </button>
+            <div style="display:flex;justify-content:flex-start;">
+              <a class="btn btn-download-log" href="/api/download-debug" download="debug.log">
+                <i class="fas fa-bug me-2"></i>Download Debug Log
+              </a>
+            </div>
           </div>
         </div>
       </div>

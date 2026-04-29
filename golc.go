@@ -64,12 +64,7 @@ type SelfLink struct {
 
 type Config struct {
 	Platforms map[string]interface{} `json:"platforms"`
-	Logging   LoggingConfig          `json:"logging"`
 	Release   ReleaseConfig          `json:"release"`
-}
-
-type LoggingConfig struct {
-	Level logrus.Level `json:"level"`
 }
 
 type ReleaseConfig struct {
@@ -986,8 +981,9 @@ func runGolcInProcess(platform string) {
 		}
 	}
 	_ = os.Remove("Logs/Logs.log")
-	logger = utils.NewLogger()
-	logger.SetLevel(AppConfig.Logging.Level)
+	_ = os.Remove("Logs/debug.log")
+	utils.ResetSharedLogger()
+	logger = utils.SharedLogger()
 	logger.Info("✅ Configuration loaded successfully and version matched!")
 
 	// Resolve platform config
@@ -1208,6 +1204,9 @@ func runGolcInProcess(platform string) {
 				}
 			}
 		}
+		logger.Debugf("→ file mode: %d exclusion(s) loaded", len(ListExclusion))
+		logger.Debugf("→ file mode: %d director(ies) to scan", len(ListDirectory))
+
 		// Expand to immediate subdirectories when ScanSubDirs is set
 		scanSubDirs, _ := platformConfig["ScanSubDirs"].(bool)
 		if scanSubDirs {
@@ -1232,7 +1231,11 @@ func runGolcInProcess(platform string) {
 			}
 			if len(expanded) > 0 {
 				ListDirectory = expanded
+				logger.Debugf("→ file mode: ScanSubDirs expanded to %d director(ies)", len(ListDirectory))
 			}
+		}
+		for _, d := range ListDirectory {
+			logger.Debugf("→ directory %s: analyzing", d)
 		}
 		startTime = time.Now()
 		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, getStringSliceConfig(platformConfig, "FolderKeywords"), getStringSliceConfig(platformConfig, "FileNamePatterns"), platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool), DestinationResult)
@@ -1382,9 +1385,6 @@ func runGolcInProcess(platform string) {
 		os.Exit(1)
 	}
 
-	// Generate Repository Summary Reports
-	// Ensure we pass the base Results directory to generate summary reports,
-	// since it creates outputs under <Results>/byfile-report/*.
 	err = utils.GenerateRepositorySummaryReports(baseResultsDir)
 	if err != nil {
 		logger.Errorf("❌ Error creating repository summary reports: %v", err)
@@ -1432,16 +1432,5 @@ func runGolcInProcess(platform string) {
 		logger.Errorf("❌ Error writing to file:%v", err)
 		return
 	}
-
-	/*if platformConfig["ResultByFile"].(bool) {
-		logger.Infof(" ℹ️  To generate and visualize results on a web interface, follow these steps: ")
-		logger.Infof("\t✅ run : ResultByfiles")
-	} else {*/
-
-	logger.Infof(" ℹ️  To generate and visualize results on a web interface, follow these steps: ")
-	logger.Infof("\t✅ run : ResultsAll")
-	//}
-	//fmt.Println("\nℹ️  To generate and visualize results on a web interface, follow these steps: ")
-	//fmt.Println("\t✅ run : ResultsAll")
 
 }
