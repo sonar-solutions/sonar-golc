@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
 const baseURL = "gitlab.com/api/v4"
@@ -33,8 +35,7 @@ func FetchRepositoriesGitlab(url string, page int, accessToken string) ([]Reposi
 	req, _ := http.NewRequest("GET", url1, nil)
 	req.Header.Set("Authorization", ""+accessToken+":")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		fmt.Print("-- Stack: getgitlab.FetchRepositoriesGitlab Request API -- ")
 		return nil, "", err
@@ -97,8 +98,7 @@ func GetRepositoryBranches(accessToken, repositoryName string, repositoryID int)
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", ""+accessToken+":")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

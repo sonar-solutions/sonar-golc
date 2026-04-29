@@ -22,7 +22,7 @@ import (
 	"github.com/briandowns/spinner"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getazure"
-	getbibucket "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucket/v2"
+	getbibucket "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucket"
 	getbibucketdc "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucketdc"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgithub"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgitlab"

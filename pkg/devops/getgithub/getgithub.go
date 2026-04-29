@@ -1320,7 +1320,6 @@ func sortRepositoriesByUpdatedAt(repos []*github.Repository) {
 
 func GithubAllBranches(url, AccessToken, apiver string) ([]Branch, error) {
 
-	client := http.Client{}
 	var branches []Branch
 
 	for {
@@ -1332,24 +1331,25 @@ func GithubAllBranches(url, AccessToken, apiver string) ([]Branch, error) {
 		req.Header.Set("Authorization", "token "+AccessToken)
 		req.Header.Set("X-GitHub-Api-Version", apiver)
 
-		resp, err := client.Do(req)
+		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			return nil, fmt.Errorf("\n❌ Failed to list branches. Status code: %d", resp.StatusCode)
 		}
 
 		var branchList []Branch
 		err = json.NewDecoder(resp.Body).Decode(&branchList)
+		nextPageURL := getNextPage(resp.Header)
+		resp.Body.Close()
 		if err != nil {
 			return nil, err
 		}
 		branches = append(branches, branchList...)
 
-		nextPageURL := getNextPage(resp.Header)
 		if nextPageURL == "" {
 			break
 		}

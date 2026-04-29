@@ -213,7 +213,7 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 
 	for _, project := range projects {
 		fmt.Print("\n")
-		loggers.Infof("\t🟢  Analyse Projet: %s ", project.Name)
+		loggers.Infof("\t🟢  Analyse Project: %s ", project.Name)
 		urlrepos := fmt.Sprintf("%s%s%s/projects/%s/repos", parms.URL, parms.BaseAPI, parms.APIVersion, project.Key)
 
 		repos, err := fetchAllRepos(urlrepos, parms.AccessToken, exclusionList)
@@ -306,19 +306,20 @@ func getDefaultBranch(url1, accessToken string) (*Branch, error) {
 
 		req.Header.Set("Authorization", tokenOpt+accessToken)
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			return nil, fmt.Errorf("❌ failed to get branches: %s", resp.Status)
 		}
 
 		var branchesRes BranchesResponse
-		if err := json.NewDecoder(resp.Body).Decode(&branchesRes); err != nil {
+		err = json.NewDecoder(resp.Body).Decode(&branchesRes)
+		resp.Body.Close()
+		if err != nil {
 			return nil, err
 		}
 
@@ -351,7 +352,7 @@ func GetRepos(project string, repos []Repo, parms ParamsReposDC, bitbucketURLBas
 	result := AnalysisResult{}
 
 	fmt.Printf("\n")
-	loggers.Infof("🟢 Analyse Projet: %s ", project)
+	loggers.Infof("🟢 Analyse Project: %s ", project)
 
 	for _, repo := range repos {
 		isEmpty, err := isRepositoryEmpty(project, repo.Slug, parms.AccessToken, bitbucketURLBase, parms.APIVersion)
@@ -417,7 +418,7 @@ func getBranches(project, repoSlug string, parms ParamsReposDC) ([]Branch, error
 	var err error
 
 	if parms.DefaultB {
-		urlbr := fmt.Sprintf("%s%s%s/projects/%s/repos/%s/branches?limit=100&start=", parms.URL, parms.BaseAPI, parms.APIVersion, project, repoSlug)
+		urlbr := fmt.Sprintf("%s%s%s/projects/%s/repos/%s/branches?limit=100", parms.URL, parms.BaseAPI, parms.APIVersion, project, repoSlug)
 		defaultBranch, err := getDefaultBranch(urlbr, parms.AccessToken)
 		if err != nil {
 			return nil, err
@@ -440,7 +441,7 @@ func getBranches1(projectKey string, repo Repo, parms ParamsReposProjectDC) ([]B
 	loggers := utils.NewLogger()
 
 	if parms.DefaultB {
-		urlbr := fmt.Sprintf("%s%s%s/projects/%s/repos/%s/branches?limit=100&start=", parms.URL, parms.BaseAPI, parms.APIVersion, projectKey, repo.Slug)
+		urlbr := fmt.Sprintf("%s%s%s/projects/%s/repos/%s/branches?limit=100", parms.URL, parms.BaseAPI, parms.APIVersion, projectKey, repo.Slug)
 		defaultBranch, err := getDefaultBranch(urlbr, parms.AccessToken)
 		if err != nil {
 			return nil, fmt.Errorf("fetching default branch: %w", err)
@@ -696,8 +697,7 @@ func ifExistBranches(repoURL, accessToken string) ([]Branch, error) {
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -818,8 +818,7 @@ func fetchProjects(url string, accessToken string, isProjectResponse bool) (inte
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -903,8 +902,7 @@ func fetchRepos(url string, accessToken string, isProjectResponse bool) (interfa
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -953,8 +951,7 @@ func fetchBranches(url string, accessToken string) (*BranchResponse, error) {
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -981,8 +978,7 @@ func fetchFiles(url string, accessToken string) (*FileResponse, error) {
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,8 +1005,7 @@ func fetchFileResponse(url string, accessToken string) (FileResponse, error) {
 	}
 	req.Header.Set("Authorization", tokenOpt+accessToken)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return FileResponse{}, err
 	}

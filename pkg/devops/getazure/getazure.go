@@ -414,7 +414,7 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 	// Get Repository in each Project
 	for _, project := range params.Projects {
 
-		loggers.Infof("\t🟢  Analyse Projet: %s \n", *project.Name)
+		loggers.Infof("\t🟢  Analyse Project: %s \n", *project.Name)
 
 		emptyOrArchivedCount, emptyRepos, excludedCount, repos, err := listReposForProject(params, *project.Name, gitClient)
 
