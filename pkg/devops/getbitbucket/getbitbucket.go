@@ -1,6 +1,7 @@
 package getbibucket
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -276,15 +277,17 @@ func getAuthHeader(users, accessToken string) string {
 func GetBitbucketUsername(users, accessToken, bitbucketURLBase string) string {
 	url := fmt.Sprintf("%suser", bitbucketURLBase)
 
-	req, err := http.NewRequest("GET", url, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return ""
 	}
 	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return ""
 	}
