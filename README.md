@@ -11,7 +11,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 
 **Supported platforms:** GitHub.com · GitHub Enterprise Server · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Local files/directories
 
-> Current version: **v2.0** — [`ver2.0`](https://github.com/sonar-solutions/sonar-golc/tree/ver2.0) branch.
+> Current version: **v2.0**
 
 ---
 
@@ -45,9 +45,14 @@ Then run it for your operating system:
 ./webui
 ```
 
-**Windows** (Command Prompt or PowerShell)
+**Windows** (Command Prompt)
 ```bat
 webui.exe
+```
+
+**Windows** (PowerShell)
+```powershell
+.\webui.exe
 ```
 
 Open the URL printed in the terminal (default: `http://localhost:8091`), then:
