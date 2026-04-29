@@ -24,9 +24,11 @@ type Params struct {
 	Path              string
 	ByFile            bool
 	ByAll             bool
-	ExcludePaths      []string
-	ExcludeExtensions []string
-	IncludeExtensions []string
+	ExcludePaths        []string
+	ExcludeExtensions   []string
+	IncludeExtensions   []string
+	FolderKeywords      []string
+	FileNamePatterns    []string
 	OrderByLang       bool
 	OrderByFile       bool
 	OrderByCode       bool
@@ -215,6 +217,8 @@ func initAnalyzerScannerReporters(path string, params Params, excludePaths []str
 		utils.ConvertToMap(params.ExcludeExtensions),
 		utils.ConvertToMap(params.IncludeExtensions),
 		getExtensionsMap(languages),
+		params.FolderKeywords,
+		params.FileNamePatterns,
 	)
 	scanner := scanner.NewScanner(languages)
 
