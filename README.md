@@ -90,11 +90,14 @@ Credentials are entered in the browser and saved automatically — no config fil
 | `Branch` | string | Analyze a specific branch name across all repos. Leave blank for auto. |
 | `Multithreading` | bool | Enable parallel analysis. Default: `true`. |
 | `Workers` | int | Concurrent workers. Default: `10`. |
-| `ExcludePaths` | array | Directories to exclude per repo (e.g. `["test", "vendor"]`). |
-| `ExtExclusion` | array | File extensions to exclude (e.g. `[".css", ".min.js"]`). |
+| `FolderKeywords` | array | Exclude folders whose name contains the keyword as a whole word at any depth. Word boundaries are delimiters `-`, `_`, `.` — so `"test"` matches `integration-test/` and `test_helpers/` but not `protest/` or `latest/`. |
+| `FileNamePatterns` | array | Exclude files whose name matches a glob pattern (e.g. `["*_test.go", "*.min.js", "*.spec.ts"]`). The `*` wildcard is matched against the file name only, not the full path. |
+| `ExtExclusion` | array | Exclude all files with these extensions, regardless of language (e.g. `[".css", ".html"]`). |
+| `ExcludeTests` | bool | Shortcut that adds common test-directory keywords to `FolderKeywords`: `test`, `tests`, `spec`, `specs`, `e2e`, `testdata`, `fixtures`, `mocks`, `integration`. |
+| `ExcludeVendor` | bool | Shortcut that adds common vendor-directory keywords to `FolderKeywords`: `vendor`, `node_modules`, `bower_components`, `third_party`, `external`. |
 | `Project` | string | Limit to a specific project key (Bitbucket, Azure DevOps). |
-| `Repos` | string | Limit to specific repo slugs (comma-separated). |
-| `Org` | bool | `true` = organization, `false` = personal account (GitHub only). |
+| `Repos` | string | Limit to specific repositories (comma-separated). GitHub/GHE: repository name. Bitbucket: repository slug. Azure DevOps: repository name. Not applicable for GitLab — use the Group URL slug field instead. |
+| `Org` | bool | `true` = analyze an organization account, `false` = analyze a personal account. GitHub and GitHub Enterprise only. Default: `true`. |
 
 
 ---

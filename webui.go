@@ -141,12 +141,14 @@ var platformDefaults = map[string]map[string]interface{}{
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
+		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
 	"GithubEnterprise": {
 		"DevOps": "github", "Apiver": "2022-11-28", "FileExclusion": "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
+		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
 	"Gitlab": {
 		"DevOps": "gitlab", "Url": "https://gitlab.com/", "Apiver": "v4",
@@ -154,6 +156,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
+		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
 	"BitBucket": {
 		"DevOps": "bitbucket", "Url": "https://api.bitbucket.org/", "Apiver": "2.0",
@@ -161,6 +164,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
+		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
 	"BitBucketSRV": {
 		"DevOps": "bitbucket_dc", "Apiver": "1.0", "Baseapi": "rest/api/",
@@ -168,6 +172,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-5), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
+		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
 	"Azure": {
 		"DevOps": "azure", "Url": "https://dev.azure.com/", "Apiver": "7.1",
@@ -175,10 +180,12 @@ var platformDefaults = map[string]map[string]interface{}{
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
+		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
 	"File": {
 		"DevOps": "file", "FileExclusion": "", "FileLoad": ".cloc_file_load",
 		"ResultAll": true, "ResultByFile": true, "ScanSubDirs": true,
+		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
 }
 
@@ -1211,24 +1218,50 @@ const htmlTemplate = `<!DOCTYPE html>
               </div>
             </div>
 
-            <!-- Exclusions -->
-            <div class="col-md-6">
-              <label class="form-label" for="adv-extExclusion">Exclude extensions <small class="text-muted">(comma-separated)</small></label>
-              <input class="form-control" id="adv-extExclusion" placeholder=".css,.js">
+            <!-- Org vs personal toggle (GitHub only) -->
+            <div class="col-12" id="adv-org-wrap" style="display:none;">
+              <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:.75rem 1rem;">
+                <div class="row g-2 align-items-center">
+                  <div class="col-md-6">
+                    <div class="form-check form-switch mt-1">
+                      <input class="form-check-input" type="checkbox" id="adv-org" checked>
+                      <label class="form-check-label form-label mb-0" for="adv-org">Analyze as organization</label>
+                    </div>
+                    <small class="text-muted" style="font-size:.72rem;">Uncheck to analyse a personal account instead of an organization.</small>
+                  </div>
+                </div>
+              </div>
             </div>
+
+            <!-- Repository / project scope -->
+            <div class="col-12" id="adv-repos-wrap">
+              <div class="d-flex gap-4 align-items-start">
+                <div style="flex:0 0 50%">
+                  <label class="form-label" for="adv-repos">Specific repositories <small class="text-muted" id="adv-repos-hint"></small></label>
+                  <input class="form-control" id="adv-repos">
+                </div>
+                <div id="adv-repos-desc" style="flex:1;padding-top:1.9rem;font-size:.75rem;color:#94a3b8;line-height:1.6;"></div>
+              </div>
+            </div>
+            <div class="col-md-6" id="adv-project-wrap">
+              <label class="form-label" for="adv-project">Specific project key</label>
+              <input class="form-control" id="adv-project" placeholder="PROJECT_KEY">
+            </div>
+
+            <!-- Exclusions -->
             <!-- Code exclusion presets -->
             <div class="col-12">
               <label class="form-label d-block mb-2">Exclude from analysis</label>
               <div class="d-flex flex-wrap gap-3">
                 <div class="form-check">
-                  <input class="form-check-input" type="checkbox" id="adv-excludeTests" onchange="syncPresetPaths()">
+                  <input class="form-check-input" type="checkbox" id="adv-excludeTests" onchange="syncPresetKeywords()">
                   <label class="form-check-label form-label mb-0" for="adv-excludeTests">
                     <i class="fas fa-vial me-1" style="color:#60a5fa;"></i>Test directories
-                    <small class="text-muted d-block" style="font-size:.72rem;">test, tests, __tests__, spec, specs, e2e, testdata, fixtures, mocks</small>
+                    <small class="text-muted d-block" style="font-size:.72rem;">test, tests, spec, specs, e2e, testdata, fixtures, mocks, integration</small>
                   </label>
                 </div>
                 <div class="form-check">
-                  <input class="form-check-input" type="checkbox" id="adv-excludeVendor" onchange="syncPresetPaths()">
+                  <input class="form-check-input" type="checkbox" id="adv-excludeVendor" onchange="syncPresetKeywords()">
                   <label class="form-check-label form-label mb-0" for="adv-excludeVendor">
                     <i class="fas fa-box me-1" style="color:#a78bfa;"></i>Vendor &amp; modules
                     <small class="text-muted d-block" style="font-size:.72rem;">vendor, node_modules, bower_components, third_party, external</small>
@@ -1237,24 +1270,35 @@ const htmlTemplate = `<!DOCTYPE html>
               </div>
             </div>
             <div class="col-12">
-              <label class="form-label" for="adv-excludePaths">Additional exclude paths <small class="text-muted">(comma-separated, relative to repo root)</small></label>
-              <input class="form-control" id="adv-excludePaths" placeholder="pkg/generated,internal/legacy">
-              <div class="mt-2 px-3 py-2" style="background:rgba(96,165,250,.07);border-left:3px solid rgba(96,165,250,.4);border-radius:0 4px 4px 0;font-size:.75rem;color:#94a3b8;line-height:1.5;">
+              <label class="form-label" for="adv-folderKeywords">Exclude folder keywords <small class="text-muted">(comma-separated)</small></label>
+              <textarea class="form-control" id="adv-folderKeywords" rows="3" placeholder="generated, legacy, migrations"></textarea>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="adv-filePatterns">Exclude file name patterns <small class="text-muted">(comma-separated)</small></label>
+              <input class="form-control" id="adv-filePatterns" placeholder="*_test.go, *.min.js, *.spec.ts">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="adv-extExclusion">Exclude extensions <small class="text-muted">(comma-separated)</small></label>
+              <input class="form-control" id="adv-extExclusion" placeholder=".css,.js">
+            </div>
+            <div class="col-12">
+              <div class="px-3 py-2" style="background:rgba(96,165,250,.07);border-left:3px solid rgba(96,165,250,.4);border-radius:0 4px 4px 0;font-size:.75rem;color:#94a3b8;line-height:1.7;">
                 <i class="fas fa-info-circle me-1" style="color:#60a5fa;"></i>
-                <strong style="color:#cbd5e1;">How exclusions work:</strong>
-                Paths are matched against the <strong style="color:#cbd5e1;">root of each cloned repository</strong> using glob patterns.
-                Once matched, exclusion is <strong style="color:#cbd5e1;">fully recursive</strong> — all files and subdirectories underneath are skipped.
-                For example, <code style="color:#93c5fd;">test</code> excludes <code style="color:#93c5fd;">/test/**</code> at the root, but not a nested <code style="color:#93c5fd;">src/test</code> directory.
-                To exclude a nested path, specify it explicitly: <code style="color:#93c5fd;">src/test</code>.
+                <strong style="color:#cbd5e1;">How exclusions work</strong>
+                <div class="mt-1"><strong style="color:#cbd5e1;">Folder keywords</strong> — excludes any folder whose name contains the keyword as a whole word, at <em>any</em> depth. Words are split on <code style="color:#93c5fd;">-</code> <code style="color:#93c5fd;">_</code> <code style="color:#93c5fd;">.</code></div>
+                <div style="font-family:monospace;margin:.25rem 0 .5rem .5rem;">
+                  <span style="color:#93c5fd;">test</span> → /test/, /integration-<span style="color:#93c5fd;">test</span>/, /<span style="color:#93c5fd;">test</span>-helpers/, /src/my_<span style="color:#93c5fd;">test</span>_suite/ &nbsp;<span style="color:#4ade80;">✓</span>&nbsp;&nbsp; /pro<span style="color:#f87171;">test</span>/, /la<span style="color:#f87171;">test</span>/ &nbsp;<span style="color:#f87171;">✗</span><br>
+                  <span style="color:#93c5fd;">generated</span> → /generated/, /src/<span style="color:#93c5fd;">generated</span>-client/, /api/<span style="color:#93c5fd;">generated</span>_code/
+                </div>
+                <div class="mt-1"><strong style="color:#cbd5e1;">File name patterns</strong> — standard <code style="color:#93c5fd;">*</code> wildcard matched against the file name only.</div>
+                <div style="font-family:monospace;margin:.25rem 0 .5rem .5rem;">
+                  <span style="color:#93c5fd;">*_test.go</span> → all Go test files &nbsp;&nbsp; <span style="color:#93c5fd;">*.min.js</span> → minified JS &nbsp;&nbsp; <span style="color:#93c5fd;">*.spec.ts</span> → TypeScript specs
+                </div>
+                <div class="mt-1"><strong style="color:#cbd5e1;">Extensions</strong> — skips every file with a matching extension, regardless of language.</div>
+                <div style="font-family:monospace;margin:.25rem 0 0 .5rem;">
+                  <span style="color:#93c5fd;">.css,.html</span> → skip all CSS and HTML files &nbsp;&nbsp; <span style="color:#93c5fd;">.min.js</span> → skip minified bundles
+                </div>
               </div>
-            </div>
-            <div class="col-md-6" id="adv-repos-wrap">
-              <label class="form-label" for="adv-repos">Specific repositories <small class="text-muted">(comma-separated slugs)</small></label>
-              <input class="form-control" id="adv-repos" placeholder="repo-slug1,repo-slug2">
-            </div>
-            <div class="col-md-6" id="adv-project-wrap">
-              <label class="form-label" for="adv-project">Specific project key</label>
-              <input class="form-control" id="adv-project" placeholder="PROJECT_KEY">
             </div>
           </div>
         </div>
@@ -1413,7 +1457,15 @@ async function selectPlatform(key) {
   document.getElementById('adv-mt-wrap').style.display = isFile ? 'none' : '';
   document.getElementById('adv-workers-wrap').style.display = isFile ? 'none' : '';
   document.getElementById('adv-defaultBranch-wrap').style.display = isFile ? 'none' : '';
-  document.getElementById('adv-repos-wrap').style.display = isFile ? 'none' : '';
+  document.getElementById('adv-repos-wrap').style.display = (isFile || key === 'Gitlab') ? 'none' : '';
+  const isGithub = key === 'Github' || key === 'GithubEnterprise';
+  document.getElementById('adv-org-wrap').style.display = isGithub ? '' : 'none';
+  const reposDesc = document.getElementById('adv-repos-desc');
+  if (reposDesc) reposDesc.innerHTML = reposDescriptions[key] || '';
+  const reposHint = document.getElementById('adv-repos-hint');
+  if (reposHint) reposHint.textContent = reposHints[key] || '';
+  const reposInput = document.getElementById('adv-repos');
+  if (reposInput) reposInput.placeholder = reposPlaceholders[key] || '';
 
   goToStep(2);
 }
@@ -1549,28 +1601,54 @@ function addDirRow(val) {
   list.appendChild(row);
 }
 
-const PRESET_TEST_PATHS   = ['test','tests','__tests__','spec','specs','e2e','testdata','fixtures','mocks','__mocks__','integration'];
-const PRESET_VENDOR_PATHS = ['vendor','node_modules','bower_components','third_party','external'];
+const reposDescriptions = {
+  Github:           'Analyse only these repositories. Enter repository names only — the organization is already set above (e.g. <code>api-service</code>, <code>backend</code>). Leave empty to analyse all repositories in the organization.',
+  GithubEnterprise: 'Analyse only these repositories. Enter repository names only — the organization is already set above (e.g. <code>api-service</code>, <code>backend</code>). Leave empty to analyse all repositories in the organization.',
+  Gitlab:           '<i class="fas fa-info-circle me-1"></i>Not applicable for GitLab — use the <em>Group URL slug(s)</em> field above to scope which groups are analysed.',
+  BitBucket:        'Analyse only these repositories. Enter slugs as they appear in Bitbucket Cloud (e.g. <code>my-repo</code>). Leave empty to analyse all repositories in the workspace.',
+  BitBucketSRV:     'Analyse only these repositories. Enter slugs as they appear in Bitbucket Data Center (e.g. <code>my-repo</code>). Leave empty to analyse all repositories in the organization.',
+  Azure:            'Enter <strong>repository names</strong> as they appear in Azure DevOps (e.g. <code>my-service</code>, <code>backend-api</code>). Note: this is the repository name, not the project name — use the <em>Specific project key</em> field above to scope by project. Leave empty to analyse all repositories.',
+};
 
-function syncPresetPaths() {
+const reposHints = {
+  Github:           '(comma-separated repository names)',
+  GithubEnterprise: '(comma-separated repository names)',
+  Gitlab:           '(comma-separated paths)',
+  BitBucket:        '(comma-separated slugs)',
+  BitBucketSRV:     '(comma-separated slugs)',
+  Azure:            '(comma-separated repository names)',
+};
+
+const reposPlaceholders = {
+  Github:           'api-service, backend',
+  GithubEnterprise: 'api-service, backend',
+  Gitlab:           'my-group/my-project, my-group/other-project',
+  BitBucket:        'my-repo, another-repo',
+  BitBucketSRV:     'my-repo, another-repo',
+  Azure:            'my-service, backend-api',
+};
+
+const PRESET_TEST_KEYWORDS   = ['test','tests','spec','specs','e2e','testdata','fixtures','mocks','integration'];
+const PRESET_VENDOR_KEYWORDS = ['vendor','node_modules','bower_components','third_party','external'];
+
+function syncPresetKeywords() {
   const excludeTests  = document.getElementById('adv-excludeTests').checked;
   const excludeVendor = document.getElementById('adv-excludeVendor').checked;
-  const manualRaw = document.getElementById('adv-excludePaths').value;
-  // Strip preset paths from the manual field so they don't accumulate
-  const allPresets = new Set([...PRESET_TEST_PATHS, ...PRESET_VENDOR_PATHS]);
-  const manual = manualRaw.split(',').map(s=>s.trim()).filter(s=>s && !allPresets.has(s));
+  const allPresets = new Set([...PRESET_TEST_KEYWORDS, ...PRESET_VENDOR_KEYWORDS]);
+  const raw = document.getElementById('adv-folderKeywords').value;
+  const manual = raw.split(',').map(s=>s.trim()).filter(s=>s && !allPresets.has(s));
   const active = [
-    ...(excludeTests  ? PRESET_TEST_PATHS  : []),
-    ...(excludeVendor ? PRESET_VENDOR_PATHS : []),
+    ...(excludeTests  ? PRESET_TEST_KEYWORDS  : []),
+    ...(excludeVendor ? PRESET_VENDOR_KEYWORDS : []),
     ...manual,
   ];
-  document.getElementById('adv-excludePaths').value = active.join(',');
+  document.getElementById('adv-folderKeywords').value = active.join(', ');
 }
 
 function populateAdvanced(key, saved) {
   const defaults = {DefaultBranch:true,Branch:'',Multithreading:true,Workers:10,
-    FileExclusion:'',ExtExclusion:[],ExcludePaths:[],ExcludeTests:false,ExcludeVendor:false,
-    Repos:'',Project:'',ResultByFile:true};
+    FileExclusion:'',ExtExclusion:[],ExcludeTests:false,ExcludeVendor:false,
+    FolderKeywords:[],FileNamePatterns:[],Repos:'',Project:'',ResultByFile:true,Org:true};
   const cfg = Object.assign({}, defaults, saved);
 
   document.getElementById('adv-defaultBranch').checked = !!cfg.DefaultBranch;
@@ -1579,13 +1657,16 @@ function populateAdvanced(key, saved) {
   document.getElementById('adv-workers').value = cfg.Workers || 10;
   document.getElementById('adv-extExclusion').value = Array.isArray(cfg.ExtExclusion)
     ? cfg.ExtExclusion.filter(Boolean).join(',') : (cfg.ExtExclusion||'');
+  document.getElementById('adv-org').checked = cfg.Org !== false;
   document.getElementById('adv-excludeTests').checked  = !!cfg.ExcludeTests;
   document.getElementById('adv-excludeVendor').checked = !!cfg.ExcludeVendor;
-  // Show additional paths (exclude preset paths — they're represented by the checkboxes)
-  const allPresets = new Set([...PRESET_TEST_PATHS, ...PRESET_VENDOR_PATHS]);
-  const storedPaths = Array.isArray(cfg.ExcludePaths) ? cfg.ExcludePaths : [];
-  const manualOnly = storedPaths.filter(p => p && !allPresets.has(p));
-  document.getElementById('adv-excludePaths').value = manualOnly.join(',');
+  // Seed the text field with manual-only keywords, then let syncPresetKeywords prepend checked presets
+  const allPresets = new Set([...PRESET_TEST_KEYWORDS, ...PRESET_VENDOR_KEYWORDS]);
+  const storedKeywords = Array.isArray(cfg.FolderKeywords) ? cfg.FolderKeywords : [];
+  document.getElementById('adv-folderKeywords').value = storedKeywords.filter(k => k && !allPresets.has(k)).join(', ');
+  syncPresetKeywords();
+  const storedPatterns = Array.isArray(cfg.FileNamePatterns) ? cfg.FileNamePatterns : [];
+  document.getElementById('adv-filePatterns').value = storedPatterns.filter(Boolean).join(', ');
   document.getElementById('adv-repos').value = cfg.Repos || '';
   document.getElementById('adv-project').value = cfg.Project || '';
   syncBranchState();
@@ -1691,15 +1772,15 @@ function gatherConfig() {
   cfg.FileExclusion = '';
   const ext = document.getElementById('adv-extExclusion').value.trim();
   cfg.ExtExclusion = ext ? ext.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  cfg.Org = document.getElementById('adv-org').checked;
   cfg.ExcludeTests  = document.getElementById('adv-excludeTests').checked;
   cfg.ExcludeVendor = document.getElementById('adv-excludeVendor').checked;
-  const manualPaths = document.getElementById('adv-excludePaths').value.trim();
-  const manualArr   = manualPaths ? manualPaths.split(',').map(s=>s.trim()).filter(Boolean) : [];
-  const presetArr   = [
-    ...(cfg.ExcludeTests  ? PRESET_TEST_PATHS  : []),
-    ...(cfg.ExcludeVendor ? PRESET_VENDOR_PATHS : []),
-  ];
-  cfg.ExcludePaths  = [...new Set([...presetArr, ...manualArr])];
+  // Text field already contains preset keywords (kept in sync by syncPresetKeywords)
+  const kwRaw = document.getElementById('adv-folderKeywords').value.trim();
+  cfg.FolderKeywords = kwRaw ? [...new Set(kwRaw.split(',').map(s=>s.trim()).filter(Boolean))] : [];
+  const patRaw = document.getElementById('adv-filePatterns').value.trim();
+  cfg.FileNamePatterns = patRaw ? patRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  cfg.ExcludePaths = [];
   cfg.Repos = document.getElementById('adv-repos').value.trim();
   cfg.Project = document.getElementById('adv-project').value.trim();
   cfg.ResultByFile = true;
