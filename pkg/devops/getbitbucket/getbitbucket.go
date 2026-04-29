@@ -117,14 +117,6 @@ type Reposize struct {
 
 const PrefixMsg = "Get Projects..."
 
-var httpClient = &http.Client{
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-	},
-}
-
 func isRepoExcluded(exclusionList *utils.ExclusionList, projectKey, repoKey string) bool {
 	_, repoExcluded := exclusionList.Repos[projectKey+"/"+repoKey]
 	return repoExcluded
@@ -329,7 +321,7 @@ func GetSize(parms ParamsProjectBitbucket, repo *bitbucket.Repository) (int, err
 	}
 	req.Header.Set("Authorization", getAuthHeader(parms.Users, parms.AccessToken))
 
-	resp, err := httpClient.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -434,7 +426,7 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 	}
 	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-	resp, err := httpClient.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -480,17 +472,18 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 		}
 		req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-		resp, err := httpClient.Do(req)
+		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
 			break
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			break
 		}
 
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			break
 		}
@@ -540,19 +533,18 @@ func getSepecificProjectsWithAuth(workspace, projectKeys, accessToken, users, bi
 		}
 		req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-		resp, err := httpClient.Do(req)
+		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			errmessage := fmt.Sprintf("%s - HTTP %d", projectKey, resp.StatusCode)
-			err1 := fmt.Errorf("%s", errmessage)
-			return nil, 0, err1
+			resp.Body.Close()
+			return nil, 0, fmt.Errorf("%s - HTTP %d", projectKey, resp.StatusCode)
 		}
 
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			continue
 		}
@@ -708,18 +700,19 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 		}
 		req.Header.Set("Authorization", getAuthHeader(parms.Users, parms.AccessToken))
 
-		resp, err := httpClient.Do(req)
+		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
 			return 0, 0, nil, err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
 			return 0, 0, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 		}
 
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			return 0, 0, nil, err
 		}
@@ -895,7 +888,7 @@ func fetchFiles(url string, accessToken string, users string) (*Response1, error
 	}
 	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-	resp, err := httpClient.Do(req)
+	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
