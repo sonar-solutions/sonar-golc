@@ -673,7 +673,10 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 			largestRepoBranch, repobranches, brsize, err := analyzeRepoBranches(params, repo, cpt, spin1)
 			if err != nil {
 				largestRepoBranch = repo.Mainbranch.Name
-
+				brsize = 1
+				TotalBranches++
+			} else {
+				TotalBranches += len(repobranches)
 			}
 
 			importantBranches = append(importantBranches, ProjectBranch{
@@ -683,7 +686,6 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 				MainBranch:  largestRepoBranch,
 				LargestSize: brsize,
 			})
-			TotalBranches += len(repobranches)
 
 			cpt++
 		}
