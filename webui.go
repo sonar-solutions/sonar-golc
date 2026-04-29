@@ -75,6 +75,7 @@ type AppState struct {
 	phase       Phase
 	current     int
 	total       int
+	pctFloor    int // progress bar never moves backward
 	errMsg      string
 	eventBuf    []ProgressEvent
 	clients     []chan ProgressEvent
@@ -92,6 +93,7 @@ func (s *AppState) reset() {
 	s.phase = PhaseIdle
 	s.current = 0
 	s.total = 0
+	s.pctFloor = 0
 	s.errMsg = ""
 	s.eventBuf = nil
 }
@@ -434,7 +436,11 @@ func parseProgress(line string, st *AppState) *ProgressEvent {
 	ev.Phase = st.phase
 	ev.Current = st.current
 	ev.Total = st.total
-	ev.Pct = calcPct(st)
+	pct := calcPct(st)
+	if pct > st.pctFloor {
+		st.pctFloor = pct
+	}
+	ev.Pct = st.pctFloor
 	return ev
 }
 
@@ -720,6 +726,7 @@ func runAnalysis(platformKey string) {
 		appState.phase = parseState.phase
 		appState.current = parseState.current
 		appState.total = parseState.total
+		appState.pctFloor = parseState.pctFloor
 		appState.mu.Unlock()
 		// Drop spinner animation frames (type="log" from non-logrus lines).
 		// Progress/complete/error events are always forwarded.
@@ -1323,7 +1330,7 @@ const basicFields = {
                      {id:'Url',label:'Server URL',ph:'https://github.yourcompany.com/',onchange:'syncGHEBaseapi()'}],
   Gitlab:           [{id:'Users',label:'Username / Login',ph:'your-gitlab-login'},
                      {id:'AccessToken',label:'Access Token <small class="text-muted">— requires <strong>read_api</strong> &amp; <strong>read_repository</strong> scopes</small>',ph:TOKEN_PH,secret:true,html:true},
-                     {id:'Organization',label:'Group URL slug(s) <small class="text-muted">(comma-separated — leave blank to auto-discover all your accessible groups)</small>',ph:'url-slug-1,url-slug-2 (or blank to auto-discover)',html:true},
+                     {id:'Organization',label:'Group URL slug(s) <small class="text-muted">(comma-separated — leave blank to auto-discover all your accessible groups)</small>',ph:'url-slug-1,url-slug-2',html:true},
                      {id:'Url',label:'Server URL <small class="text-muted">(GitLab Cloud — change for on-prem)</small>',ph:'https://gitlab.com/',defaultValue:'https://gitlab.com/',onchange:'syncGitlabProtocol()',html:true}],
   BitBucket:        [{id:'Users',label:'Email address',ph:'you@example.com'},
                      {id:'AccessToken',label:'API Token <small class="text-muted">— requires <strong>Repositories: Read</strong> &amp; <strong>Projects: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
@@ -1406,7 +1413,7 @@ function buildBasicFields(key, saved) {
   const container = document.getElementById('basic-fields');
   container.innerHTML = '';
   const row = document.createElement('div');
-  row.className = 'row g-3';
+  row.className = 'row g-3 align-items-end';
   fields.forEach(f => {
     const col = document.createElement('div');
     col.className = 'col-md-6';
