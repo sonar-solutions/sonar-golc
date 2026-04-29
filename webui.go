@@ -1183,7 +1183,7 @@ const htmlTemplate = `<!DOCTYPE html>
                       <label class="form-check-label form-label mb-0" for="adv-defaultBranch">Analyze default branch only</label>
                     </div>
                   </div>
-                  <div class="col-md-6">
+                  <div class="col-md-6" id="adv-branch-col" style="opacity:.35;transition:opacity .2s;pointer-events:none;">
                     <label class="form-label" for="adv-branch">Specific branch name</label>
                     <input class="form-control" id="adv-branch" placeholder="e.g. main" disabled>
                   </div>
@@ -1201,7 +1201,7 @@ const htmlTemplate = `<!DOCTYPE html>
                       <label class="form-check-label form-label mb-0" for="adv-multithreading">Enable multithreading</label>
                     </div>
                   </div>
-                  <div class="col-md-6" id="adv-workers-wrap">
+                  <div class="col-md-6" id="adv-workers-wrap" style="transition:opacity .2s;">
                     <label class="form-label" for="adv-workers">Number of workers</label>
                     <input class="form-control" id="adv-workers" type="number" min="1" max="50" value="10">
                   </div>
@@ -1604,13 +1604,18 @@ function toggleAdvanced() {
 
 function syncBranchState() {
   const defaultOnly = document.getElementById('adv-defaultBranch').checked;
-  const branchInput = document.getElementById('adv-branch');
-  branchInput.disabled = defaultOnly;
+  const col = document.getElementById('adv-branch-col');
+  document.getElementById('adv-branch').disabled = defaultOnly;
+  col.style.opacity = defaultOnly ? '0.35' : '1';
+  col.style.pointerEvents = defaultOnly ? 'none' : '';
 }
 
 function syncMTState() {
   const mt = document.getElementById('adv-multithreading').checked;
+  const col = document.getElementById('adv-workers-wrap');
   document.getElementById('adv-workers').disabled = !mt;
+  col.style.opacity = mt ? '1' : '0.35';
+  col.style.pointerEvents = mt ? '' : 'none';
 }
 
 // Derive Protocol from the GitLab Url field (only when a custom URL is provided).
