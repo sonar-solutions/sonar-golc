@@ -1363,16 +1363,20 @@ const htmlTemplate = `<!DOCTYPE html>
           <div class="big-icon" id="result-icon">✅</div>
           <h5 id="result-title" style="color:#86efac;">Analysis Complete!</h5>
           <p id="result-msg" style="color:#94a3b8;font-size:.9rem;"></p>
-          <div class="d-flex gap-3 justify-content-center align-items-center mt-3">
-            <button class="btn btn-download-log" onclick="goToStep(1)">
-              <i class="fas fa-redo me-2"></i>New Analysis
-            </button>
+          <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:1rem;align-items:center;margin-top:1rem;">
+            <div style="display:flex;justify-content:flex-end;">
+              <button class="btn btn-download-log" onclick="goToStep(1)">
+                <i class="fas fa-redo me-2"></i>New Analysis
+              </button>
+            </div>
             <button class="btn btn-success-view" onclick="viewResults()">
               <i class="fas fa-chart-bar me-2"></i>View Results
             </button>
-            <a class="btn btn-download-log" href="/api/download-debug" download="debug.log">
-              <i class="fas fa-bug me-2"></i>Download Debug Log
-            </a>
+            <div style="display:flex;justify-content:flex-start;">
+              <a class="btn btn-download-log" href="/api/download-debug" download="debug.log">
+                <i class="fas fa-bug me-2"></i>Download Debug Log
+              </a>
+            </div>
           </div>
         </div>
       </div>
