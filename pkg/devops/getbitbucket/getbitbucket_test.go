@@ -11,22 +11,8 @@ import (
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
-func makeExclusionList(projects, repos []string) *utils.ExclusionList {
-	el := &utils.ExclusionList{
-		Projects: make(map[string]bool),
-		Repos:    make(map[string]bool),
-	}
-	for _, p := range projects {
-		el.Projects[p] = true
-	}
-	for _, r := range repos {
-		el.Repos[r] = true
-	}
-	return el
-}
-
 func TestIsRepoExcluded(t *testing.T) {
-	el := makeExclusionList(nil, []string{"PROJ/my-repo", "OTHER/other-repo"})
+	el := utils.NewExclusionList(nil, []string{"PROJ/my-repo", "OTHER/other-repo"})
 
 	tests := []struct {
 		projectKey string
@@ -47,7 +33,7 @@ func TestIsRepoExcluded(t *testing.T) {
 }
 
 func TestIsProjectExcluded(t *testing.T) {
-	el := makeExclusionList([]string{"excl-proj"}, nil)
+	el := utils.NewExclusionList([]string{"excl-proj"}, nil)
 
 	if !isProjectExcluded(el, "excl-proj") {
 		t.Error("expected excl-proj to be excluded")
@@ -168,7 +154,7 @@ func TestGetAllProjectsWithAuth(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	el := makeExclusionList(nil, nil)
+	el := utils.NewExclusionList(nil, nil)
 	result, excluded, err := getAllProjectsWithAuth("ws", "token", "", ts.URL+"/", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -191,7 +177,7 @@ func TestGetAllProjectsWithAuth_ExcludesProjects(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	el := makeExclusionList([]string{"EXCL"}, nil)
+	el := utils.NewExclusionList([]string{"EXCL"}, nil)
 	result, excluded, err := getAllProjectsWithAuth("ws", "token", "", ts.URL+"/", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -210,7 +196,7 @@ func TestGetAllProjectsWithAuth_HTTPError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	el := makeExclusionList(nil, nil)
+	el := utils.NewExclusionList(nil, nil)
 	_, _, err := getAllProjectsWithAuth("ws", "token", "", ts.URL+"/", el)
 	if err == nil {
 		t.Error("expected error for HTTP 403")
@@ -238,7 +224,7 @@ func TestGetAllProjectsWithAuth_Pagination(t *testing.T) {
 	tsURL = ts.URL
 	defer ts.Close()
 
-	el := makeExclusionList(nil, nil)
+	el := utils.NewExclusionList(nil, nil)
 	result, _, err := getAllProjectsWithAuth("ws", "token", "", ts.URL+"/", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -258,7 +244,7 @@ func TestGetSpecificProjectsWithAuth(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	el := makeExclusionList(nil, nil)
+	el := utils.NewExclusionList(nil, nil)
 	result, excluded, err := getSepecificProjectsWithAuth("ws", "P1", "token", "", ts.URL+"/", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -284,7 +270,7 @@ func TestGetSpecificProjectsWithAuth_MultipleKeys(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	el := makeExclusionList(nil, nil)
+	el := utils.NewExclusionList(nil, nil)
 	result, _, err := getSepecificProjectsWithAuth("ws", "P1, P2", "token", "", ts.URL+"/", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -300,7 +286,7 @@ func TestGetSpecificProjectsWithAuth_HTTPError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	el := makeExclusionList(nil, nil)
+	el := utils.NewExclusionList(nil, nil)
 	_, _, err := getSepecificProjectsWithAuth("ws", "P1", "token", "", ts.URL+"/", el)
 	if err == nil {
 		t.Error("expected error for HTTP 404")
@@ -313,7 +299,7 @@ func TestGetSpecificProjectsWithAuth_ExcludedProject(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	el := makeExclusionList([]string{"EXCL"}, nil)
+	el := utils.NewExclusionList([]string{"EXCL"}, nil)
 	result, excluded, err := getSepecificProjectsWithAuth("ws", "EXCL", "token", "", ts.URL+"/", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

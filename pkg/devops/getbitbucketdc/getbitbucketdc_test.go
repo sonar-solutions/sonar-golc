@@ -10,20 +10,6 @@ import (
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
-func makeExclusionList(projects, repos []string) *utils.ExclusionList {
-	el := &utils.ExclusionList{
-		Projects: make(map[string]bool),
-		Repos:    make(map[string]bool),
-	}
-	for _, p := range projects {
-		el.Projects[p] = true
-	}
-	for _, r := range repos {
-		el.Repos[r] = true
-	}
-	return el
-}
-
 // --- Pure logic tests ---
 
 func TestIsProjectAndRepoExcluded(t *testing.T) {
@@ -66,7 +52,7 @@ func TestIsProjectExcluded1(t *testing.T) {
 }
 
 func TestIsProjectExcluded(t *testing.T) {
-	el := makeExclusionList([]string{"excl-proj"}, nil)
+	el := utils.NewExclusionList([]string{"excl-proj"}, nil)
 
 	if !isProjectExcluded(el, "excl-proj") {
 		t.Error("expected excl-proj to be excluded")
@@ -78,7 +64,7 @@ func TestIsProjectExcluded(t *testing.T) {
 
 func TestIsRepoExcluded(t *testing.T) {
 	// getbitbucketdc's isRepoExcluded takes the full "PROJECT/REPO" composite key.
-	el := makeExclusionList(nil, []string{"PROJ/my-repo"})
+	el := utils.NewExclusionList(nil, []string{"PROJ/my-repo"})
 
 	if !isRepoExcluded(el, "PROJ/my-repo") {
 		t.Error("expected PROJ/my-repo to be excluded")
