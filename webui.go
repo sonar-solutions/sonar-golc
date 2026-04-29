@@ -1813,6 +1813,27 @@ function gatherConfig() {
 
 // ─── Run analysis ──────────────────────────────────────────────────────────
 async function startAnalysis() {
+  // Validate required fields before proceeding
+  if (currentPlatform === 'File') {
+    const orgEl = document.getElementById('f-Organization');
+    if (orgEl && !orgEl.value.trim()) {
+      orgEl.classList.add('is-invalid');
+      let fb = document.getElementById('f-Organization-feedback');
+      if (!fb) {
+        fb = document.createElement('div');
+        fb.id = 'f-Organization-feedback';
+        fb.className = 'invalid-feedback';
+        fb.textContent = 'Organization / Label is required.';
+        orgEl.parentNode.appendChild(fb);
+      }
+      orgEl.focus();
+      orgEl.addEventListener('input', function() {
+        orgEl.classList.remove('is-invalid');
+      }, {once: true});
+      return;
+    }
+  }
+
   const cfg = gatherConfig();
   const p = platforms[currentPlatform];
 
