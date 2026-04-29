@@ -204,6 +204,33 @@ func getLanguageData() []LanguageData {
 	return languageData
 }
 
+// commonPathPrefix returns the longest common slash-separated directory prefix
+// shared by all paths (already normalised to forward slashes).
+func commonPathPrefix(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	// Split each path into directory segments (drop the filename)
+	dirOf := func(p string) string {
+		idx := strings.LastIndex(p, "/")
+		if idx < 0 {
+			return ""
+		}
+		return p[:idx+1] // include trailing slash
+	}
+	prefix := dirOf(paths[0])
+	for _, p := range paths[1:] {
+		d := dirOf(p)
+		for !strings.HasPrefix(d, prefix) {
+			prefix = dirOf(strings.TrimRight(prefix, "/"))
+			if prefix == "" {
+				return ""
+			}
+		}
+	}
+	return prefix
+}
+
 // isMainBranch checks if a branch name is a main/default branch
 func isMainBranch(branchName string) bool {
 	mainBranches := []string{"main", "master", "develop", "development", "default"}
@@ -668,11 +695,23 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		formattedLanguages = append(formattedLanguages, formattedLang)
 	}
 
-	// Build per-file list (populated when byfile report has file-level Results)
+	// Build per-file list (populated when byfile report has file-level Results).
+	// Strip the common directory prefix so paths are relative to the repo root.
+	// This is needed on Windows where goloc stores full temp clone paths.
+	var rawPaths []string
+	for _, f := range byFileReport.Results {
+		rawPaths = append(rawPaths, filepath.ToSlash(f.File))
+	}
+	prefix := commonPathPrefix(rawPaths)
 	var formattedFiles []FileDetail
 	for _, f := range byFileReport.Results {
+		rel := strings.TrimPrefix(filepath.ToSlash(f.File), prefix)
+		rel = strings.TrimPrefix(rel, "/")
+		if rel == "" {
+			rel = filepath.Base(f.File)
+		}
 		formattedFiles = append(formattedFiles, FileDetail{
-			File:        f.File,
+			File:        rel,
 			Lines:       f.Lines,
 			BlankLines:  f.BlankLines,
 			Comments:    f.Comments,
