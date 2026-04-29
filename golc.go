@@ -398,14 +398,7 @@ func getExcludePaths(configValue interface{}) []string {
 }
 
 func getStringSliceConfig(platformConfig map[string]interface{}, key string) []string {
-	v, ok := platformConfig[key]
-	if !ok || v == nil {
-		return []string{}
-	}
-	if items, ok := v.([]interface{}); ok {
-		return convertToSliceString(items)
-	}
-	return []string{}
+	return getExcludePaths(platformConfig[key])
 }
 
 // Analysis functions for different repository types
