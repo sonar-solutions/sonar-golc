@@ -64,12 +64,7 @@ type SelfLink struct {
 
 type Config struct {
 	Platforms map[string]interface{} `json:"platforms"`
-	Logging   LoggingConfig          `json:"logging"`
 	Release   ReleaseConfig          `json:"release"`
-}
-
-type LoggingConfig struct {
-	Level logrus.Level `json:"level"`
 }
 
 type ReleaseConfig struct {

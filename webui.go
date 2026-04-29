@@ -243,7 +243,6 @@ func savePlatformConfig(platformKey string, platformCfg map[string]interface{}) 
 		// If config.json doesn't exist yet, build a minimal one
 		full = map[string]interface{}{
 			"platforms": map[string]interface{}{},
-			"Logging":   map[string]interface{}{"Level": "debug"},
 			"Release":   map[string]interface{}{"Version": "2.0"},
 		}
 	}
