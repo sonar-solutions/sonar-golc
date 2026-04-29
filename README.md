@@ -92,7 +92,6 @@ Credentials are entered in the browser and saved automatically — no config fil
 | `Workers` | int | Concurrent workers. Default: `10`. |
 | `ExcludePaths` | array | Directories to exclude per repo (e.g. `["test", "vendor"]`). |
 | `ExtExclusion` | array | File extensions to exclude (e.g. `[".css", ".min.js"]`). |
-| `FileExclusion` | string | Path to a file listing repos to skip (e.g. `.cloc_github_ignore`). |
 | `ResultByFile` | bool | Generate per-file breakdowns in addition to per-language summaries. |
 | `Project` | string | Limit to a specific project key (Bitbucket, Azure DevOps). |
 | `Repos` | string | Limit to specific repo slugs (comma-separated). |

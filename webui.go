@@ -137,47 +137,47 @@ func (s *AppState) broadcast(ev ProgressEvent) {
 var platformDefaults = map[string]map[string]interface{}{
 	"Github": {
 		"DevOps": "github", "Url": "https://api.github.com/", "Apiver": "2022-11-28",
-		"Baseapi": "github.com", "Protocol": "https", "FileExclusion": ".cloc_github_ignore",
+		"Baseapi": "github.com", "Protocol": "https", "FileExclusion": "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"GithubEnterprise": {
-		"DevOps": "github", "Apiver": "2022-11-28", "FileExclusion": ".cloc_github_ignore",
+		"DevOps": "github", "Apiver": "2022-11-28", "FileExclusion": "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"Gitlab": {
 		"DevOps": "gitlab", "Url": "https://gitlab.com/", "Apiver": "v4",
-		"Baseapi": "api/", "Protocol": "https", "FileExclusion": ".cloc_gitlab_ignore",
+		"Baseapi": "api/", "Protocol": "https", "FileExclusion": "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"BitBucket": {
 		"DevOps": "bitbucket", "Url": "https://api.bitbucket.org/", "Apiver": "2.0",
-		"Baseapi": "bitbucket.org", "Protocol": "https", "FileExclusion": ".cloc_bitbucket_ignore",
+		"Baseapi": "bitbucket.org", "Protocol": "https", "FileExclusion": "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"BitBucketSRV": {
 		"DevOps": "bitbucket_dc", "Apiver": "1.0", "Baseapi": "rest/api/",
-		"FileExclusion": ".cloc_bitbucketdc_ignore",
+		"FileExclusion": "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-5), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"Azure": {
 		"DevOps": "azure", "Url": "https://dev.azure.com/", "Apiver": "7.1",
-		"Baseapi": "_apis/git/", "Protocol": "https", "FileExclusion": ".cloc_azure_ignore",
+		"Baseapi": "_apis/git/", "Protocol": "https", "FileExclusion": "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 	},
 	"File": {
-		"DevOps": "file", "FileExclusion": ".cloc_file_ignore", "FileLoad": ".cloc_file_load",
+		"DevOps": "file", "FileExclusion": "", "FileLoad": ".cloc_file_load",
 		"ResultAll": true, "ResultByFile": true, "ScanSubDirs": true,
 	},
 }
@@ -1172,30 +1172,44 @@ const htmlTemplate = `<!DOCTYPE html>
         </div>
         <div id="advanced-fields" style="display:none;">
           <div class="row g-3 mt-1 pt-2" style="border-top:1px solid rgba(255,255,255,.08);">
-            <div class="col-md-6" id="adv-defaultBranch-wrap">
-              <div class="form-check form-switch mt-2">
-                <input class="form-check-input" type="checkbox" id="adv-defaultBranch" checked>
-                <label class="form-check-label form-label mb-0" for="adv-defaultBranch">Analyze default branch only</label>
+
+            <!-- Branch group -->
+            <div class="col-12" id="adv-defaultBranch-wrap">
+              <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:.75rem 1rem;">
+                <div class="row g-2 align-items-end">
+                  <div class="col-md-6">
+                    <div class="form-check form-switch mt-1">
+                      <input class="form-check-input" type="checkbox" id="adv-defaultBranch" checked onchange="syncBranchState()">
+                      <label class="form-check-label form-label mb-0" for="adv-defaultBranch">Analyze default branch only</label>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label" for="adv-branch">Specific branch name</label>
+                    <input class="form-control" id="adv-branch" placeholder="e.g. main" disabled>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="col-md-6">
-              <label class="form-label" for="adv-branch">Specific branch name</label>
-              <input class="form-control" id="adv-branch" placeholder="e.g. main (leave blank for auto)">
-            </div>
-            <div class="col-md-6" id="adv-mt-wrap">
-              <div class="form-check form-switch mt-2">
-                <input class="form-check-input" type="checkbox" id="adv-multithreading" checked>
-                <label class="form-check-label form-label mb-0" for="adv-multithreading">Enable multithreading</label>
+
+            <!-- Multithreading + workers + results by file group -->
+            <div class="col-12" id="adv-mt-wrap">
+              <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:.75rem 1rem;">
+                <div class="row g-2 align-items-end">
+                  <div class="col-md-6">
+                    <div class="form-check form-switch mt-1">
+                      <input class="form-check-input" type="checkbox" id="adv-multithreading" checked onchange="syncMTState()">
+                      <label class="form-check-label form-label mb-0" for="adv-multithreading">Enable multithreading</label>
+                    </div>
+                  </div>
+                  <div class="col-md-6" id="adv-workers-wrap">
+                    <label class="form-label" for="adv-workers">Number of workers</label>
+                    <input class="form-control" id="adv-workers" type="number" min="1" max="50" value="10">
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="col-md-6" id="adv-workers-wrap">
-              <label class="form-label" for="adv-workers">Number of workers</label>
-              <input class="form-control" id="adv-workers" type="number" min="1" max="50" value="10">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label" for="adv-fileExclusion">Exclusion file name</label>
-              <input class="form-control" id="adv-fileExclusion" placeholder=".cloc_github_ignore">
-            </div>
+
+            <!-- Exclusions -->
             <div class="col-md-6">
               <label class="form-label" for="adv-extExclusion">Exclude extensions <small class="text-muted">(comma-separated)</small></label>
               <input class="form-control" id="adv-extExclusion" placeholder=".css,.js">
@@ -1239,12 +1253,6 @@ const htmlTemplate = `<!DOCTYPE html>
             <div class="col-md-6" id="adv-project-wrap">
               <label class="form-label" for="adv-project">Specific project key</label>
               <input class="form-control" id="adv-project" placeholder="PROJECT_KEY">
-            </div>
-            <div class="col-md-6">
-              <div class="form-check form-switch mt-2">
-                <input class="form-check-input" type="checkbox" id="adv-resultByFile">
-                <label class="form-check-label form-label mb-0" for="adv-resultByFile">Results by file</label>
-              </div>
             </div>
           </div>
         </div>
@@ -1417,7 +1425,9 @@ function buildBasicFields(key, saved) {
   fields.forEach(f => {
     const col = document.createElement('div');
     col.className = 'col-md-6';
-    const val = saved[f.id] || f.defaultValue || '';
+    // Discard legacy all-X placeholder values written by older config templates
+    const rawVal = saved[f.id] || f.defaultValue || '';
+    const val = /^X+$/.test(rawVal) ? '' : rawVal;
     const type = f.secret ? 'password' : 'text';
     const input = document.createElement('input');
     input.className = 'form-control';
@@ -1565,7 +1575,6 @@ function populateAdvanced(key, saved) {
   document.getElementById('adv-branch').value = cfg.Branch || '';
   document.getElementById('adv-multithreading').checked = cfg.Multithreading !== false;
   document.getElementById('adv-workers').value = cfg.Workers || 10;
-  document.getElementById('adv-fileExclusion').value = cfg.FileExclusion || '';
   document.getElementById('adv-extExclusion').value = Array.isArray(cfg.ExtExclusion)
     ? cfg.ExtExclusion.filter(Boolean).join(',') : (cfg.ExtExclusion||'');
   document.getElementById('adv-excludeTests').checked  = !!cfg.ExcludeTests;
@@ -1577,7 +1586,8 @@ function populateAdvanced(key, saved) {
   document.getElementById('adv-excludePaths').value = manualOnly.join(',');
   document.getElementById('adv-repos').value = cfg.Repos || '';
   document.getElementById('adv-project').value = cfg.Project || '';
-  document.getElementById('adv-resultByFile').checked = !!cfg.ResultByFile;
+  syncBranchState();
+  syncMTState();
 }
 
 function toggleAdvanced() {
@@ -1590,6 +1600,17 @@ function toggleAdvanced() {
   btn.textContent = '';
   btn.appendChild(chevron);
   btn.append(open ? ' Show advanced options' : ' Hide advanced options');
+}
+
+function syncBranchState() {
+  const defaultOnly = document.getElementById('adv-defaultBranch').checked;
+  const branchInput = document.getElementById('adv-branch');
+  branchInput.disabled = defaultOnly;
+}
+
+function syncMTState() {
+  const mt = document.getElementById('adv-multithreading').checked;
+  document.getElementById('adv-workers').disabled = !mt;
 }
 
 // Derive Protocol from the GitLab Url field (only when a custom URL is provided).
@@ -1660,7 +1681,7 @@ function gatherConfig() {
   cfg.Multithreading = document.getElementById('adv-multithreading').checked;
   cfg.Workers = parseInt(document.getElementById('adv-workers').value) || 10;
   cfg.NumberWorkerRepos = cfg.Workers;
-  cfg.FileExclusion = document.getElementById('adv-fileExclusion').value.trim();
+  cfg.FileExclusion = '';
   const ext = document.getElementById('adv-extExclusion').value.trim();
   cfg.ExtExclusion = ext ? ext.split(',').map(s=>s.trim()).filter(Boolean) : [];
   cfg.ExcludeTests  = document.getElementById('adv-excludeTests').checked;
@@ -1674,7 +1695,7 @@ function gatherConfig() {
   cfg.ExcludePaths  = [...new Set([...presetArr, ...manualArr])];
   cfg.Repos = document.getElementById('adv-repos').value.trim();
   cfg.Project = document.getElementById('adv-project').value.trim();
-  cfg.ResultByFile = document.getElementById('adv-resultByFile').checked;
+  cfg.ResultByFile = true;
   cfg.ResultAll = true;
   return cfg;
 }
