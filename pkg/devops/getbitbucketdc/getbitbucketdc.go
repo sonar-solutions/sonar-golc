@@ -213,7 +213,7 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 
 	for _, project := range projects {
 		fmt.Print("\n")
-		loggers.Infof("\t🟢  Analyse Projet: %s ", project.Name)
+		loggers.Infof("\t🟢  Analyse Project: %s ", project.Name)
 		urlrepos := fmt.Sprintf("%s%s%s/projects/%s/repos", parms.URL, parms.BaseAPI, parms.APIVersion, project.Key)
 
 		repos, err := fetchAllRepos(urlrepos, parms.AccessToken, exclusionList)
@@ -352,7 +352,7 @@ func GetRepos(project string, repos []Repo, parms ParamsReposDC, bitbucketURLBas
 	result := AnalysisResult{}
 
 	fmt.Printf("\n")
-	loggers.Infof("🟢 Analyse Projet: %s ", project)
+	loggers.Infof("🟢 Analyse Project: %s ", project)
 
 	for _, repo := range repos {
 		isEmpty, err := isRepositoryEmpty(project, repo.Slug, parms.AccessToken, bitbucketURLBase, parms.APIVersion)

@@ -633,7 +633,7 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 	for _, project := range params.Projects {
 
 		fmt.Print("\n")
-		loggers.Infof("\t🟢  Analyse Projet: %s ", project.Name)
+		loggers.Infof("\t🟢  Analyse Project: %s ", project.Name)
 
 		emptyOrArchivedCount, excludedCount, repos, err := listReposForProject(params, project.Key)
 		if err != nil {
