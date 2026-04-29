@@ -15,7 +15,8 @@ Results/*
 
 # Logs
 *.log
-Logs/*.log
+Logs/
+**/Logs/
 
 # Temporary files
 temp.json
