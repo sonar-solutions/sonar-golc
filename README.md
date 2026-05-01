@@ -89,9 +89,44 @@ Credentials are entered in the browser and saved automatically — no config fil
 
 ## Reports
 
-Reports are available at the `Results` page after each run:
+After each run, GoLC writes all reports to a `Results/` folder in the working directory. Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
 
+### Output file tree
 
+```
+Results/
+├── GlobalReport.pdf                                 # All-org summary: lines per language, largest repos
+├── GlobalReport.json                                # Same data in JSON
+├── code_lines_by_language.json                      # Lines-of-code totals grouped by language
+│
+├── byfile-report/                                   # File-level breakdown
+│   ├── repository_summary.pdf                       # Cross-repo file summary (all repos combined)
+│   ├── repository_summary.json                      # Same data in JSON
+│   ├── csv-report/
+│   │   ├── repository_summary.csv                   # Cross-repo file summary (CSV)
+│   │   └── Result_<org>_<repo>_<branch>_byfile.csv # Per-repo: every file, its lines and code lines
+│   └── pdf-report/
+│       ├── repository_summary.pdf                   # Cross-repo file summary (PDF)
+│       └── Result_<org>_<repo>_<branch>_byfile.pdf # Per-repo file breakdown (PDF)
+│
+└── bylanguage-report/                               # Language-level breakdown
+    ├── Result_<org>_<repo>_<branch>.json            # Per-repo: lines grouped by language (JSON)
+    ├── csv-report/
+    │   └── Result_<org>_<repo>_<branch>.csv         # Per-repo language breakdown (CSV)
+    └── pdf-report/
+        └── Result_<org>_<repo>_<branch>.pdf         # Per-repo language breakdown (PDF)
+```
+
+> File names follow the pattern `Result_<organisation>_<repository>_<branch>` so results from multiple organisations or runs can coexist in the same folder.
+
+### What each report contains
+
+| Report | Contents |
+|--------|----------|
+| `GlobalReport.pdf / .json` | Organisation-wide totals: lines of code per language, largest repository, total repository and branch counts |
+| `byfile-report/repository_summary.*` | Cross-repository file summary — lists every analysed repository with its total lines, blank lines, comments, and code lines |
+| `byfile-report/*_byfile.*` | Per-repository file tree — one row per source file with individual line counts |
+| `bylanguage-report/*.*` | Per-repository language breakdown — one row per detected language with line counts |
 
 ---
 
