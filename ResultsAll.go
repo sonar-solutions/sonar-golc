@@ -1074,6 +1074,13 @@ func handlePortConflict(port int) {
 }
 
 func main() {
+	if exePath, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
+		_ = os.Chdir(filepath.Dir(exePath))
+	}
+
 	pageData, err := loadApplicationData()
 	if err != nil {
 		fmt.Println("❌", err)

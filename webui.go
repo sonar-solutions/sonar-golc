@@ -1022,6 +1022,17 @@ func openBrowser(url string) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
+	// Always run from the binary's own directory so all relative paths
+	// (Results/, Logs/, config.json, imgs/) resolve correctly regardless
+	// of how the binary was launched (double-click, terminal, PATH).
+	// Subprocesses inherit this CWD automatically.
+	if exePath, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
+		_ = os.Chdir(filepath.Dir(exePath))
+	}
+
 	// When invoked as an internal analysis subprocess, run the GoLC engine and exit.
 	if len(os.Args) > 1 && os.Args[1] == "--internal-run" {
 		if len(os.Args) < 3 {
