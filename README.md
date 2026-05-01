@@ -89,7 +89,7 @@ Credentials are entered in the browser and saved automatically — no config fil
 
 ## Reports
 
-After each run, GoLC writes all reports to a `Results/` folder in the working directory. Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
+After each run, GoLC writes all reports to a `Results/` folder in the working directory. When launched by double-clicking, this is the folder containing the binary. When launched from a terminal, it is whatever directory the terminal is in when the command is run. Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
 
 ### Output file tree
 
