@@ -1074,6 +1074,8 @@ func handlePortConflict(port int) {
 }
 
 func main() {
+	utils.ChdirToBinaryDir()
+
 	pageData, err := loadApplicationData()
 	if err != nil {
 		fmt.Println("❌", err)

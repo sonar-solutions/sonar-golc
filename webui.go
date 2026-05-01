@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
 //go:embed all:dist
@@ -1004,9 +1006,26 @@ func handleStatic(w http.ResponseWriter, r *http.Request) {
 	staticHandler.ServeHTTP(w, r)
 }
 
+// openBrowser launches the default browser to url on macOS, Windows, and Linux.
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		// empty second argument avoids issues with URLs containing '&'
+		cmd = exec.Command("cmd", "/c", "start", "", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
+	utils.ChdirToBinaryDir()
+
 	// When invoked as an internal analysis subprocess, run the GoLC engine and exit.
 	if len(os.Args) > 1 && os.Args[1] == "--internal-run" {
 		if len(os.Args) < 3 {
@@ -1029,9 +1048,18 @@ func main() {
 	mux.HandleFunc("/dist/", handleStatic)
 
 	port := findFreePort(webuiPort)
-	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("GoLC Web UI started on http://localhost:%d\n", port)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	url := fmt.Sprintf("http://localhost:%d", port)
+
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "server error:", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("GoLC Web UI started on %s\n", url)
+	openBrowser(url)
+
+	if err := http.Serve(ln, mux); err != nil {
 		fmt.Fprintln(os.Stderr, "server error:", err)
 		os.Exit(1)
 	}

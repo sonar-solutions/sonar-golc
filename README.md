@@ -38,24 +38,9 @@ Each archive contains two binaries:
 | `webui` / `webui.exe` | Browser-based launcher — start here |
 | `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `webui`) |
 
-Then run it for your operating system:
+Run `webui` / `webui.exe`. The browser opens automatically to the GoLC UI (default: `http://localhost:8091`).
 
-**Mac / Linux**
-```bash
-./webui
-```
-
-**Windows** (Command Prompt)
-```bat
-webui.exe
-```
-
-**Windows** (PowerShell)
-```powershell
-.\webui.exe
-```
-
-Open the URL printed in the terminal (default: `http://localhost:8091`), then:
+If it doesn't open, copy the URL printed in the terminal. Then:
 
 1. **Choose your platform** — click the platform card.
 2. **Enter credentials** — token, organization, and any other required fields. Previous settings are pre-filled automatically.
@@ -104,9 +89,53 @@ Credentials are entered in the browser and saved automatically — no config fil
 
 ## Reports
 
-Reports are available at the `Results` page after each run:
+After each run, GoLC writes all reports to a `Results/` folder next to the binary. This is always the case regardless of how the binary was launched (double-click, terminal, or PATH). Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
 
+### File tree view
 
+GoLC maps the complete file hierarchy of each scanned repository. In the Results dashboard, click any repository to explore an interactive tree — folders are collapsible, files show their code line count, and a search box filters the tree in real time.
+
+```
+my-org / my-service  (branch: main)
+│
+├── src/
+│   ├── main/
+│   │   ├── java/
+│   │   │   ├── App.java                          1 204 lines
+│   │   │   └── service/
+│   │   │       ├── UserService.java                892 lines
+│   │   │       └── OrderService.java               741 lines
+│   │   └── resources/
+│   │       └── application.properties               38 lines
+│   └── test/
+│       └── java/
+│           └── AppTest.java                        310 lines
+├── pom.xml                                          64 lines
+└── Dockerfile                                       18 lines
+```
+
+The same data is available as exportable files in the `Results/` folder next to the binary:
+
+| Output | Location |
+|--------|----------|
+| Interactive dashboard | Click **View Results** → select a repository |
+| Per-repo file breakdown (JSON) | `Results/byfile-report/Result_<org>_<repo>_<branch>_byfile.json` |
+| Per-repo file breakdown (CSV) | `Results/byfile-report/csv-report/Result_<org>_<repo>_<branch>_byfile.csv` |
+| Per-repo file breakdown (PDF) | `Results/byfile-report/pdf-report/Result_<org>_<repo>_<branch>_byfile.pdf` |
+| Cross-repo summary | `Results/byfile-report/repository_summary.{json,csv,pdf}` |
+| Per-repo language breakdown | `Results/bylanguage-report/Result_<org>_<repo>_<branch>.json` |
+| Organisation-wide totals | `Results/GlobalReport.{pdf,json}`, `Results/code_lines_by_language.json` |
+
+> File names follow the pattern `Result_<organisation>_<repository>_<branch>` so results from multiple organisations or runs can coexist in the same folder.
+
+### What each report contains
+
+| Report | Contents |
+|--------|----------|
+| `GlobalReport.pdf / .json` | Organisation-wide totals: lines of code per language, largest repository, total repository and branch counts |
+| `byfile-report/repository_summary.*` | Cross-repository file summary — lists every analysed repository with its total lines, blank lines, comments, and code lines |
+| `byfile-report/*_byfile.*` | Per-repository file tree — one row per source file with individual line counts |
+| `bylanguage-report/*.json` | Per-repository language breakdown — one row per detected language with line counts |
 
 ---
 
@@ -162,4 +191,4 @@ YAML               | .yaml, .yml                              | #               
 
 ## Execution Log
 
-GoLC writes a detailed log to `Logs/Logs.log` in the working directory. The file is recreated on each run. Use it to troubleshoot authentication errors, rate limits, or unexpected results.
+GoLC writes a detailed log to `Logs/Logs.log` next to the binary. The file is recreated on each run. Use it to troubleshoot authentication errors, rate limits, or unexpected results.
