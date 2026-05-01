@@ -145,7 +145,9 @@ func (p PdfReporter) writePdf(pdfReport *report) error {
 	pdf.Cell(0, 10, "Analysis Report")
 	pdf.Ln(20)
 
-	pdf.Image(logoImagePath, 10, 20, 50, 0, false, "", 0, "")
+	if _, err := os.Stat(logoImagePath); err == nil {
+		pdf.Image(logoImagePath, 10, 20, 50, 0, false, "", 0, "")
+	}
 
 	pdf.Ln(10)
 
@@ -251,7 +253,9 @@ func (p PdfReporter) GenerateGlobalReportByFile() error {
 	pdf.Cell(0, 10, "Full Analysis Report")
 	pdf.Ln(20)
 
-	pdf.Image(logoImagePath, 10, 20, 50, 0, false, "", 0, "")
+	if _, err := os.Stat(logoImagePath); err == nil {
+		pdf.Image(logoImagePath, 10, 20, 50, 0, false, "", 0, "")
+	}
 
 	pdf.Ln(10)
 
