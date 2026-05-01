@@ -91,27 +91,40 @@ Credentials are entered in the browser and saved automatically — no config fil
 
 After each run, GoLC writes all reports to a `Results/` folder next to the binary. This is always the case regardless of how the binary was launched (double-click, terminal, or PATH). Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
 
-### Output file tree
+### File tree view
+
+GoLC maps the complete file hierarchy of each scanned repository. In the Results dashboard, click any repository to explore an interactive tree — folders are collapsible, files show their code line count, and a search box filters the tree in real time.
 
 ```
-Results/
-├── GlobalReport.pdf                                      # All-org summary: lines per language, largest repos
-├── GlobalReport.json                                     # Same data in JSON
-├── code_lines_by_language.json                           # Lines-of-code totals grouped by language
+my-org / my-service  (branch: main)
 │
-├── byfile-report/                                        # File-level breakdown
-│   ├── Result_<org>_<repo>_<branch>_byfile.json         # Per-repo: every file with its line counts (JSON)
-│   ├── repository_summary.json                           # Cross-repo file summary (JSON)
-│   ├── csv-report/
-│   │   ├── repository_summary.csv                        # Cross-repo file summary (CSV)
-│   │   └── Result_<org>_<repo>_<branch>_byfile.csv      # Per-repo: every file, its lines and code lines
-│   └── pdf-report/
-│       ├── repository_summary.pdf                        # Cross-repo file summary (PDF)
-│       └── Result_<org>_<repo>_<branch>_byfile.pdf      # Per-repo file breakdown (PDF)
-│
-└── bylanguage-report/                                    # Language-level breakdown
-    └── Result_<org>_<repo>_<branch>.json                 # Per-repo: lines grouped by language (JSON)
+├── src/
+│   ├── main/
+│   │   ├── java/
+│   │   │   ├── App.java                          1 204 lines
+│   │   │   └── service/
+│   │   │       ├── UserService.java                892 lines
+│   │   │       └── OrderService.java               741 lines
+│   │   └── resources/
+│   │       └── application.properties               38 lines
+│   └── test/
+│       └── java/
+│           └── AppTest.java                        310 lines
+├── pom.xml                                          64 lines
+└── Dockerfile                                       18 lines
 ```
+
+The same data is available as exportable files in the `Results/` folder next to the binary:
+
+| Output | Location |
+|--------|----------|
+| Interactive dashboard | Click **View Results** → select a repository |
+| Per-repo file breakdown (JSON) | `Results/byfile-report/Result_<org>_<repo>_<branch>_byfile.json` |
+| Per-repo file breakdown (CSV) | `Results/byfile-report/csv-report/Result_<org>_<repo>_<branch>_byfile.csv` |
+| Per-repo file breakdown (PDF) | `Results/byfile-report/pdf-report/Result_<org>_<repo>_<branch>_byfile.pdf` |
+| Cross-repo summary | `Results/byfile-report/repository_summary.{json,csv,pdf}` |
+| Per-repo language breakdown | `Results/bylanguage-report/Result_<org>_<repo>_<branch>.json` |
+| Organisation-wide totals | `Results/GlobalReport.{pdf,json}`, `Results/code_lines_by_language.json` |
 
 > File names follow the pattern `Result_<organisation>_<repository>_<branch>` so results from multiple organisations or runs can coexist in the same folder.
 
