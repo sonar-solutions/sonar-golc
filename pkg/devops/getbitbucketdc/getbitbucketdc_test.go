@@ -313,3 +313,77 @@ func TestIfExistBranches_APIError(t *testing.T) {
 		t.Error("expected error for API error response")
 	}
 }
+
+func TestFetchAllRepos_Pagination(t *testing.T) {
+	// Verifies that multi-page repo fetches build each next-page URL from the
+	// base URL, not by appending ?start=N to the already-paginated URL.
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		start := r.URL.Query().Get("start")
+		// Any call beyond page 1 must carry exactly one start= param.
+		if callCount > 1 && start == "" {
+			t.Errorf("call %d: expected start query param, got none (url: %s)", callCount, r.URL.String())
+		}
+		if r.URL.RawQuery != "" && r.URL.RawQuery != fmt.Sprintf("start=%s", start) {
+			t.Errorf("call %d: malformed query string %q — likely appended ?start= to prior paginated URL", callCount, r.URL.RawQuery)
+		}
+		if start == "1" {
+			json.NewEncoder(w).Encode(RepoResponse{
+				IsLastPage: true,
+				Values:     []Repo{{Slug: "repo-b", Name: "repo-b", Project: struct{ Key string `json:"key"` }{Key: "PROJ"}}},
+			})
+		} else {
+			json.NewEncoder(w).Encode(RepoResponse{
+				IsLastPage:    false,
+				NextPageStart: 1,
+				Values:        []Repo{{Slug: "repo-a", Name: "repo-a", Project: struct{ Key string `json:"key"` }{Key: "PROJ"}}},
+			})
+		}
+	}))
+	defer ts.Close()
+
+	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{}}
+	repos, err := fetchAllRepos(ts.URL+"/repos", "token", el)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Errorf("expected 2 repos across 2 pages, got %d", len(repos))
+	}
+}
+
+func TestFetchAllProjects_Pagination(t *testing.T) {
+	// Verifies that multi-page project fetches build each next-page URL from the
+	// base URL, not by appending ?start=N to the already-paginated URL.
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		start := r.URL.Query().Get("start")
+		if r.URL.RawQuery != "" && r.URL.RawQuery != fmt.Sprintf("start=%s", start) {
+			t.Errorf("call %d: malformed query string %q — likely appended ?start= to prior paginated URL", callCount, r.URL.RawQuery)
+		}
+		if start == "1" {
+			json.NewEncoder(w).Encode(ProjectResponse{
+				IsLastPage: true,
+				Values:     []Project{{Key: "PROJ-B", Name: "Project B"}},
+			})
+		} else {
+			json.NewEncoder(w).Encode(ProjectResponse{
+				IsLastPage:    false,
+				NextPageStart: 1,
+				Values:        []Project{{Key: "PROJ-A", Name: "Project A"}},
+			})
+		}
+	}))
+	defer ts.Close()
+
+	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{}}
+	projects, err := fetchAllProjects(ts.URL+"/projects", "token", el)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Errorf("expected 2 projects across 2 pages, got %d", len(projects))
+	}
+}
