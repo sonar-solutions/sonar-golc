@@ -55,7 +55,7 @@ webui.exe
 .\webui.exe
 ```
 
-Open the URL printed in the terminal (default: `http://localhost:8091`), then:
+The browser opens automatically to the GoLC UI (default: `http://localhost:8091`). If it doesn't open, copy the URL printed in the terminal. Then:
 
 1. **Choose your platform** — click the platform card.
 2. **Enter credentials** — token, organization, and any other required fields. Previous settings are pre-filled automatically.
