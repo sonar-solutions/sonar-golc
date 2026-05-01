@@ -38,24 +38,9 @@ Each archive contains two binaries:
 | `webui` / `webui.exe` | Browser-based launcher — start here |
 | `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `webui`) |
 
-Then run it for your operating system:
+Run `webui` / `webui.exe`. The browser opens automatically to the GoLC UI (default: `http://localhost:8091`).
 
-**Mac / Linux**
-```bash
-./webui
-```
-
-**Windows** (Command Prompt)
-```bat
-webui.exe
-```
-
-**Windows** (PowerShell)
-```powershell
-.\webui.exe
-```
-
-The browser opens automatically to the GoLC UI (default: `http://localhost:8091`). If it doesn't open, copy the URL printed in the terminal. Then:
+If it doesn't open, copy the URL printed in the terminal. Then:
 
 1. **Choose your platform** — click the platform card.
 2. **Enter credentials** — token, organization, and any other required fields. Previous settings are pre-filled automatically.
