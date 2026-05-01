@@ -372,7 +372,7 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 	pdf.AddPage()
 
 	// Add logo if it exists
-	logoPath := "imgs/Logob.png"
+	logoPath := GetLogoPath()
 	if _, err := os.Stat(logoPath); err == nil {
 		pdf.Image(logoPath, 10, 10, 50, 0, false, "", 0, "")
 	}
