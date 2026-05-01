@@ -89,7 +89,7 @@ Credentials are entered in the browser and saved automatically — no config fil
 
 ## Reports
 
-After each run, GoLC writes all reports to a `Results/` folder in the working directory. When launched by double-clicking, this is the folder containing the binary. When launched from a terminal, it is whatever directory the terminal is in when the command is run. Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
+After each run, GoLC writes all reports to a `Results/` folder next to the binary. This is always the case regardless of how the binary was launched (double-click, terminal, or PATH). Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
 
 ### Output file tree
 
@@ -178,4 +178,4 @@ YAML               | .yaml, .yml                              | #               
 
 ## Execution Log
 
-GoLC writes a detailed log to `Logs/Logs.log` in the working directory. The file is recreated on each run. Use it to troubleshoot authentication errors, rate limits, or unexpected results.
+GoLC writes a detailed log to `Logs/Logs.log` next to the binary. The file is recreated on each run. Use it to troubleshoot authentication errors, rate limits, or unexpected results.
