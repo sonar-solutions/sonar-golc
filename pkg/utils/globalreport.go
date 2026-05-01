@@ -310,7 +310,7 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo) error {
 	pdf.SetMargins(marginL, marginT, marginR)
 	pdf.SetAutoPageBreak(true, marginB+8)
 
-	logoPath := "imgs/Logob.png"
+	logoPath := GetLogoPath()
 	_, logoErr := os.Stat(logoPath)
 
 	pdf.SetHeaderFunc(func() {
