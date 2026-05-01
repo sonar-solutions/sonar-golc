@@ -17,5 +17,8 @@ func GetLogoPath() string {
 			return candidate
 		}
 	}
-	return rel
+	if _, err := os.Stat(rel); err == nil {
+		return rel
+	}
+	return ""
 }
