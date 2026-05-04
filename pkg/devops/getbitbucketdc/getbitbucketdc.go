@@ -193,7 +193,6 @@ type FetchParams struct {
 }
 
 const tokenOpt = "Bearer "
-const Startopt = "%s?start=%d"
 
 var ErrEmptyRepo = errors.New("repository is empty")
 
@@ -729,8 +728,9 @@ func ifExistBranches(repoURL, accessToken string) ([]Branch, error) {
 	return branchesResp.Values, nil
 }
 
-func fetchAllProjects(url string, accessToken string, exclusionList *utils.ExclusionList) ([]Project, error) {
+func fetchAllProjects(baseURL string, accessToken string, exclusionList *utils.ExclusionList) ([]Project, error) {
 	var allProjects []Project
+	url := baseURL
 	for {
 		projectsResp, err := fetchProjects(url, accessToken, true)
 		if err != nil {
@@ -752,7 +752,7 @@ func fetchAllProjects(url string, accessToken string, exclusionList *utils.Exclu
 		if projectResponse.IsLastPage {
 			break
 		}
-		url = fmt.Sprintf(Startopt, url, projectResponse.NextPageStart)
+		url = fmt.Sprintf("%s?start=%d", baseURL, projectResponse.NextPageStart)
 	}
 	return allProjects, nil
 }
@@ -868,9 +868,10 @@ func isRepoExcluded(exclusionList *utils.ExclusionList, repo string) bool {
 	return excluded
 }
 
-func fetchAllRepos(url string, accessToken string, exclusionList *utils.ExclusionList) ([]Repo, error) {
+func fetchAllRepos(baseURL string, accessToken string, exclusionList *utils.ExclusionList) ([]Repo, error) {
 	var allRepos []Repo
 	loggers := utils.SharedLogger()
+	url := baseURL
 	for {
 		reposResp, err := fetchRepos(url, accessToken, true)
 		if err != nil {
@@ -895,7 +896,7 @@ func fetchAllRepos(url string, accessToken string, exclusionList *utils.Exclusio
 		if ReposResponse.IsLastPage {
 			break
 		}
-		url = fmt.Sprintf(Startopt, url, ReposResponse.NextPageStart)
+		url = fmt.Sprintf("%s?start=%d", baseURL, ReposResponse.NextPageStart)
 	}
 	return allRepos, nil
 }
@@ -935,8 +936,9 @@ func fetchRepos(url string, accessToken string, isProjectResponse bool) (interfa
 
 }
 
-func fetchAllBranches(url string, accessToken string) ([]Branch, error) {
+func fetchAllBranches(baseURL string, accessToken string) ([]Branch, error) {
 	var allBranches []Branch
+	url := baseURL
 	for {
 		branchesResp, err := fetchBranches(url, accessToken)
 		if err != nil {
@@ -946,7 +948,7 @@ func fetchAllBranches(url string, accessToken string) ([]Branch, error) {
 		if branchesResp.IsLastPage {
 			break
 		}
-		url = fmt.Sprintf(Startopt, url, branchesResp.NextPageStart)
+		url = fmt.Sprintf("%s?start=%d", baseURL, branchesResp.NextPageStart)
 	}
 	return allBranches, nil
 }
