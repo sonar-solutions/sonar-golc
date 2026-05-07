@@ -644,7 +644,7 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 		fmt.Print("\n")
 		loggers.Infof("\t🟢  Analyse Project: %s ", project.Name)
 
-		emptyOrArchivedCount, excludedCount, repos, err := listReposForProject(params, project.Key)
+		archivedCount, emptyOrArchivedCount, excludedCount, repos, err := listReposForProject(params, project.Key)
 		if err != nil {
 			if len(params.SingleRepos) == 0 {
 				loggers.Errorf("❌ Get Repos for each Project:%v", err)
@@ -657,6 +657,7 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 			}
 		}
 		emptyRepos = emptyRepos + emptyOrArchivedCount
+		cptarchiv = cptarchiv + archivedCount
 		totalexclude = totalexclude + excludedCount
 
 		spin1.Stop()
@@ -697,9 +698,10 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 	return importantBranches, emptyRepos, NBRrepos, TotalBranches, totalexclude, cptarchiv, nil
 
 }
-func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, int, []*bitbucket.Repository, error) {
+func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, int, int, []*bitbucket.Repository, error) {
 	var allRepos []*bitbucket.Repository
-	var excludedCount, emptyOrArchivedCount int
+	var archivedCount, excludedCount, emptyOrArchivedCount int
+	loggers := utils.SharedLogger()
 
 	// Use direct HTTP calls with Basic Auth support
 	url := fmt.Sprintf("%srepositories/%s?q=project.key=\"%s\"&pagelen=100", parms.BitbucketURLBase, parms.Workspace, projectKey)
@@ -707,32 +709,32 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 	for url != "" {
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			return 0, 0, nil, err
+			return 0, 0, 0, nil, err
 		}
 		req.Header.Set("Authorization", getAuthHeader(parms.Users, parms.AccessToken))
 
 		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
-			return 0, 0, nil, err
+			return 0, 0, 0, nil, err
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			return 0, 0, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+			return 0, 0, 0, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return 0, 0, nil, err
+			return 0, 0, 0, nil, err
 		}
 
 		var reposResponse struct {
 			Values []struct {
-				Type     string `json:"type"`
-				FullName string `json:"full_name"`
-				Links    struct {
+				Type       string `json:"type"`
+				FullName   string `json:"full_name"`
+				Links      struct {
 					Self struct {
 						Href string `json:"href"`
 					} `json:"self"`
@@ -741,6 +743,7 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 				Slug       string `json:"slug"`
 				UUID       string `json:"uuid"`
 				IsPrivate  bool   `json:"is_private"`
+				IsArchived bool   `json:"is_archived"`
 				Mainbranch struct {
 					Name string `json:"name"`
 				} `json:"mainbranch"`
@@ -756,12 +759,17 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 
 		err = json.Unmarshal(body, &reposResponse)
 		if err != nil {
-			return 0, 0, nil, err
+			return 0, 0, 0, nil, err
 		}
 
 		// Convert to bitbucket.Repository format
 		var reposResItems []bitbucket.Repository
 		for _, repo := range reposResponse.Values {
+			if repo.IsArchived {
+				loggers.Debugf("→ repo %s/%s: skipped (archived)", projectKey, repo.Slug)
+				archivedCount++
+				continue
+			}
 			bbRepo := bitbucket.Repository{
 				Full_name:  repo.FullName,
 				Slug:       repo.Slug,
@@ -786,7 +794,7 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 
 		eoc, exc, repos, err := listRepos(parms, projectKey, reposRes)
 		if err != nil {
-			return 0, 0, nil, err
+			return 0, 0, 0, nil, err
 		}
 		emptyOrArchivedCount += eoc
 		excludedCount += exc
@@ -795,7 +803,7 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 		url = reposResponse.Next
 	}
 
-	return emptyOrArchivedCount, excludedCount, allRepos, nil
+	return archivedCount, emptyOrArchivedCount, excludedCount, allRepos, nil
 }
 
 func listRepos(parms ParamsProjectBitbucket, projectKey string, reposRes *bitbucket.RepositoriesRes) (int, int, []*bitbucket.Repository, error) {
