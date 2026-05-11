@@ -661,11 +661,10 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 		totalexclude = totalexclude + excludedCount
 
 		spin1.Stop()
-		if emptyOrArchivedCount > 0 {
-			NBRrepo = len(repos) + emptyOrArchivedCount
+		NBRrepo = len(repos) + emptyOrArchivedCount + archivedCount
+		if emptyOrArchivedCount > 0 || archivedCount > 0 {
 			loggers.Infof("\t  ✅ The number of %s found is: %d - Find empty %d:", message4, NBRrepo, emptyOrArchivedCount)
 		} else {
-			NBRrepo = len(repos)
 			loggers.Infof("\t  ✅ The number of %s found is: %d", message4, NBRrepo)
 		}
 
@@ -768,6 +767,9 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 			if repo.IsArchived {
 				loggers.Debugf("→ repo %s/%s: skipped (archived)", projectKey, repo.Slug)
 				archivedCount++
+				if parms.SingleRepos == repo.Slug {
+					return archivedCount, 0, 0, nil, nil
+				}
 				continue
 			}
 			bbRepo := bitbucket.Repository{

@@ -311,3 +311,109 @@ func TestGetSpecificProjectsWithAuth_ExcludedProject(t *testing.T) {
 		t.Errorf("expected 1 excluded, got %d", excluded)
 	}
 }
+
+func TestListReposForProject_ArchivedFiltered(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repositories/ws":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"values": []map[string]interface{}{
+					{
+						"slug":        "repo-archived",
+						"full_name":   "ws/repo-archived",
+						"is_archived": true,
+						"mainbranch":  map[string]string{"name": "main"},
+						"project":     map[string]string{"key": "PROJ"},
+					},
+					{
+						"slug":        "repo-active",
+						"full_name":   "ws/repo-active",
+						"is_archived": false,
+						"mainbranch":  map[string]string{"name": "main"},
+						"project":     map[string]string{"key": "PROJ"},
+					},
+				},
+				"next": "",
+			})
+		case "/repositories/ws/repo-active/src/main/":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"values":  []map[string]interface{}{{"path": "README.md", "type": "commit_file"}},
+				"pagelen": 100,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	parms := ParamsProjectBitbucket{
+		Workspace:        "ws",
+		AccessToken:      "token",
+		BitbucketURLBase: ts.URL + "/",
+		Exclusionlist:    utils.NewExclusionList(nil, nil),
+	}
+
+	archivedCount, emptyOrArchived, excluded, repos, err := listReposForProject(parms, "PROJ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if archivedCount != 1 {
+		t.Errorf("expected archivedCount=1, got %d", archivedCount)
+	}
+	if emptyOrArchived != 0 {
+		t.Errorf("expected emptyOrArchived=0, got %d", emptyOrArchived)
+	}
+	if excluded != 0 {
+		t.Errorf("expected excluded=0, got %d", excluded)
+	}
+	if len(repos) != 1 {
+		t.Errorf("expected 1 repo, got %d", len(repos))
+	}
+}
+
+func TestListReposForProject_SingleReposArchived(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repositories/ws" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"values": []map[string]interface{}{
+					{
+						"slug":        "repo-archived",
+						"full_name":   "ws/repo-archived",
+						"is_archived": true,
+						"mainbranch":  map[string]string{"name": "main"},
+						"project":     map[string]string{"key": "PROJ"},
+					},
+				},
+				"next": "",
+			})
+		} else {
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	parms := ParamsProjectBitbucket{
+		Workspace:        "ws",
+		AccessToken:      "token",
+		BitbucketURLBase: ts.URL + "/",
+		Exclusionlist:    utils.NewExclusionList(nil, nil),
+		SingleRepos:      "repo-archived",
+	}
+
+	archivedCount, emptyOrArchived, excluded, repos, err := listReposForProject(parms, "PROJ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if archivedCount != 1 {
+		t.Errorf("expected archivedCount=1, got %d", archivedCount)
+	}
+	if emptyOrArchived != 0 {
+		t.Errorf("expected emptyOrArchived=0, got %d", emptyOrArchived)
+	}
+	if excluded != 0 {
+		t.Errorf("expected excluded=0, got %d", excluded)
+	}
+	if len(repos) != 0 {
+		t.Errorf("expected 0 repos, got %d", len(repos))
+	}
+}
