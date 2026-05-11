@@ -663,7 +663,7 @@ func getRepoAnalyse(params ParamsProjectBitbucket) ([]ProjectBranch, int, int, i
 		spin1.Stop()
 		NBRrepo = len(repos) + emptyOrArchivedCount + archivedCount
 		if emptyOrArchivedCount > 0 || archivedCount > 0 {
-			loggers.Infof("\t  ✅ The number of %s found is: %d - Find empty %d:", message4, NBRrepo, emptyOrArchivedCount)
+			loggers.Infof("\t  ✅ The number of %s found is: %d - Find empty: %d, archived: %d", message4, NBRrepo, emptyOrArchivedCount, archivedCount)
 		} else {
 			loggers.Infof("\t  ✅ The number of %s found is: %d", message4, NBRrepo)
 		}
