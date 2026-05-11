@@ -76,9 +76,10 @@ type RepoResponse struct {
 }
 
 type Repo struct {
-	Slug    string `json:"slug"`
-	Name    string `json:"name"`
-	Project struct {
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	Archived bool   `json:"archived"`
+	Project  struct {
 		Key string `json:"key"`
 	} `json:"project"`
 	Links struct {
@@ -797,6 +798,11 @@ func fetchOneRepos(url string, accessToken string, exclusionList *utils.Exclusio
 		os.Exit(1)
 	}
 
+	if repo.Archived {
+		loggers.Infof("⏭️  Skipping <%s>: archived", repo.Name)
+		return allRepos, nil
+	}
+
 	KEYTEST := repo.Project.Key + "/" + repo.Slug
 
 	if len(exclusionList.Projects) == 0 && len(exclusionList.Repos) == 0 {
@@ -880,6 +886,11 @@ func fetchAllRepos(baseURL string, accessToken string, exclusionList *utils.Excl
 		ReposResponse := reposResp.(*RepoResponse)
 		for _, repo := range ReposResponse.Values {
 			KEYTEST := repo.Project.Key + "/" + repo.Slug
+
+			if repo.Archived {
+				loggers.Debugf("→ repo %s: skipped (archived)", KEYTEST)
+				continue
+			}
 
 			if len(exclusionList.Projects) == 0 && len(exclusionList.Repos) == 0 {
 				allRepos = append(allRepos, repo)
