@@ -1186,6 +1186,7 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 	cptarchiv := 0        // Counter archiv repos
 	notAnalyzedCount := 0 // Counter Number of repositories excluded
 	emptyRepo := 0        // Counter Number of repositories empty
+	loggers := utils.SharedLogger()
 	parms.Spin.Stop()
 	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin1.Color("green", "bold")
@@ -1214,8 +1215,8 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 		// Next Step : Test is Repository is empty
 		isEmpty, err := reposIfEmpty(ctx, client, repoName, parms.Organization)
 		if err != nil {
-			loggers := utils.SharedLogger()
 			loggers.Errorf("❌ repo %s: skipped — empty-check failed: %v", repoName, err)
+			notAnalyzedCount++
 			continue
 
 		}
