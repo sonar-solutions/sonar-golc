@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -1536,4 +1538,73 @@ func TestMainAnalysisWorkflow(t *testing.T) {
 		}()
 		analyzeRepoBranches(params, context.Background(), nil, nil, 1, nil)
 	})
+}
+
+// TestGetRepoGithubList_PersonalAccountUserGetError covers the failure path
+// introduced by the personal-account owner-resolution block: when Org=false
+// and Organization is empty, GetRepoGithubList must surface an error from
+// client.Users.Get instead of silently proceeding with an empty owner (which
+// would 404 every per-repo call downstream).
+func TestGetRepoGithubList_PersonalAccountUserGetError(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test_github_personal_user_get_*")
+	if err != nil {
+		t.Fatalf(errFailedToCreateTempDir, err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	originalWd, _ := os.Getwd()
+	defer os.Chdir(originalWd)
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Failed to chdir to temp dir: %v", err)
+	}
+	if err := os.MkdirAll("Logs", 0755); err != nil {
+		t.Fatalf(errFailedToCreateLogsDir, err)
+	}
+
+	// Fake GHES server: /user/repos returns an empty list (so fetchUserRepositories
+	// succeeds), /user returns 500 (so client.Users.Get fails and we hit the new
+	// error path). Any other request is an unexpected call.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/user/repos", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("[]"))
+	})
+	mux.HandleFunc("/api/v3/user", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"Internal Server Error"}`))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected GitHub API call: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	platformConfig := map[string]interface{}{
+		"Url":           server.URL + "/",
+		"AccessToken":   testToken,
+		"Organization":  "",
+		"Org":           false,
+		"Repos":         "",
+		"Branch":        "",
+		"Period":        float64(-1),
+		"Stats":         false,
+		"DefaultBranch": false,
+		"Baseapi":       "",
+		"Apiver":        testAPIVersion,
+	}
+
+	branches, err := GetRepoGithubList(platformConfig, "0", false)
+	if err == nil {
+		t.Fatalf("expected error from GetRepoGithubList when Users.Get fails, got nil (branches=%v)", branches)
+	}
+	if len(branches) != 0 {
+		t.Errorf("expected no branches when Users.Get fails, got %d", len(branches))
+	}
+	// Organization must remain unchanged on the failure path.
+	if got := platformConfig["Organization"].(string); got != "" {
+		t.Errorf("expected Organization to remain empty on Users.Get failure, got %q", got)
+	}
 }

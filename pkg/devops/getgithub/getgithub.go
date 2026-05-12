@@ -300,7 +300,8 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 		}
 		isEmpty, err := reposIfEmpty(ctx, client, repoName, parms.Organization)
 		if err != nil {
-			fmt.Print(err.Error())
+			loggers.Errorf("❌ repo %s: skipped — empty-check failed: %v", repoName, err)
+			notAnalyzedCount++
 			continue
 		}
 		if isEmpty {
@@ -840,6 +841,19 @@ func GetRepoGithubList(platformConfig map[string]interface{}, exclusionfile stri
 			repositories, err1 = fetchAllRepositories(ctx, client, platformConfig["Organization"].(string), opt)
 		} else {
 			repositories, err1 = fetchUserRepositories(ctx, client, opt1)
+			// Personal account: the per-repo API calls (ListCommits, ListBranches,
+			// ListRepositoryEvents) need an owner. If the user did not fill the
+			// Organization field (it does not apply to personal accounts), resolve
+			// it from the authenticated user so downstream calls don't 404.
+			if err1 == nil && strings.TrimSpace(platformConfig["Organization"].(string)) == "" {
+				user, _, uerr := client.Users.Get(ctx, "")
+				if uerr != nil {
+					loggers.Errorf("❌ Failed to resolve authenticated user for personal-account analysis: %v", uerr)
+					return importantBranches, uerr
+				}
+				platformConfig["Organization"] = user.GetLogin()
+				loggers.Infof("👤 Personal account detected — using authenticated user '%s' as repository owner", user.GetLogin())
+			}
 		}
 	} else {
 		repositories, err1 = fetchSingleRepository(ctx, client, platformConfig)
@@ -1172,6 +1186,7 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 	cptarchiv := 0        // Counter archiv repos
 	notAnalyzedCount := 0 // Counter Number of repositories excluded
 	emptyRepo := 0        // Counter Number of repositories empty
+	loggers := utils.SharedLogger()
 	parms.Spin.Stop()
 	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin1.Color("green", "bold")
@@ -1200,7 +1215,8 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 		// Next Step : Test is Repository is empty
 		isEmpty, err := reposIfEmpty(ctx, client, repoName, parms.Organization)
 		if err != nil {
-			fmt.Print(err.Error())
+			loggers.Errorf("❌ repo %s: skipped — empty-check failed: %v", repoName, err)
+			notAnalyzedCount++
 			continue
 
 		}
