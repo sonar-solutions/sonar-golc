@@ -19,6 +19,28 @@ type PdfReporter struct {
 	OutputPath string
 }
 
+// parseResultFileName parses a `Result_<Org>_<Repo>_<Branch>.json` (or matching
+// PDF output name with optional `_byfile` suffix) and returns the components.
+// Any of Org/Repo/Branch may itself contain '_' (GitLab group names, repo slugs,
+// branch names), so we strip the known prefix/suffix and treat the first segment
+// as Org, the last as Branch, and join everything in between as Repo. Returns
+// ok=false when the name does not contain at least three segments.
+func parseResultFileName(name string) (org, repo, branch string, ok bool) {
+	if !strings.HasPrefix(name, "Result_") {
+		return "", "", "", false
+	}
+	base := strings.TrimPrefix(name, "Result_")
+	for _, suffix := range []string{".json", ".pdf"} {
+		base = strings.TrimSuffix(base, suffix)
+	}
+	base = strings.TrimSuffix(base, "_byfile")
+	parts := strings.Split(base, "_")
+	if len(parts) < 3 {
+		return "", "", "", false
+	}
+	return parts[0], strings.Join(parts[1:len(parts)-1], "_"), parts[len(parts)-1], true
+}
+
 type languageResult struct {
 	Language   string
 	Files      int
@@ -116,16 +138,12 @@ func (p PdfReporter) writePdf(pdfReport *report) error {
 		outputName += ".pdf"
 	}
 
-	parts := strings.Split(outputName, "_")
-	repoName := parts[2]
-	if len(parts) > 3 {
-		branch = strings.TrimSuffix(parts[3], ".pdf")
-	} else {
-
-		branch = "main"
-
+	repoName := "unknown"
+	branch = "main"
+	if _, r, b, ok := parseResultFileName(outputName); ok {
+		repoName = r
+		branch = b
 	}
-	//branch := strings.TrimSuffix(parts[3], ".pdf")
 	Title2 := "Repository Files Details: " + repoName + " for branch : " + branch
 
 	path := filepath.Join(p.OutputPath+"/", outputName)
@@ -282,12 +300,7 @@ func (p PdfReporter) GenerateGlobalReportByFile() error {
 				return err
 			}
 
-			// Extract repository name and branch
-			parts := strings.Split(info.Name(), "_")
-			if len(parts) == 4 {
-				repoName := strings.Join(parts[2:3], "_")
-				branch := strings.TrimSuffix(parts[3], filepath.Ext(parts[3]))
-
+			if _, repoName, branch, ok := parseResultFileName(info.Name()); ok {
 				// Add repository info
 				pdf.SetFont("Times", "B", 10)
 				pdf.CellFormat(0, 10, fmt.Sprintf("Repository: %s - Branch: %s", repoName, branch), "", 1, "", false, 0, "")

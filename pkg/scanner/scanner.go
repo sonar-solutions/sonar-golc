@@ -8,6 +8,7 @@ import (
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/analyzer"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/goloc/language"
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -32,11 +33,17 @@ func NewScanner(languages language.Languages) *Scanner {
 func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 	var results []scanResult
 	progress := sc.createProgressbar(len(files))
+	logger := utils.NewLogger()
 
 	for _, file := range files {
 		result, err := sc.scanFile(file)
 		if err != nil {
-			return results, err
+			// A single unreadable file (broken symlink, permission denied, transient I/O
+			// error) must not abort the entire repository scan. Log and skip so the rest
+			// of the repo still produces a JSON output.
+			logger.Warnf("⚠️  Skipping unreadable file %s: %v", file.FilePath, err)
+			progress.Add(1)
+			continue
 		}
 		progress.Add(1)
 		results = append(results, result)
