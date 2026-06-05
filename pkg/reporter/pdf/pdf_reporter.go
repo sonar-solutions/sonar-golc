@@ -19,28 +19,11 @@ type PdfReporter struct {
 	OutputPath string
 }
 
-// parseResultFileName parses a `Result_<Org>__<Repo>__<Branch>.json` (or matching
-// PDF output name with optional `_byfile` suffix) and returns the components.
-// The double-underscore field separator keeps single `_` free to appear inside
-// any component (GitLab group names, repo slugs, branch names like feat_xyz), so
-// all three fields are recovered unambiguously by a fixed-N split. Returns
-// ok=false when the name does not have exactly three `__`-separated segments —
-// including all legacy single-`_` names from before the delimiter change, which
-// are intentionally skipped and will be regenerated on the next analysis run.
+// parseResultFileName is a thin alias preserving the local call sites while
+// the canonical implementation lives in pkg/utils so every consumer of the
+// Result_<Org>__<Repo>__<Branch>.json naming convention parses it the same way.
 func parseResultFileName(name string) (org, repo, branch string, ok bool) {
-	if !strings.HasPrefix(name, "Result_") {
-		return "", "", "", false
-	}
-	base := strings.TrimPrefix(name, "Result_")
-	for _, suffix := range []string{".json", ".pdf"} {
-		base = strings.TrimSuffix(base, suffix)
-	}
-	base = strings.TrimSuffix(base, "_byfile")
-	parts := strings.SplitN(base, "__", 3)
-	if len(parts) != 3 {
-		return "", "", "", false
-	}
-	return parts[0], parts[1], parts[2], true
+	return utils.ParseResultFileName(name)
 }
 
 type languageResult struct {

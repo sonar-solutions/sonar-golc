@@ -1317,14 +1317,18 @@ func runGolcInProcess(platform string) {
 			// Check if this repo has a higher TotalCodeLines (excl. JSON) than the current maximum
 			if codeLinesForTotal > maxTotalCodeLines {
 				maxTotalCodeLines = codeLinesForTotal
-				// Extract project and repo name from file name
-				parts := strings.Split(strings.TrimSuffix(file.Name(), ".json"), "_")
+				// Extract project and repo from the Result_<Org>__<Repo>__<Branch>.json
+				// file name via the canonical parser. The `file` platform writes a
+				// single-component Result_<Repo>.json which the parser rejects (ok=false);
+				// fall back to TrimPrefix in that case.
 				if platformConfig["DevOps"].(string) != "file" {
-					maxProject = parts[1]
-					maxRepo = parts[2]
+					if org, repo, _, ok := utils.ParseResultFileName(file.Name()); ok {
+						maxProject = org
+						maxRepo = repo
+					}
 				} else {
 					maxProject = ""
-					maxRepo = parts[1]
+					maxRepo = strings.TrimSuffix(strings.TrimPrefix(file.Name(), "Result_"), ".json")
 					NumberRepos++
 				}
 			}
