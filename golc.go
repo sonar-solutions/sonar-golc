@@ -1286,6 +1286,27 @@ func runGolcInProcess(platform string) {
 	for _, file := range files {
 		// Check if the file is a JSON file
 		if !file.IsDir() && strings.HasSuffix(file.Name(), ".json") {
+			// Hard-cutover: only accept canonically-named result files. Legacy
+			// single-`_` names and other malformed names contribute neither LOC
+			// nor LargestRepository candidacy — their identity is not
+			// authoritative and they will be regenerated on the next analysis
+			// run. Parsing happens before the JSON body is read so an unparsable
+			// file has zero side-effects on totals or largest-tracking.
+			isFilePlatform := platformConfig["DevOps"].(string) == "file"
+			var parsedOrg, parsedRepo string
+			if isFilePlatform {
+				// File platform writes single-component Result_<Repo>.json.
+				parsedRepo = strings.TrimSuffix(strings.TrimPrefix(file.Name(), "Result_"), ".json")
+			} else {
+				org, repo, _, ok := utils.ParseResultFileName(file.Name())
+				if !ok {
+					logger.Warnf("⚠️  Skipping unparsable result file: %s", file.Name())
+					continue
+				}
+				parsedOrg = org
+				parsedRepo = repo
+			}
+
 			// Read contents of JSON file
 			filePath := filepath.Join(DestinationResult, file.Name())
 			jsonData, err := os.ReadFile(filePath)
@@ -1314,21 +1335,14 @@ func runGolcInProcess(platform string) {
 
 			totalCodeLinesSum += codeLinesForTotal
 
-			// Check if this repo has a higher TotalCodeLines (excl. JSON) than the current maximum
+			// Update the (max, project, repo) triple atomically — the name was
+			// already validated at the top of this iteration, so a new maximum
+			// always carries a usable repo identity.
 			if codeLinesForTotal > maxTotalCodeLines {
 				maxTotalCodeLines = codeLinesForTotal
-				// Extract project and repo from the Result_<Org>__<Repo>__<Branch>.json
-				// file name via the canonical parser. The `file` platform writes a
-				// single-component Result_<Repo>.json which the parser rejects (ok=false);
-				// fall back to TrimPrefix in that case.
-				if platformConfig["DevOps"].(string) != "file" {
-					if org, repo, _, ok := utils.ParseResultFileName(file.Name()); ok {
-						maxProject = org
-						maxRepo = repo
-					}
-				} else {
-					maxProject = ""
-					maxRepo = strings.TrimSuffix(strings.TrimPrefix(file.Name(), "Result_"), ".json")
+				maxProject = parsedOrg
+				maxRepo = parsedRepo
+				if isFilePlatform {
 					NumberRepos++
 				}
 			}
