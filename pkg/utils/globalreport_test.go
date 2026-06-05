@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const resultMainJSON = "Result_org_repo_main.json"
+const resultMainJSON = "Result_org__repo__main.json"
 
 // helper to set up a temp workspace and chdir into it
 func setupGlobalReportEnv(t *testing.T) (string, func()) {
@@ -41,7 +41,7 @@ func TestIsEligibleResultFile(t *testing.T) {
 	defer cleanup()
 	// create candidate files
 	result := filepath.Join(dir, resultMainJSON)
-	byfile := filepath.Join(dir, "Result_org_repo_main_byfile.json")
+	byfile := filepath.Join(dir, "Result_org__repo__main_byfile.json")
 	other := filepath.Join(dir, "random.json")
 	os.WriteFile(result, []byte("{}"), 0644)
 	os.WriteFile(byfile, []byte("{}"), 0644)
@@ -88,10 +88,10 @@ func TestCollectLanguageTotalsSkipsByfile(t *testing.T) {
 	dir, cleanup := setupGlobalReportEnv(t)
 	defer cleanup()
 	// arrange result files
-	writeResultJSON(t, dir, "Result_org_a_main.json", FileData{
+	writeResultJSON(t, dir, "Result_org__a__main.json", FileData{
 		Results: []LanguageData1{{Language: "Go", CodeLines: 10}},
 	})
-	writeResultJSON(t, dir, "Result_org_b_main_byfile.json", FileData{
+	writeResultJSON(t, dir, "Result_org__b__main_byfile.json", FileData{
 		Results: []LanguageData1{{Language: "Go", CodeLines: 1000}},
 	})
 	writeResultJSON(t, dir, "random.json", FileData{

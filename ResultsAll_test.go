@@ -340,7 +340,7 @@ func TestDataFunctions(t *testing.T) {
 		}
 
 		// Create byfile report
-		byFileReportPath := filepath.Join(testByFileReportDir, "Result_test-org_test-repo_main_byfile.json")
+		byFileReportPath := filepath.Join(testByFileReportDir, "Result_test-org__test-repo__main_byfile.json")
 		err = os.WriteFile(byFileReportPath, []byte(byFileReportData), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create byfile report: %v", err)
@@ -404,13 +404,13 @@ func TestDataFunctions(t *testing.T) {
 			t.Fatalf("Failed to create analysis result file: %v", err)
 		}
 
-		repo1Path := filepath.Join(testByFileReportDir, "Result_test-org_repo1_main_byfile.json")
+		repo1Path := filepath.Join(testByFileReportDir, "Result_test-org__repo1__main_byfile.json")
 		err = os.WriteFile(repo1Path, []byte(byFileReport1Data), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create repo1 byfile report: %v", err)
 		}
 
-		repo2Path := filepath.Join(testByFileReportDir, "Result_test-org_repo2_develop_byfile.json")
+		repo2Path := filepath.Join(testByFileReportDir, "Result_test-org__repo2__develop_byfile.json")
 		err = os.WriteFile(repo2Path, []byte(byFileReport2Data), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create repo2 byfile report: %v", err)
@@ -454,8 +454,8 @@ func TestDataFunctions(t *testing.T) {
 		mainBranchData := `{"TotalLines": 5000, "TotalBlankLines": 500, "TotalComments": 1000, "TotalCodeLines": 3500}`
 		developBranchData := `{"TotalLines": 4500, "TotalBlankLines": 450, "TotalComments": 900, "TotalCodeLines": 3150}`
 
-		mainBranchPath := filepath.Join(testByFileReportDir, "Result_test-org_test-repo_main_byfile.json")
-		developBranchPath := filepath.Join(testByFileReportDir, "Result_test-org_test-repo_develop_byfile.json")
+		mainBranchPath := filepath.Join(testByFileReportDir, "Result_test-org__test-repo__main_byfile.json")
+		developBranchPath := filepath.Join(testByFileReportDir, "Result_test-org__test-repo__develop_byfile.json")
 
 		err = os.WriteFile(mainBranchPath, []byte(mainBranchData), 0644)
 		if err != nil {
@@ -739,13 +739,13 @@ func TestDetailDataFunction(t *testing.T) {
 			t.Fatalf("Failed to create global report file: %v", err)
 		}
 
-		byFileReportPath := filepath.Join(testByFileReportDir, "Result_test-org_test-repo_main_byfile.json")
+		byFileReportPath := filepath.Join(testByFileReportDir, "Result_test-org__test-repo__main_byfile.json")
 		err = os.WriteFile(byFileReportPath, []byte(byFileReportData), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create byfile report: %v", err)
 		}
 
-		byLanguageReportPath := filepath.Join(testByLanguageReportDir, "Result_test-org_test-repo_main.json")
+		byLanguageReportPath := filepath.Join(testByLanguageReportDir, "Result_test-org__test-repo__main.json")
 		err = os.WriteFile(byLanguageReportPath, []byte(byLanguageReportData), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create bylanguage report: %v", err)

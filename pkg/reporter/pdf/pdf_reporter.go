@@ -19,19 +19,14 @@ type PdfReporter struct {
 	OutputPath string
 }
 
-// parseResultFileName parses a `Result_<Org>_<Repo>_<Branch>.json` (or matching
+// parseResultFileName parses a `Result_<Org>__<Repo>__<Branch>.json` (or matching
 // PDF output name with optional `_byfile` suffix) and returns the components.
-// Any of Org/Repo/Branch may itself contain '_' (GitLab group names, repo slugs,
-// branch names), so we strip the known prefix/suffix and treat the first segment
-// as Org, the last as Branch, and join everything in between as Repo. Returns
-// ok=false when the name does not contain at least three segments.
-//
-// Known limitation: because '_' is both the field delimiter and a valid character
-// inside each field, the last-segment heuristic is ambiguous. A branch named
-// "feature_xyz" will be mislabeled: "feature" is absorbed into Repo and "xyz"
-// becomes Branch. Until the file-name producer switches to an unambiguous
-// delimiter (e.g. U+241F UNIT SEPARATOR — `Result_<Org>\u241F<Repo>\u241F<Branch>.json`)
-// this ambiguity cannot be resolved from the file name alone.
+// The double-underscore field separator keeps single `_` free to appear inside
+// any component (GitLab group names, repo slugs, branch names like feat_xyz), so
+// all three fields are recovered unambiguously by a fixed-N split. Returns
+// ok=false when the name does not have exactly three `__`-separated segments —
+// including all legacy single-`_` names from before the delimiter change, which
+// are intentionally skipped and will be regenerated on the next analysis run.
 func parseResultFileName(name string) (org, repo, branch string, ok bool) {
 	if !strings.HasPrefix(name, "Result_") {
 		return "", "", "", false
@@ -41,11 +36,11 @@ func parseResultFileName(name string) (org, repo, branch string, ok bool) {
 		base = strings.TrimSuffix(base, suffix)
 	}
 	base = strings.TrimSuffix(base, "_byfile")
-	parts := strings.Split(base, "_")
-	if len(parts) < 3 {
+	parts := strings.SplitN(base, "__", 3)
+	if len(parts) != 3 {
 		return "", "", "", false
 	}
-	return parts[0], strings.Join(parts[1:len(parts)-1], "_"), parts[len(parts)-1], true
+	return parts[0], parts[1], parts[2], true
 }
 
 type languageResult struct {

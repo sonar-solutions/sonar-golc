@@ -84,7 +84,7 @@ func TestRepositorySummaryIntegration(t *testing.T) {
 			"Results": []
 		}`
 
-		err = os.WriteFile("Results/byfile-report/Result_integration-org_integration-repo_main_byfile.json", []byte(byfileData), 0644)
+		err = os.WriteFile("Results/byfile-report/Result_integration-org__integration-repo__main_byfile.json", []byte(byfileData), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create byfile report: %v", err)
 		}
@@ -275,13 +275,13 @@ func TestGolcMainFlowIntegration(t *testing.T) {
 
 		// Step 2: Simulate byfile reports
 		byfileData1 := `{"TotalLines": 200, "TotalBlankLines": 20, "TotalComments": 40, "TotalCodeLines": 140}`
-		err = os.WriteFile("Results/byfile-report/Result_flow-org_repo1_main_byfile.json", []byte(byfileData1), 0644)
+		err = os.WriteFile("Results/byfile-report/Result_flow-org__repo1__main_byfile.json", []byte(byfileData1), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create byfile report 1: %v", err)
 		}
 
 		byfileData2 := `{"TotalLines": 150, "TotalBlankLines": 15, "TotalComments": 30, "TotalCodeLines": 105}`
-		err = os.WriteFile("Results/byfile-report/Result_flow-org_repo2_develop_byfile.json", []byte(byfileData2), 0644)
+		err = os.WriteFile("Results/byfile-report/Result_flow-org__repo2__develop_byfile.json", []byte(byfileData2), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create byfile report 2: %v", err)
 		}

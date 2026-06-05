@@ -523,9 +523,12 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 
 // Perform repository analysis (common logic)
 func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spinner.Spinner, results chan int, count *int, excludeExtension []string, excludePaths []string, folderKeywords []string, fileNamePatterns []string, ResultByFile bool, ResultAll bool) {
-	// Always use a consistent filename pattern so downstream parsing works across platforms
-	// Format: Result_<OrgOrProjectKey>_<RepoSlug>_<Branch>
-	outputFileName := fmt.Sprintf("Result_%s_%s_%s", params.ProjectKey, params.RepoSlug, params.MainBranch)
+	// Always use a consistent filename pattern so downstream parsing works across platforms.
+	// Format: Result_<OrgOrProjectKey>__<RepoSlug>__<Branch>
+	// The double-underscore field separator keeps `_` free to appear inside any component
+	// (GitLab group names, repo slugs, branch names like feat_xyz), so the parser in
+	// pkg/reporter/pdf can recover all three fields unambiguously.
+	outputFileName := fmt.Sprintf("Result_%s__%s__%s", params.ProjectKey, params.RepoSlug, params.MainBranch)
 	golocParams := goloc.Params{
 		Path:             params.PathToScan,
 		ByFile:           ResultByFile,
