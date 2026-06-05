@@ -25,6 +25,13 @@ type PdfReporter struct {
 // branch names), so we strip the known prefix/suffix and treat the first segment
 // as Org, the last as Branch, and join everything in between as Repo. Returns
 // ok=false when the name does not contain at least three segments.
+//
+// Known limitation: because '_' is both the field delimiter and a valid character
+// inside each field, the last-segment heuristic is ambiguous. A branch named
+// "feature_xyz" will be mislabeled: "feature" is absorbed into Repo and "xyz"
+// becomes Branch. Until the file-name producer switches to an unambiguous
+// delimiter (e.g. U+241F UNIT SEPARATOR — `Result_<Org>\u241F<Repo>\u241F<Branch>.json`)
+// this ambiguity cannot be resolved from the file name alone.
 func parseResultFileName(name string) (org, repo, branch string, ok bool) {
 	if !strings.HasPrefix(name, "Result_") {
 		return "", "", "", false

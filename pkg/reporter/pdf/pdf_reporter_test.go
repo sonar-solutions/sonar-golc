@@ -36,7 +36,11 @@ func TestParseResultFileName(t *testing.T) {
 			wantOK:     true,
 		},
 		{
-			name:       "underscore in branch name",
+			// Known ambiguity: '_' is also valid inside branch names, so
+			// "feature_xyz" is mislabeled — "feature" is absorbed into Repo
+			// and only "xyz" is returned as Branch. See the comment on
+			// parseResultFileName for the long-term fix.
+			name:       "underscore in branch name (mislabeled by last-segment heuristic)",
 			input:      "Result_org_repo_feature_xyz.json",
 			wantOrg:    "org",
 			wantRepo:   "repo_feature",
