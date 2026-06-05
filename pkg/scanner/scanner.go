@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -35,6 +36,7 @@ func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 	progress := sc.createProgressbar(len(files))
 	logger := utils.NewLogger()
 
+	failed := 0
 	for _, file := range files {
 		result, err := sc.scanFile(file)
 		if err != nil {
@@ -42,11 +44,24 @@ func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 			// error) must not abort the entire repository scan. Log and skip so the rest
 			// of the repo still produces a JSON output.
 			logger.Warnf("⚠️  Skipping unreadable file %s: %v", file.FilePath, err)
+			failed++
 			progress.Add(1)
 			continue
 		}
 		progress.Add(1)
 		results = append(results, result)
+	}
+
+	// Distinguish a fully-failed scan from a genuinely empty repository: if every
+	// candidate file was unreadable, surface an error so downstream report
+	// generation does not silently produce a zero-line report (which would mask
+	// real, systemic problems — wrong path, tree-wide permission denial, etc.).
+	if failed > 0 && len(results) == 0 && len(files) > 0 {
+		logger.Errorf("❌ Scan failed: all %d candidate file(s) were unreadable", failed)
+		return results, fmt.Errorf("scan failed: all %d candidate file(s) were unreadable", failed)
+	}
+	if failed > 0 {
+		logger.Warnf("⚠️  Scan completed with %d/%d file(s) skipped", failed, len(files))
 	}
 
 	return results, nil
