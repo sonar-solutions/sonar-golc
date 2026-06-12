@@ -289,13 +289,16 @@ func getRepositoryData() ([]RepositoryData, error) {
 				fmt.Sprintf("Result_%s.json", sanitizePathComponent(branch.RepoSlug)))
 		} else {
 			firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
+			// Match the Result_<Org>__<Repo>__<Branch> convention written by
+			// performRepoAnalysis in golc.go. Double-underscore between fields
+			// keeps `_` free inside any component for unambiguous parsing.
 			fileName = buildSecurePath(byFileReportDir,
-				fmt.Sprintf("Result_%s_%s_%s_byfile.json",
+				fmt.Sprintf("Result_%s__%s__%s_byfile.json",
 					sanitizePathComponent(firstPart),
 					sanitizePathComponent(branch.RepoSlug),
 					sanitizePathComponent(branch.MainBranch)))
 			byLanguagePath = buildSecurePath(byLanguageReportDir,
-				fmt.Sprintf("Result_%s_%s_%s.json",
+				fmt.Sprintf("Result_%s__%s__%s.json",
 					sanitizePathComponent(firstPart),
 					sanitizePathComponent(branch.RepoSlug),
 					sanitizePathComponent(branch.MainBranch)))
@@ -467,9 +470,11 @@ func getOtherBranchesData(orgName, repoName, currentBranch string) []BranchData 
 	// Get the correct first part for filename based on platform
 	firstPart := getFirstPartForFilename(platform, orgName, repoName)
 
-	// Look for all byfile reports for this repository (different branches)
+	// Look for all byfile reports for this repository (different branches).
+	// Producer writes Result_<Org>__<Repo>__<Branch>_byfile.json (see golc.go and
+	// the byfile path constructed above) — `__` between fields, `_byfile` tail.
 	pattern := buildSecurePath(byFileReportDir,
-		fmt.Sprintf("Result_%s_%s_*_byfile.json",
+		fmt.Sprintf("Result_%s__%s__*_byfile.json",
 			sanitizePathComponent(firstPart),
 			sanitizePathComponent(repoName)))
 	matches, err := filepath.Glob(pattern)
@@ -481,24 +486,15 @@ func getOtherBranchesData(orgName, repoName, currentBranch string) []BranchData 
 	for _, filePath := range matches {
 		// Extract branch name from filename
 		filename := filepath.Base(filePath)
-		// Format: Result_ORG_REPO_BRANCH_byfile.json
-		parts := strings.Split(filename, "_")
-		if len(parts) < 4 {
+		// Format: Result_<Org>__<Repo>__<Branch>_byfile.json
+		// Extract the branch by trimming the known prefix and suffix; with the
+		// `__` field separator the result is unambiguous regardless of any `_`
+		// inside Org / Repo / Branch.
+		prefix := fmt.Sprintf("Result_%s__%s__", sanitizePathComponent(firstPart), sanitizePathComponent(repoName))
+		suffix := "_byfile.json"
+		if !strings.HasPrefix(filename, prefix) || !strings.HasSuffix(filename, suffix) {
 			continue
 		}
-
-		// Find the branch part (everything between REPO and "byfile.json")
-		branchPart := strings.TrimSuffix(parts[len(parts)-2], ".json")
-		if branchPart == "byfile" && len(parts) >= 5 {
-			// Handle case where branch name is the second-to-last part
-			branchPart = parts[len(parts)-3]
-		}
-
-		// Extract actual branch name - more robust parsing
-		// Remove the prefix and suffix to get the branch name
-		// Use firstPart (which is ProjectKey for Bitbucket, Org for others) instead of orgName
-		prefix := fmt.Sprintf("Result_%s_%s_", sanitizePathComponent(firstPart), sanitizePathComponent(repoName))
-		suffix := "_byfile.json"
 		branchName := strings.TrimSuffix(strings.TrimPrefix(filename, prefix), suffix)
 
 		// Skip the current branch (it's already shown in the main stats)
@@ -602,7 +598,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 			fmt.Sprintf("Result_%s_byfile.json", sanitizePathComponent(repoName)))
 	} else {
 		byFileReportPath = buildSecurePath(byFileReportDir,
-			fmt.Sprintf("Result_%s_%s_%s_byfile.json",
+			fmt.Sprintf("Result_%s__%s__%s_byfile.json",
 				sanitizePathComponent(firstPart),
 				sanitizePathComponent(repoName),
 				sanitizePathComponent(branchName)))
@@ -639,7 +635,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 			fmt.Sprintf("Result_%s.json", sanitizePathComponent(repoName)))
 	} else {
 		byLanguageReportPath = buildSecurePath(byLanguageReportDir,
-			fmt.Sprintf("Result_%s_%s_%s.json",
+			fmt.Sprintf("Result_%s__%s__%s.json",
 				sanitizePathComponent(firstPart),
 				sanitizePathComponent(repoName),
 				sanitizePathComponent(branchName)))

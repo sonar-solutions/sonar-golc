@@ -153,9 +153,9 @@ func getRepositoryData() ([]RepositoryData, error) {
 			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s.json", branch.RepoSlug)
 		} else {
 			firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
-			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s_%s_%s_byfile.json",
+			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s__%s__%s_byfile.json",
 				firstPart, branch.RepoSlug, branch.MainBranch)
-			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s_%s_%s.json",
+			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s__%s__%s.json",
 				firstPart, branch.RepoSlug, branch.MainBranch)
 		}
 

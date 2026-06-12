@@ -485,7 +485,7 @@ func TestGenerateRepositorySummaryReportsWithAnalysisFiles(t *testing.T) {
 	// Create byfile report
 	byfileData := createTestByfileData()
 	byfileJSON, _ := json.Marshal(byfileData)
-	err = os.WriteFile("Results/byfile-report/Result_test-org_test-repo_main_byfile.json", byfileJSON, 0644)
+	err = os.WriteFile("Results/byfile-report/Result_test-org__test-repo__main_byfile.json", byfileJSON, 0644)
 	if err != nil {
 		t.Fatalf("Failed to create byfile report: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestGetRepositoryDataComplexScenarios(t *testing.T) {
 		}
 
 		// Create invalid byfile JSON
-		err = os.WriteFile("Results/byfile-report/Result_test-org_invalid-byfile-repo_main_byfile.json", []byte("invalid json"), 0644)
+		err = os.WriteFile("Results/byfile-report/Result_test-org__invalid-byfile-repo__main_byfile.json", []byte("invalid json"), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create invalid byfile JSON: %v", err)
 		}

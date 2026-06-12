@@ -19,6 +19,13 @@ type PdfReporter struct {
 	OutputPath string
 }
 
+// parseResultFileName is a thin alias preserving the local call sites while
+// the canonical implementation lives in pkg/utils so every consumer of the
+// Result_<Org>__<Repo>__<Branch>.json naming convention parses it the same way.
+func parseResultFileName(name string) (org, repo, branch string, ok bool) {
+	return utils.ParseResultFileName(name)
+}
+
 type languageResult struct {
 	Language   string
 	Files      int
@@ -116,16 +123,12 @@ func (p PdfReporter) writePdf(pdfReport *report) error {
 		outputName += ".pdf"
 	}
 
-	parts := strings.Split(outputName, "_")
-	repoName := parts[2]
-	if len(parts) > 3 {
-		branch = strings.TrimSuffix(parts[3], ".pdf")
-	} else {
-
-		branch = "main"
-
+	repoName := "unknown"
+	branch = "main"
+	if _, r, b, ok := parseResultFileName(outputName); ok {
+		repoName = r
+		branch = b
 	}
-	//branch := strings.TrimSuffix(parts[3], ".pdf")
 	Title2 := "Repository Files Details: " + repoName + " for branch : " + branch
 
 	path := filepath.Join(p.OutputPath+"/", outputName)
@@ -282,12 +285,7 @@ func (p PdfReporter) GenerateGlobalReportByFile() error {
 				return err
 			}
 
-			// Extract repository name and branch
-			parts := strings.Split(info.Name(), "_")
-			if len(parts) == 4 {
-				repoName := strings.Join(parts[2:3], "_")
-				branch := strings.TrimSuffix(parts[3], filepath.Ext(parts[3]))
-
+			if _, repoName, branch, ok := parseResultFileName(info.Name()); ok {
 				// Add repository info
 				pdf.SetFont("Times", "B", 10)
 				pdf.CellFormat(0, 10, fmt.Sprintf("Repository: %s - Branch: %s", repoName, branch), "", 1, "", false, 0, "")

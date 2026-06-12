@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const resultMainJSON = "Result_org_repo_main.json"
+const resultMainJSON = "Result_org__repo__main.json"
 
 // helper to set up a temp workspace and chdir into it
 func setupGlobalReportEnv(t *testing.T) (string, func()) {
@@ -41,7 +41,7 @@ func TestIsEligibleResultFile(t *testing.T) {
 	defer cleanup()
 	// create candidate files
 	result := filepath.Join(dir, resultMainJSON)
-	byfile := filepath.Join(dir, "Result_org_repo_main_byfile.json")
+	byfile := filepath.Join(dir, "Result_org__repo__main_byfile.json")
 	other := filepath.Join(dir, "random.json")
 	os.WriteFile(result, []byte("{}"), 0644)
 	os.WriteFile(byfile, []byte("{}"), 0644)
@@ -88,10 +88,10 @@ func TestCollectLanguageTotalsSkipsByfile(t *testing.T) {
 	dir, cleanup := setupGlobalReportEnv(t)
 	defer cleanup()
 	// arrange result files
-	writeResultJSON(t, dir, "Result_org_a_main.json", FileData{
+	writeResultJSON(t, dir, "Result_org__a__main.json", FileData{
 		Results: []LanguageData1{{Language: "Go", CodeLines: 10}},
 	})
-	writeResultJSON(t, dir, "Result_org_b_main_byfile.json", FileData{
+	writeResultJSON(t, dir, "Result_org__b__main_byfile.json", FileData{
 		Results: []LanguageData1{{Language: "Go", CodeLines: 1000}},
 	})
 	writeResultJSON(t, dir, "random.json", FileData{
@@ -156,4 +156,44 @@ func TestWriteLanguageTotalsJSONAndReadGlobalInfoAndRenderPDF(t *testing.T) {
 	}
 }
 
+// TestParseResultFileName exercises the canonical Result_<Org>__<Repo>__<Branch>
+// parser shared by pkg/reporter/pdf and the LargestRepository selection loop in
+// golc.go. The non-empty `wantRepo` cases would all regress to blank under the
+// pre-double-underscore single-_ split.
+func TestParseResultFileName(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantOrg    string
+		wantRepo   string
+		wantBranch string
+		wantOK     bool
+	}{
+		{"simple", "Result_org__repo__main.json", "org", "repo", "main", true},
+		{"underscore in org", "Result_my_group__repo__main.json", "my_group", "repo", "main", true},
+		{"underscore in repo", "Result_org__my_app__main.json", "org", "my_app", "main", true},
+		{"underscore in branch", "Result_org__repo__feat_xyz.json", "org", "repo", "feat_xyz", true},
+		{"byfile pdf", "Result_org__repo__main_byfile.pdf", "org", "repo", "main", true},
+		{"plain pdf", "Result_org__repo__main.pdf", "org", "repo", "main", true},
+		{"literal __ in branch survives", "Result_org__repo__feat__xyz.json", "org", "repo", "feat__xyz", true},
+		{"missing branch", "Result_org__repo.json", "", "", "", false},
+		{"missing prefix", "other_org__repo__main.json", "", "", "", false},
+		{"legacy single-_ rejected", "Result_org_repo_main.json", "", "", "", false},
+	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			org, repo, branch, ok := ParseResultFileName(tt.input)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if org != tt.wantOrg || repo != tt.wantRepo || branch != tt.wantBranch {
+				t.Errorf("got (%q, %q, %q), want (%q, %q, %q)",
+					org, repo, branch, tt.wantOrg, tt.wantRepo, tt.wantBranch)
+			}
+		})
+	}
+}
