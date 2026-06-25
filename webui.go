@@ -1311,6 +1311,13 @@ const htmlTemplate = `<!DOCTYPE html>
                     <small class="text-muted d-block" style="font-size:.72rem;">vendor, node_modules, bower_components, third_party, external</small>
                   </label>
                 </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="adv-excludeBuild" onchange="syncPresetKeywords()">
+                  <label class="form-check-label form-label mb-0" for="adv-excludeBuild">
+                    <i class="fas fa-hammer me-1" style="color:#f59e0b;"></i>Build output
+                    <small class="text-muted d-block" style="font-size:.72rem;">dist, build, out, target, bin, coverage</small>
+                  </label>
+                </div>
               </div>
             </div>
             <div class="col-12">
@@ -1319,7 +1326,7 @@ const htmlTemplate = `<!DOCTYPE html>
             </div>
             <div class="col-md-6">
               <label class="form-label" for="adv-filePatterns">Exclude file name patterns <small class="text-muted">(comma-separated)</small></label>
-              <input class="form-control" id="adv-filePatterns" placeholder="*_test.go, *.min.js, *.spec.ts">
+              <input class="form-control" id="adv-filePatterns" placeholder="*_test.*, *.min.*, *.spec.*">
             </div>
             <div class="col-md-6">
               <label class="form-label" for="adv-extExclusion">Exclude extensions <small class="text-muted">(comma-separated)</small></label>
@@ -1328,20 +1335,16 @@ const htmlTemplate = `<!DOCTYPE html>
             <div class="col-12">
               <div class="px-3 py-2" style="background:rgba(96,165,250,.07);border-left:3px solid rgba(96,165,250,.4);border-radius:0 4px 4px 0;font-size:.75rem;color:#94a3b8;line-height:1.7;">
                 <i class="fas fa-info-circle me-1" style="color:#60a5fa;"></i>
-                <strong style="color:#cbd5e1;">How exclusions work</strong>
-                <div class="mt-1"><strong style="color:#cbd5e1;">Folder keywords</strong> — excludes any folder whose name contains the keyword as a whole word, at <em>any</em> depth. Words are split on <code style="color:#93c5fd;">-</code> <code style="color:#93c5fd;">_</code> <code style="color:#93c5fd;">.</code></div>
+                <strong style="color:#cbd5e1;">How exclusions work</strong> — the three presets above are <strong style="color:#cbd5e1;">on by default</strong> on every platform, to approximate SonarQube's analyzed scope (drops tests, vendored libraries and build output). Untick any to count them.
+                <div class="mt-1"><strong style="color:#cbd5e1;">Folder keywords</strong> — excludes any folder whose name contains the keyword as a whole word, at <em>any</em> depth (words split on <code style="color:#93c5fd;">-</code> <code style="color:#93c5fd;">_</code> <code style="color:#93c5fd;">.</code>).</div>
                 <div style="font-family:monospace;margin:.25rem 0 .5rem .5rem;">
-                  <span style="color:#93c5fd;">test</span> → /test/, /integration-<span style="color:#93c5fd;">test</span>/, /<span style="color:#93c5fd;">test</span>-helpers/, /src/my_<span style="color:#93c5fd;">test</span>_suite/ &nbsp;<span style="color:#4ade80;">✓</span>&nbsp;&nbsp; /pro<span style="color:#f87171;">test</span>/, /la<span style="color:#f87171;">test</span>/ &nbsp;<span style="color:#f87171;">✗</span><br>
-                  <span style="color:#93c5fd;">generated</span> → /generated/, /src/<span style="color:#93c5fd;">generated</span>-client/, /api/<span style="color:#93c5fd;">generated</span>_code/
+                  <span style="color:#93c5fd;">test</span> → /test/, /integration-<span style="color:#93c5fd;">test</span>/, /my_<span style="color:#93c5fd;">test</span>_suite/ &nbsp;<span style="color:#4ade80;">✓</span>&nbsp;&nbsp; /pro<span style="color:#f87171;">test</span>/, /la<span style="color:#f87171;">test</span>/ &nbsp;<span style="color:#f87171;">✗</span>
                 </div>
-                <div class="mt-1"><strong style="color:#cbd5e1;">File name patterns</strong> — standard <code style="color:#93c5fd;">*</code> wildcard matched against the file name only.</div>
+                <div class="mt-1"><strong style="color:#cbd5e1;">File name patterns</strong> — <code style="color:#93c5fd;">*</code> wildcard matched against the whole file name. Wildcards on both sides span every language sharing a convention.</div>
                 <div style="font-family:monospace;margin:.25rem 0 .5rem .5rem;">
-                  <span style="color:#93c5fd;">*_test.go</span> → all Go test files &nbsp;&nbsp; <span style="color:#93c5fd;">*.min.js</span> → minified JS &nbsp;&nbsp; <span style="color:#93c5fd;">*.spec.ts</span> → TypeScript specs
+                  <span style="color:#93c5fd;">*_test.*</span> → Go/Python/Rust/… tests &nbsp;&nbsp; <span style="color:#93c5fd;">*.spec.*</span> → JS/TS specs &nbsp;&nbsp; <span style="color:#93c5fd;">*.min.*</span> → minified bundles
                 </div>
-                <div class="mt-1"><strong style="color:#cbd5e1;">Extensions</strong> — skips every file with a matching extension, regardless of language.</div>
-                <div style="font-family:monospace;margin:.25rem 0 0 .5rem;">
-                  <span style="color:#93c5fd;">.css,.html</span> → skip all CSS and HTML files &nbsp;&nbsp; <span style="color:#93c5fd;">.min.js</span> → skip minified bundles
-                </div>
+                <div class="mt-1"><strong style="color:#cbd5e1;">Extensions</strong> — skips every file with a matching extension, regardless of language (e.g. <span style="font-family:monospace;color:#93c5fd;">.css,.html</span>).</div>
               </div>
             </div>
           </div>
@@ -1681,16 +1684,24 @@ const reposPlaceholders = {
 
 const PRESET_TEST_KEYWORDS   = ['test','tests','spec','specs','e2e','testdata','fixtures','mocks','integration'];
 const PRESET_VENDOR_KEYWORDS = ['vendor','node_modules','bower_components','third_party','external'];
+const PRESET_BUILD_KEYWORDS  = ['dist','build','out','target','bin','coverage'];
+const ALL_PRESET_KEYWORDS    = [...PRESET_TEST_KEYWORDS, ...PRESET_VENDOR_KEYWORDS, ...PRESET_BUILD_KEYWORDS];
+
+// Default file-name patterns. Wildcards on both sides make one pattern span every
+// language that shares the convention (e.g. *_test.* = Go/Python/Rust/C++/Ruby tests).
+const DEFAULT_FILE_PATTERNS  = ['*_test.*','test_*.*','*.test.*','*.spec.*','*_spec.*','*Test.*','*Tests.*','*.min.*'];
 
 function syncPresetKeywords() {
   const excludeTests  = document.getElementById('adv-excludeTests').checked;
   const excludeVendor = document.getElementById('adv-excludeVendor').checked;
-  const allPresets = new Set([...PRESET_TEST_KEYWORDS, ...PRESET_VENDOR_KEYWORDS]);
+  const excludeBuild  = document.getElementById('adv-excludeBuild').checked;
+  const allPresets = new Set(ALL_PRESET_KEYWORDS);
   const raw = document.getElementById('adv-folderKeywords').value;
   const manual = raw.split(',').map(s=>s.trim()).filter(s=>s && !allPresets.has(s));
   const active = [
-    ...(excludeTests  ? PRESET_TEST_KEYWORDS  : []),
+    ...(excludeTests  ? PRESET_TEST_KEYWORDS   : []),
     ...(excludeVendor ? PRESET_VENDOR_KEYWORDS : []),
+    ...(excludeBuild  ? PRESET_BUILD_KEYWORDS  : []),
     ...manual,
   ];
   document.getElementById('adv-folderKeywords').value = active.join(', ');
@@ -1698,8 +1709,8 @@ function syncPresetKeywords() {
 
 function populateAdvanced(key, saved) {
   const defaults = {DefaultBranch:true,Branch:'',Multithreading:true,Workers:10,
-    FileExclusion:'',ExtExclusion:[],ExcludeTests:false,ExcludeVendor:false,
-    FolderKeywords:[],FileNamePatterns:[],Repos:'',Project:'',ResultByFile:true,Org:true};
+    FileExclusion:'',ExtExclusion:[],ExcludeTests:true,ExcludeVendor:true,ExcludeBuild:true,
+    FolderKeywords:[],FileNamePatterns:DEFAULT_FILE_PATTERNS,Repos:'',Project:'',ResultByFile:true,Org:true};
   const cfg = Object.assign({}, defaults, saved);
 
   document.getElementById('adv-defaultBranch').checked = !!cfg.DefaultBranch;
@@ -1711,8 +1722,9 @@ function populateAdvanced(key, saved) {
   document.getElementById('adv-org').checked = cfg.Org !== false;
   document.getElementById('adv-excludeTests').checked  = !!cfg.ExcludeTests;
   document.getElementById('adv-excludeVendor').checked = !!cfg.ExcludeVendor;
+  document.getElementById('adv-excludeBuild').checked  = !!cfg.ExcludeBuild;
   // Seed the text field with manual-only keywords, then let syncPresetKeywords prepend checked presets
-  const allPresets = new Set([...PRESET_TEST_KEYWORDS, ...PRESET_VENDOR_KEYWORDS]);
+  const allPresets = new Set(ALL_PRESET_KEYWORDS);
   const storedKeywords = Array.isArray(cfg.FolderKeywords) ? cfg.FolderKeywords : [];
   document.getElementById('adv-folderKeywords').value = storedKeywords.filter(k => k && !allPresets.has(k)).join(', ');
   syncPresetKeywords();
@@ -1826,6 +1838,7 @@ function gatherConfig() {
   cfg.Org = document.getElementById('adv-org').checked;
   cfg.ExcludeTests  = document.getElementById('adv-excludeTests').checked;
   cfg.ExcludeVendor = document.getElementById('adv-excludeVendor').checked;
+  cfg.ExcludeBuild  = document.getElementById('adv-excludeBuild').checked;
   // Text field already contains preset keywords (kept in sync by syncPresetKeywords)
   const kwRaw = document.getElementById('adv-folderKeywords').value.trim();
   cfg.FolderKeywords = kwRaw ? [...new Set(kwRaw.split(',').map(s=>s.trim()).filter(Boolean))] : [];
