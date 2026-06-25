@@ -652,11 +652,15 @@ func determineProjectsAndRepos(platformConfig map[string]interface{}, exclusionL
 		// Fetch each in turn; skip (don't abort) any that are excluded or fail
 		// so the remaining requested repos still analyze.
 		spin.Start()
+		requested := 0
+		seen := make(map[string]bool)
 		for _, r := range strings.Split(repo, ",") {
 			repoName := strings.TrimSpace(r)
-			if repoName == "" {
+			if repoName == "" || seen[repoName] {
 				continue
 			}
+			seen[repoName] = true
+			requested++
 			Texclude := project + "/" + repoName
 			if isProjectAndRepoExcluded(Texclude, *exclusionList) {
 				loggers.Infof("⏭️  Skipping <%s/%s>: excluded from the analysis", project, repoName)
@@ -670,6 +674,12 @@ func determineProjectsAndRepos(platformConfig map[string]interface{}, exclusionL
 			repos = append(repos, oneRepo...)
 		}
 		spin.Stop()
+		// At least one repo was requested but none could be resolved (all
+		// excluded, archived, missing, or unreachable). Fail loudly rather than
+		// silently falling through to an empty all-projects scan.
+		if requested > 0 && len(repos) == 0 {
+			return nil, nil, fmt.Errorf("none of the requested repositories in project %s could be analyzed: %s", project, repo)
+		}
 	} else {
 		return nil, nil, fmt.Errorf("project name is empty")
 	}
