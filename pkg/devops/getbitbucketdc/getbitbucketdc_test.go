@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
+	"github.com/briandowns/spinner"
 )
 
 // --- Pure logic tests ---
@@ -385,5 +387,103 @@ func TestFetchAllProjects_Pagination(t *testing.T) {
 	}
 	if len(projects) != 2 {
 		t.Errorf("expected 2 projects across 2 pages, got %d", len(projects))
+	}
+}
+
+// newTestSpinner returns a spinner suitable for tests (never started visibly).
+func newTestSpinner() *spinner.Spinner {
+	return spinner.New(spinner.CharSets[35], 100*time.Millisecond)
+}
+
+func TestDetermineProjectsAndRepos_CommaSeparatedDedup(t *testing.T) {
+	// Count how many times each repo slug is fetched so we can assert that a
+	// duplicate name ("repo1,repo1") is only requested once.
+	hits := map[string]int{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// URL shape: /{project}/repos/{repo}
+		slug := r.URL.Path[len("/PROJ/repos/"):]
+		hits[slug]++
+		json.NewEncoder(w).Encode(Repo{
+			Slug: slug, Name: slug,
+			Project: struct {
+				Key string `json:"key"`
+			}{Key: "PROJ"},
+		})
+	}))
+	defer ts.Close()
+
+	platformConfig := map[string]interface{}{
+		"Project":     "PROJ",
+		"Repos":       "repo1, repo1 ,repo2",
+		"AccessToken": "token",
+	}
+	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{}}
+
+	_, repos, err := determineProjectsAndRepos(platformConfig, el, ts.URL, newTestSpinner())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 unique repos, got %d", len(repos))
+	}
+	if hits["repo1"] != 1 {
+		t.Errorf("expected repo1 to be fetched exactly once (dedup), got %d", hits["repo1"])
+	}
+	if hits["repo2"] != 1 {
+		t.Errorf("expected repo2 to be fetched once, got %d", hits["repo2"])
+	}
+}
+
+func TestDetermineProjectsAndRepos_AllUnresolvedErrors(t *testing.T) {
+	// Server returns an empty object for every repo → empty Name → fetchOneRepos
+	// errors → every requested repo is skipped. determineProjectsAndRepos must
+	// then fail loudly rather than silently returning nothing.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+
+	platformConfig := map[string]interface{}{
+		"Project":     "PROJ",
+		"Repos":       "ghost1,ghost2",
+		"AccessToken": "token",
+	}
+	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{}}
+
+	_, repos, err := determineProjectsAndRepos(platformConfig, el, ts.URL, newTestSpinner())
+	if err == nil {
+		t.Fatalf("expected an error when no requested repos resolve, got nil (repos=%v)", repos)
+	}
+	if len(repos) != 0 {
+		t.Errorf("expected no repos, got %d", len(repos))
+	}
+}
+
+func TestDetermineProjectsAndRepos_ExcludedRepoSkipped(t *testing.T) {
+	// repo1 is excluded; repo2 resolves. Result: only repo2, no error.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slug := r.URL.Path[len("/PROJ/repos/"):]
+		json.NewEncoder(w).Encode(Repo{
+			Slug: slug, Name: slug,
+			Project: struct {
+				Key string `json:"key"`
+			}{Key: "PROJ"},
+		})
+	}))
+	defer ts.Close()
+
+	platformConfig := map[string]interface{}{
+		"Project":     "PROJ",
+		"Repos":       "repo1,repo2",
+		"AccessToken": "token",
+	}
+	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{"PROJ/repo1": true}}
+
+	_, repos, err := determineProjectsAndRepos(platformConfig, el, ts.URL, newTestSpinner())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Slug != "repo2" {
+		t.Fatalf("expected only repo2, got %+v", repos)
 	}
 }

@@ -1140,12 +1140,12 @@ func TestEdgeCasesAndErrorPaths(t *testing.T) {
 			}
 		}()
 
-		// Test fetchSingleRepository with nil client
+		// Test fetchSpecificRepositories with nil client
 		func() {
 			panicked := false
 			defer func() {
 				if r := recover(); r != nil {
-					t.Logf("fetchSingleRepository properly handled nil client: %v", r)
+					t.Logf("fetchSpecificRepositories properly handled nil client: %v", r)
 					panicked = true
 				}
 			}()
@@ -1153,9 +1153,9 @@ func TestEdgeCasesAndErrorPaths(t *testing.T) {
 				"Organization": testOrgName,
 				"Repos":        testRepoName,
 			}
-			fetchSingleRepository(context.Background(), nil, config)
+			fetchSpecificRepositories(context.Background(), nil, config)
 			if !panicked {
-				t.Error("fetchSingleRepository should panic with nil client")
+				t.Error("fetchSpecificRepositories should panic with nil client")
 			}
 		}()
 	})
@@ -1607,4 +1607,88 @@ func TestGetRepoGithubList_PersonalAccountUserGetError(t *testing.T) {
 	if got := platformConfig["Organization"].(string); got != "" {
 		t.Errorf("expected Organization to remain empty on Users.Get failure, got %q", got)
 	}
+}
+
+func TestParseRepoList(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"empty", "", nil},
+		{"single", "repo1", []string{"repo1"}},
+		{"multiple", "repo1,repo2,repo3", []string{"repo1", "repo2", "repo3"}},
+		{"whitespace trimmed", "repo1, repo2 ,  repo3", []string{"repo1", "repo2", "repo3"}},
+		{"blanks skipped", "repo1,,repo2,   ,repo3", []string{"repo1", "repo2", "repo3"}},
+		{"duplicates dropped", "repo1,repo2,repo1,repo2", []string{"repo1", "repo2"}},
+		{"only blanks", " , , ", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseRepoList(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("parseRepoList(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseRepoList(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFetchSpecificRepositories(t *testing.T) {
+	// Fake GHES server: repos r1 and r3 exist, r2 returns 404. The repo Get
+	// path on the enterprise client is /api/v3/repos/{org}/{repo}.
+	mux := http.NewServeMux()
+	for _, name := range []string{"r1", "r3"} {
+		repoName := name
+		mux.HandleFunc("/api/v3/repos/"+testOrgName+"/"+repoName, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"name":%q}`, repoName)))
+		})
+	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Unknown repo (e.g. r2) → 404.
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	makeConfig := func(repos string) map[string]interface{} {
+		return map[string]interface{}{
+			"Url":          server.URL + "/",
+			"AccessToken":  testToken,
+			"Organization": testOrgName,
+			"Repos":        repos,
+		}
+	}
+	ctx, client := initializeGithubClient(makeConfig(""))
+
+	t.Run("skips unreachable repos and keeps the rest", func(t *testing.T) {
+		repos, err := fetchSpecificRepositories(ctx, client, makeConfig("r1, r2 ,r3"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(repos) != 2 {
+			t.Fatalf("expected 2 reachable repos (r1, r3), got %d", len(repos))
+		}
+		if repos[0].GetName() != "r1" || repos[1].GetName() != "r3" {
+			t.Errorf("expected [r1 r3], got [%s %s]", repos[0].GetName(), repos[1].GetName())
+		}
+	})
+
+	t.Run("errors when none resolve", func(t *testing.T) {
+		repos, err := fetchSpecificRepositories(ctx, client, makeConfig("nope1,nope2"))
+		if err == nil {
+			t.Fatalf("expected error when no repositories resolve, got nil (repos=%v)", repos)
+		}
+		if len(repos) != 0 {
+			t.Errorf("expected no repos, got %d", len(repos))
+		}
+	})
 }

@@ -479,16 +479,30 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 
 }
 
+// parseSingleRepos splits the comma-separated "Repos" configuration field into
+// a clean slice of repository names, ignoring blank entries and surrounding
+// whitespace (e.g. "repo1, repo2 ,repo3").
+func parseSingleRepos(singleRepos string) []string {
+	var list []string
+	if singleRepos == "" {
+		return list
+	}
+	for _, r := range strings.Split(singleRepos, ",") {
+		if name := strings.TrimSpace(r); name != "" {
+			list = append(list, name)
+		}
+	}
+	return list
+}
+
 func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient git.Client) (int, int, int, []git.GitRepository, error) {
 	var allRepos []git.GitRepository
 	var archivedCount, emptyCount, excludedCount int
 	loggers := utils.SharedLogger()
 
-	// Convert SingleRepos to a slice if it's not empty
-	var singleReposList []string
-	if parms.SingleRepos != "" {
-		singleReposList = strings.Split(parms.SingleRepos, ",")
-	}
+	// Convert SingleRepos (comma-separated) to a clean slice, ignoring blank
+	// entries and surrounding whitespace (e.g. "repo1, repo2 ,repo3").
+	singleReposList := parseSingleRepos(parms.SingleRepos)
 
 	// Get repositories
 	loggers.Debugf("→ project %s: fetching repos from API", projectKey)
