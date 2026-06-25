@@ -103,14 +103,6 @@ type CommitInfo struct {
 	URL string `json:"url"`
 }
 
-type BranchInfoEvents struct {
-	Name      string
-	Pushes    int
-	Commits   int
-	Additions int
-	Deletions int
-}
-
 type Lastanalyse struct {
 	LastRepos  string
 	LastBranch string
@@ -337,8 +329,6 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 
 func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *github.Client, repo *github.Repository, cpt int, spin1 *spinner.Spinner) (string, []*github.Branch) {
 	var branches []*github.Branch
-	var allEvents []*github.Event
-	var branchPushes map[string]*BranchInfoEvents
 	loggers := utils.SharedLogger()
 
 	opt := &github.BranchListOptions{
@@ -377,7 +367,7 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 				spin1.Stop()
 				return "", nil
 			}
-			largestRepoBranch = determineLargestBranch(parms, repo, branchPushes)
+			largestRepoBranch = *repo.DefaultBranch
 			nbrbranche = len(branches)
 		}
 	} else {
@@ -388,19 +378,9 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 			spin1.Stop()
 			return "", nil
 		}
-		largestRepoBranch = determineLargestBranch(parms, repo, branchPushes)
+		largestRepoBranch = *repo.DefaultBranch
 		nbrbranche = len(branches)
 	}
-
-	allEvents, err = getAllEvents(ctx, client, *repo.Name, parms.Organization)
-	if err != nil {
-		loggers.Errorf("❌ Error fetching repository events: %v", err)
-		spin1.Stop()
-		return "", nil
-	}
-
-	branchPushes = countBranchPushes(allEvents, parms.Period)
-	analyzeBranches(ctx, client, parms, *repo.Name, branchPushes)
 
 	spin1.Stop()
 
@@ -428,150 +408,6 @@ func getAllBranches(ctx context.Context, client *github.Client, repoName, organi
 		opt.Page = resp.NextPage
 	}
 	return branches, nil
-}
-
-func getAllEvents(ctx context.Context, client *github.Client, repoName, organization string) ([]*github.Event, error) {
-	var allEvents []*github.Event
-	opt := &github.ListOptions{PerPage: 100}
-	for {
-		events, resp, err := client.Activity.ListRepositoryEvents(ctx, organization, repoName, opt)
-		if err != nil {
-			if rateLimitErr, ok := err.(*github.AbuseRateLimitError); ok {
-				fmt.Println(MessageApiRate)
-				time.Sleep(rateLimitErr.GetRetryAfter())
-				continue
-			}
-			return nil, err
-		}
-		allEvents = append(allEvents, events...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opt.Page = resp.NextPage
-	}
-	return allEvents, nil
-}
-
-func countBranchPushes(events []*github.Event, period int) map[string]*BranchInfoEvents {
-	branchPushes := make(map[string]*BranchInfoEvents)
-	oneMonthAgo := time.Now().AddDate(0, period, 0)
-	loggers := utils.SharedLogger()
-
-	for _, event := range events {
-		if event.CreatedAt != nil && event.CreatedAt.After(oneMonthAgo) {
-			switch event.GetType() {
-			case "PushEvent":
-				payload, err := event.ParsePayload()
-				if err != nil {
-					loggers.Errorf("❌ Error parsing payload: %v", err)
-					continue
-				}
-				pushEvent, ok := payload.(*github.PushEvent)
-				if ok {
-					branch := pushEvent.GetRef()
-					if len(branch) > 11 && branch[:11] == "refs/heads/" {
-						branchName := branch[11:]
-						if _, exists := branchPushes[branchName]; !exists {
-							branchPushes[branchName] = &BranchInfoEvents{Name: branchName}
-						}
-						branchPushes[branchName].Pushes++
-					}
-				}
-			}
-		}
-	}
-	return branchPushes
-}
-
-func analyzeBranches(ctx context.Context, client *github.Client, parms ParamsReposGithub, repoName string, branchPushes map[string]*BranchInfoEvents) {
-	oneMonthAgo := time.Now().AddDate(0, parms.Period, 0)
-	for _, info := range branchPushes {
-		if parms.Stats {
-			analyzeWithStats(ctx, client, parms.Organization, repoName, oneMonthAgo, info)
-		} else {
-			analyzeWithoutStats(ctx, client, parms.Organization, repoName, oneMonthAgo, info)
-		}
-	}
-}
-
-func analyzeWithStats(ctx context.Context, client *github.Client, organization, repoName string, oneMonthAgo time.Time, info *BranchInfoEvents) {
-	contributorsStats, _, err := client.Repositories.ListContributorsStats(ctx, organization, repoName)
-	loggers := utils.SharedLogger()
-	if err != nil {
-		if rateLimitErr, ok := err.(*github.AbuseRateLimitError); ok {
-			fmt.Println(MessageApiRate)
-			time.Sleep(rateLimitErr.GetRetryAfter())
-			contributorsStats, _, err = client.Repositories.ListContributorsStats(ctx, organization, repoName)
-		}
-		if err != nil {
-			loggers.Errorf("❌ Error fetching contributors stats: %v\n", err)
-			return
-		}
-	}
-
-	for _, contributorStats := range contributorsStats {
-		for _, week := range contributorStats.Weeks {
-			if week.Week.After(oneMonthAgo) {
-				info.Additions += *week.Additions
-				info.Deletions += *week.Deletions
-				info.Commits += *week.Commits
-			}
-		}
-	}
-}
-
-func analyzeWithoutStats(ctx context.Context, client *github.Client, organization, repoName string, oneMonthAgo time.Time, info *BranchInfoEvents) {
-	opt := &github.CommitsListOptions{
-		SHA:         info.Name,
-		Since:       oneMonthAgo,
-		ListOptions: github.ListOptions{PerPage: 100},
-	}
-	var allCommits []*github.RepositoryCommit
-	loggers := utils.SharedLogger()
-	for {
-		commits, resp, err := client.Repositories.ListCommits(ctx, organization, repoName, opt)
-		if err != nil {
-			if rateLimitErr, ok := err.(*github.AbuseRateLimitError); ok {
-				fmt.Println(MessageApiRate)
-				time.Sleep(rateLimitErr.GetRetryAfter())
-				commits, resp, err = client.Repositories.ListCommits(ctx, organization, repoName, opt)
-			}
-			if err != nil {
-				loggers.Errorf("Error fetching commits for branch %s: %v\n", info.Name, err)
-				break
-			}
-		}
-		allCommits = append(allCommits, commits...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opt.Page = resp.NextPage
-	}
-	info.Commits = len(allCommits)
-}
-
-func determineLargestBranch(parms ParamsReposGithub, repo *github.Repository, branchPushes map[string]*BranchInfoEvents) string {
-	var largestRepoBranch string
-	if len(branchPushes) > 0 {
-		branchList := make([]*BranchInfoEvents, 0, len(branchPushes))
-		for _, info := range branchPushes {
-			branchList = append(branchList, info)
-		}
-		sort.Slice(branchList, func(i, j int) bool {
-			if parms.Stats {
-				if branchList[i].Commits == branchList[j].Commits {
-					return (branchList[i].Additions + branchList[i].Deletions) > (branchList[j].Additions + branchList[j].Deletions)
-				}
-				return branchList[i].Commits > branchList[j].Commits
-			} else {
-				return branchList[i].Commits > branchList[j].Commits
-			}
-		})
-		largestRepoBranch = branchList[0].Name
-	} else {
-		largestRepoBranch = *repo.DefaultBranch
-	}
-	return largestRepoBranch
 }
 
 // Get Infos for all Repositories in Organization

@@ -371,12 +371,28 @@ func isProjectExcludedOrInvalid(project *gitlab.Project, exclusionList Exclusion
 	return false, false, false
 }
 
+// getMainBranchDetails selects the most active branch across ALL branches of a
+// project (used by the non-default "all branches" analysis paths). It is
+// intentionally expensive: it lists every branch and counts commits per branch.
 func getMainBranchDetails(gitlabClient *gitlab.Client, project *gitlab.Project, since, until time.Time) (string, int, int, error) {
 	mainBranch, largestSize, nbrsize, err := getMainBranch(gitlabClient, project.ID, since, until)
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("failed to get main branch for project %s: %v", project.Name, err)
 	}
 	return mainBranch, largestSize, nbrsize, nil
+}
+
+// getDefaultBranchDetails returns the repository's default branch and its size,
+// without enumerating every branch or counting commits per branch. Used by the
+// DefaultBranch=true path: when only the default branch is requested, the
+// all-branches scan in getMainBranchDetails is wasted work that, on large
+// groups, dominates the runtime and exhausts the API rate limit.
+func getDefaultBranchDetails(gitlabClient *gitlab.Client, project *gitlab.Project) (string, int, int, error) {
+	mainBranch := project.DefaultBranch
+	if mainBranch == "" {
+		return "", 0, 0, fmt.Errorf("project %s has no default branch", project.Name)
+	}
+	return mainBranch, getBranchSize(gitlabClient, project.ID, mainBranch), 1, nil
 }
 
 // splitAndTrimCSV splits by comma and returns non-empty trimmed values.
@@ -448,7 +464,7 @@ func filterValidProjects(projects []*gitlab.Project, exclusionList ExclusionRepo
 }
 
 // analyzeMainBranchForProjects computes the main branch and size for each project.
-func analyzeMainBranchForProjects(client *gitlab.Client, projects []*gitlab.Project, org string, since, until time.Time, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
+func analyzeMainBranchForProjects(client *gitlab.Client, projects []*gitlab.Project, org string, since, until time.Time, defaultBranchOnly bool, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 	var result []ProjectBranch
 	totalBranches := 0
 	loggers := utils.SharedLogger()
@@ -459,7 +475,16 @@ func analyzeMainBranchForProjects(client *gitlab.Client, projects []*gitlab.Proj
 				spin1.Start()
 
 		loggers.Debugf("→ project %s: analyzing", project.Name)
-		mainBranch, largestSize, nbrsize, err := getMainBranchDetails(client, project, since, until)
+		// DefaultBranch=true: only size the repo's default branch. Otherwise pick
+		// the most active branch across all branches (expensive).
+		var mainBranch string
+		var largestSize, nbrsize int
+		var err error
+		if defaultBranchOnly {
+			mainBranch, largestSize, nbrsize, err = getDefaultBranchDetails(client, project)
+		} else {
+			mainBranch, largestSize, nbrsize, err = getMainBranchDetails(client, project, since, until)
+		}
 				if err != nil {
 					spin1.Stop()
 			loggers.Errorf("%s", err.Error())
@@ -555,7 +580,7 @@ func nonDefaultAllProjectsAllBranches(ctx nonDefaultCtx) ([]ProjectBranch, int) 
 	return analyzeOrgsWithProjects(ctx, func(org string, projects []*gitlab.Project, spin1 *spinner.Spinner) ([]ProjectBranch, int) {
 		valid := filterValidProjects(projects, ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects)
 		utils.SharedLogger().Infof(msgGroupToAnalyze, org, len(valid))
-		return analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
+		return analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, false, spin1)
 	})
 }
 
@@ -579,7 +604,7 @@ func nonDefaultSpecificProjectAllBranches(ctx nonDefaultCtx) ([]ProjectBranch, i
 		if len(valid) == 0 {
 			continue
 		}
-		branches, totalB := analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
+		branches, totalB := analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, false, spin1)
 		projectBranches = append(projectBranches, branches...)
 		totalBranches += totalB
 		found = true
@@ -730,7 +755,7 @@ func handleDefaultBranchCase(ctx defaultCtx) ([]ProjectBranch, int) {
 			// Always log after filtering — gives accurate progress total and makes
 			// 0-project groups (all empty/archived) visible for debugging.
 			loggers.Infof(msgGroupToAnalyze, org, len(valid))
-			branches, totalB := analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, spin1)
+			branches, totalB := analyzeMainBranchForProjects(ctx.client, valid, org, ctx.since, ctx.until, true, spin1)
 			projectBranches = append(projectBranches, branches...)
 			totalBranches += totalB
 		}
@@ -741,7 +766,7 @@ func handleDefaultBranchCase(ctx defaultCtx) ([]ProjectBranch, int) {
 	ctx.spin.Stop()
 	spin1 := newSpin1()
 	if project, org, ok := findValidProjectAcrossOrgs(ctx.client, ctx.orgs, ctx.config["Project"].(string), ctx.exclusions, ctx.emptyRepos, ctx.archivedRepos, ctx.excludedProjects); ok {
-		branches, totalB := analyzeMainBranchForProjects(ctx.client, []*gitlab.Project{project}, org, ctx.since, ctx.until, spin1)
+		branches, totalB := analyzeMainBranchForProjects(ctx.client, []*gitlab.Project{project}, org, ctx.since, ctx.until, true, spin1)
 		projectBranches = append(projectBranches, branches...)
 		totalBranches += totalB
 	} else {
