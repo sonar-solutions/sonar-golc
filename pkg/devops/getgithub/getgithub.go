@@ -856,7 +856,7 @@ func GetRepoGithubList(platformConfig map[string]interface{}, exclusionfile stri
 			}
 		}
 	} else {
-		repositories, err1 = fetchSingleRepository(ctx, client, platformConfig)
+		repositories, err1 = fetchSpecificRepositories(ctx, client, platformConfig)
 	}
 
 	if err1 != nil {
@@ -1003,14 +1003,46 @@ func fetchAllRepositories(ctx context.Context, client *github.Client, organizati
 	return repositories, nil
 }
 
-func fetchSingleRepository(ctx context.Context, client *github.Client, platformConfig map[string]interface{}) ([]*github.Repository, error) {
-	repos, _, err := client.Repositories.Get(ctx, platformConfig["Organization"].(string), platformConfig["Repos"].(string))
-	loggers := utils.SharedLogger()
-	if err != nil {
-		loggers.Errorf("❌ Error fetching repository: %v\n", err)
-		return nil, err
+// parseRepoList splits the comma-separated "Repos" configuration field into a
+// clean, de-duplicated list of repository names, ignoring blank entries and
+// surrounding whitespace (e.g. "repo1, repo2 ,repo3").
+func parseRepoList(repos string) []string {
+	var list []string
+	seen := make(map[string]bool)
+	for _, r := range strings.Split(repos, ",") {
+		name := strings.TrimSpace(r)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		list = append(list, name)
 	}
-	return []*github.Repository{repos}, nil
+	return list
+}
+
+// fetchSpecificRepositories fetches the explicit repositories named in the
+// (comma-separated) "Repos" configuration field. Repositories that cannot be
+// fetched (e.g. typo, missing access) are logged and skipped so that one bad
+// name does not abort the whole analysis.
+func fetchSpecificRepositories(ctx context.Context, client *github.Client, platformConfig map[string]interface{}) ([]*github.Repository, error) {
+	loggers := utils.SharedLogger()
+	organization := platformConfig["Organization"].(string)
+	names := parseRepoList(platformConfig["Repos"].(string))
+
+	var repositories []*github.Repository
+	for _, name := range names {
+		repos, _, err := client.Repositories.Get(ctx, organization, name)
+		if err != nil {
+			loggers.Errorf("❌ Error fetching repository <%s>: %v\n", name, err)
+			continue
+		}
+		repositories = append(repositories, repos)
+	}
+
+	if len(repositories) == 0 {
+		return nil, fmt.Errorf("none of the requested repositories could be fetched: %s", platformConfig["Repos"].(string))
+	}
+	return repositories, nil
 }
 
 func getCommonParams(platformConfig map[string]interface{}, repositories []*github.Repository, exclusionList ExclusionRepos, spin *spinner.Spinner) ParamsReposGithub {
@@ -1145,16 +1177,13 @@ func FastAnalys(platformConfig map[string]interface{}, exlusionfile string) erro
 
 	} else {
 
-		var reposSlice []*github.Repository
 		ctx, client := initializeGithubClient(platformConfig)
 
-		repos1, _, err := client.Repositories.Get(ctx, platformConfig["Organization"].(string), platformConfig["Repos"].(string))
+		reposSlice, err := fetchSpecificRepositories(ctx, client, platformConfig)
 		if err != nil {
 			loggers.Errorf("❌ Error fetching repository: %v\n", err)
-
 		}
 
-		reposSlice = append(reposSlice, repos1)
 		parms := ParamsReposGithub{
 			Repos:         reposSlice,
 			URL:           platformConfig["Url"].(string),
@@ -1162,7 +1191,7 @@ func FastAnalys(platformConfig map[string]interface{}, exlusionfile string) erro
 			Apiver:        platformConfig["Apiver"].(string),
 			AccessToken:   platformConfig["AccessToken"].(string),
 			Organization:  platformConfig["Organization"].(string),
-			NBRepos:       len(repositories),
+			NBRepos:       len(reposSlice),
 			ExclusionList: exclusionList,
 			Spin:          spin,
 			Branch:        platformConfig["Branch"].(string),

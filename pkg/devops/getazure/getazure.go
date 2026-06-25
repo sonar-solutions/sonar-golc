@@ -484,10 +484,15 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 	var archivedCount, emptyCount, excludedCount int
 	loggers := utils.SharedLogger()
 
-	// Convert SingleRepos to a slice if it's not empty
+	// Convert SingleRepos (comma-separated) to a clean slice, ignoring blank
+	// entries and surrounding whitespace (e.g. "repo1, repo2 ,repo3").
 	var singleReposList []string
 	if parms.SingleRepos != "" {
-		singleReposList = strings.Split(parms.SingleRepos, ",")
+		for _, r := range strings.Split(parms.SingleRepos, ",") {
+			if name := strings.TrimSpace(r); name != "" {
+				singleReposList = append(singleReposList, name)
+			}
+		}
 	}
 
 	// Get repositories

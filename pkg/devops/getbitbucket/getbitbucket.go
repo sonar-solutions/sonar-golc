@@ -84,6 +84,18 @@ type ParamsProjectBitbucket struct {
 	SingleBranch     string
 }
 
+// matchesSingleRepos reports whether repoSlug is one of the repositories named
+// in the (comma-separated) SingleRepos field. Surrounding whitespace and blank
+// entries are ignored (e.g. "repo1, repo2 ,repo3").
+func matchesSingleRepos(singleRepos, repoSlug string) bool {
+	for _, name := range strings.Split(singleRepos, ",") {
+		if strings.TrimSpace(name) == repoSlug {
+			return true
+		}
+	}
+	return false
+}
+
 type Response1 struct {
 	Values  []FileInfo `json:"values"`
 	Pagelen int        `json:"pagelen"`
@@ -767,9 +779,6 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 			if repo.IsArchived {
 				loggers.Debugf("→ repo %s/%s: skipped (archived)", projectKey, repo.Slug)
 				archivedCount++
-				if parms.SingleRepos == repo.Slug {
-					return archivedCount, 0, 0, nil, nil
-				}
 				continue
 			}
 			bbRepo := bitbucket.Repository{
@@ -837,38 +846,33 @@ func listRepos(parms ParamsProjectBitbucket, projectKey string, reposRes *bitbuc
 		}
 	} else {
 
-		var repoFound bool
+		// One or more specific repositories were requested (comma-separated).
+		// Collect every matching repo in this page; skip (don't abort) any that
+		// are excluded or empty so the remaining requested repos still analyze.
 		for _, repo := range reposRes.Items {
 
-			if repo.Slug == parms.SingleRepos {
-				repoFound = true
-				repoCopy := repo
-
-				if isRepoExcluded(parms.Exclusionlist, projectKey, repo.Slug) {
-					excludedCount++
-					errmessage := fmt.Sprintf(" - Skipping analysis for Repo %s , it is excluded", repo.Slug)
-					err := fmt.Errorf("%s", errmessage)
-					return 0, excludedCount, allRepos, err
-				}
-
-				isEmpty, err := isRepositoryEmpty(parms.Workspace, repo.Slug, repo.Mainbranch.Name, parms.AccessToken, parms.Users, parms.BitbucketURLBase)
-				if err != nil {
-					loggers.Errorf("❌ Error when Testing if repo is empty %s: %v\n", repo.Slug, err)
-				}
-				if isEmpty {
-					emptyOrArchivedCount++
-					errmessage := fmt.Sprintf(" - Skipping analysis for Repo %s , it is empty", repo.Slug)
-					err := fmt.Errorf("%s", errmessage)
-					return emptyOrArchivedCount, excludedCount, allRepos, err
-				}
-
-				allRepos = append(allRepos, &repoCopy)
-				break
+			if !matchesSingleRepos(parms.SingleRepos, repo.Slug) {
+				continue
 			}
-		}
+			repoCopy := repo
 
-		if !repoFound {
-			excludedCount++
+			if isRepoExcluded(parms.Exclusionlist, projectKey, repo.Slug) {
+				loggers.Infof(" - Skipping analysis for Repo %s , it is excluded", repo.Slug)
+				excludedCount++
+				continue
+			}
+
+			isEmpty, err := isRepositoryEmpty(parms.Workspace, repo.Slug, repo.Mainbranch.Name, parms.AccessToken, parms.Users, parms.BitbucketURLBase)
+			if err != nil {
+				loggers.Errorf("❌ Error when Testing if repo is empty %s: %v\n", repo.Slug, err)
+			}
+			if isEmpty {
+				loggers.Infof(" - Skipping analysis for Repo %s , it is empty", repo.Slug)
+				emptyOrArchivedCount++
+				continue
+			}
+
+			allRepos = append(allRepos, &repoCopy)
 		}
 	}
 	return emptyOrArchivedCount, excludedCount, allRepos, nil

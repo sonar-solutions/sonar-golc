@@ -631,6 +631,7 @@ func determineProjectsAndRepos(platformConfig map[string]interface{}, exclusionL
 	var projects []Project
 	var repos []Repo
 	var err error
+	loggers := utils.SharedLogger()
 
 	project := platformConfig["Project"].(string)
 	repo := platformConfig["Repos"].(string)
@@ -647,12 +648,27 @@ func determineProjectsAndRepos(platformConfig map[string]interface{}, exclusionL
 		projects, err = fetchOnelProjects(fmt.Sprintf("%s/%s", bitbucketURL, project), platformConfig["AccessToken"].(string), exclusionList)
 		spin.Stop()
 	} else if project != "" && repo != "" {
-		Texclude := project + "/" + repo
-		if isProjectAndRepoExcluded(Texclude, *exclusionList) {
-			return nil, nil, fmt.Errorf("project %s and repository %s are excluded from the analysis", project, repo)
-		}
+		// One or more specific repositories were requested (comma-separated).
+		// Fetch each in turn; skip (don't abort) any that are excluded or fail
+		// so the remaining requested repos still analyze.
 		spin.Start()
-		repos, err = fetchOneRepos(fmt.Sprintf("%s/%s/repos/%s", bitbucketURL, project, repo), platformConfig["AccessToken"].(string), exclusionList)
+		for _, r := range strings.Split(repo, ",") {
+			repoName := strings.TrimSpace(r)
+			if repoName == "" {
+				continue
+			}
+			Texclude := project + "/" + repoName
+			if isProjectAndRepoExcluded(Texclude, *exclusionList) {
+				loggers.Infof("⏭️  Skipping <%s/%s>: excluded from the analysis", project, repoName)
+				continue
+			}
+			oneRepo, ferr := fetchOneRepos(fmt.Sprintf("%s/%s/repos/%s", bitbucketURL, project, repoName), platformConfig["AccessToken"].(string), exclusionList)
+			if ferr != nil {
+				loggers.Errorf("❌ Error fetching repository <%s/%s>: %v — skipping", project, repoName, ferr)
+				continue
+			}
+			repos = append(repos, oneRepo...)
+		}
 		spin.Stop()
 	} else {
 		return nil, nil, fmt.Errorf("project name is empty")
@@ -794,8 +810,7 @@ func fetchOneRepos(url string, accessToken string, exclusionList *utils.Exclusio
 	repo := reposResp.(*Repo)
 
 	if len(repo.Name) == 0 {
-		loggers.Errorf("❌ Error Repo or Project not exist")
-		os.Exit(1)
+		return nil, fmt.Errorf("repository or project does not exist")
 	}
 
 	if repo.Archived {

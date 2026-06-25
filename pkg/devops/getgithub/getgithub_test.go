@@ -1140,12 +1140,12 @@ func TestEdgeCasesAndErrorPaths(t *testing.T) {
 			}
 		}()
 
-		// Test fetchSingleRepository with nil client
+		// Test fetchSpecificRepositories with nil client
 		func() {
 			panicked := false
 			defer func() {
 				if r := recover(); r != nil {
-					t.Logf("fetchSingleRepository properly handled nil client: %v", r)
+					t.Logf("fetchSpecificRepositories properly handled nil client: %v", r)
 					panicked = true
 				}
 			}()
@@ -1153,9 +1153,9 @@ func TestEdgeCasesAndErrorPaths(t *testing.T) {
 				"Organization": testOrgName,
 				"Repos":        testRepoName,
 			}
-			fetchSingleRepository(context.Background(), nil, config)
+			fetchSpecificRepositories(context.Background(), nil, config)
 			if !panicked {
-				t.Error("fetchSingleRepository should panic with nil client")
+				t.Error("fetchSpecificRepositories should panic with nil client")
 			}
 		}()
 	})
