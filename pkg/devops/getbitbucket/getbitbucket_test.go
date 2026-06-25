@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
+	"github.com/ktrysmt/go-bitbucket"
 )
 
 func TestIsRepoExcluded(t *testing.T) {
@@ -30,6 +31,96 @@ func TestIsRepoExcluded(t *testing.T) {
 			t.Errorf("isRepoExcluded(%q, %q) = %v, want %v", tc.projectKey, tc.repoKey, got, tc.want)
 		}
 	}
+}
+
+func TestMatchesSingleRepos(t *testing.T) {
+	tests := []struct {
+		name        string
+		singleRepos string
+		repoSlug    string
+		want        bool
+	}{
+		{"single match", "repo1", "repo1", true},
+		{"single no match", "repo1", "repo2", false},
+		{"multiple first", "repo1,repo2,repo3", "repo1", true},
+		{"multiple middle", "repo1,repo2,repo3", "repo2", true},
+		{"multiple last", "repo1,repo2,repo3", "repo3", true},
+		{"multiple no match", "repo1,repo2,repo3", "repo4", false},
+		{"whitespace tolerated", "repo1, repo2 ,  repo3", "repo2", true},
+		{"empty filter", "", "repo1", false},
+		{"no partial match", "repo10", "repo1", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := matchesSingleRepos(tc.singleRepos, tc.repoSlug); got != tc.want {
+				t.Errorf("matchesSingleRepos(%q, %q) = %v, want %v", tc.singleRepos, tc.repoSlug, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestListRepos_SingleReposFilter(t *testing.T) {
+	// Mock the "is repo empty" file listing so matched repos are treated as
+	// non-empty (one file present).
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(Response1{
+			Values:  []FileInfo{{Path: "README.md"}},
+			Pagelen: 100,
+			Page:    1,
+		})
+	}))
+	defer ts.Close()
+
+	reposRes := &bitbucket.RepositoriesRes{
+		Items: []bitbucket.Repository{
+			{Slug: "repo1", Mainbranch: bitbucket.RepositoryBranch{Name: "main"}},
+			{Slug: "repo2", Mainbranch: bitbucket.RepositoryBranch{Name: "main"}},
+			{Slug: "repo3", Mainbranch: bitbucket.RepositoryBranch{Name: "main"}},
+		},
+	}
+
+	t.Run("collects all matching repos from a comma list", func(t *testing.T) {
+		parms := ParamsProjectBitbucket{
+			SingleRepos:      "repo1,repo3",
+			Workspace:        "ws",
+			AccessToken:      "token",
+			BitbucketURLBase: ts.URL + "/",
+			Exclusionlist:    utils.NewExclusionList(nil, nil),
+		}
+		empty, excluded, repos, err := listRepos(parms, "PROJ", reposRes)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if empty != 0 || excluded != 0 {
+			t.Errorf("expected no empty/excluded, got empty=%d excluded=%d", empty, excluded)
+		}
+		if len(repos) != 2 {
+			t.Fatalf("expected repo1 and repo3, got %d", len(repos))
+		}
+		if repos[0].Slug != "repo1" || repos[1].Slug != "repo3" {
+			t.Errorf("expected [repo1 repo3], got [%s %s]", repos[0].Slug, repos[1].Slug)
+		}
+	})
+
+	t.Run("excluded matched repo is skipped not analyzed", func(t *testing.T) {
+		parms := ParamsProjectBitbucket{
+			SingleRepos:      "repo1,repo2",
+			Workspace:        "ws",
+			AccessToken:      "token",
+			BitbucketURLBase: ts.URL + "/",
+			Exclusionlist:    utils.NewExclusionList(nil, []string{"PROJ/repo1"}),
+		}
+		_, excluded, repos, err := listRepos(parms, "PROJ", reposRes)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if excluded != 1 {
+			t.Errorf("expected excluded=1, got %d", excluded)
+		}
+		if len(repos) != 1 || repos[0].Slug != "repo2" {
+			t.Fatalf("expected only repo2, got %+v", repos)
+		}
+	})
 }
 
 func TestIsProjectExcluded(t *testing.T) {

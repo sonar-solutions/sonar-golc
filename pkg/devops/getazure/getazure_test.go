@@ -135,3 +135,31 @@ func TestLoadExclusionFileOrCreateNew_MissingFile(t *testing.T) {
 		t.Error("expected error for missing file")
 	}
 }
+
+func TestParseSingleRepos(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"empty", "", nil},
+		{"single", "repo1", []string{"repo1"}},
+		{"multiple", "repo1,repo2,repo3", []string{"repo1", "repo2", "repo3"}},
+		{"whitespace trimmed", "repo1, repo2 ,  repo3", []string{"repo1", "repo2", "repo3"}},
+		{"blanks skipped", "repo1,,repo2,   ,repo3", []string{"repo1", "repo2", "repo3"}},
+		{"only blanks", " , , ", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSingleRepos(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("parseSingleRepos(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseSingleRepos(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
