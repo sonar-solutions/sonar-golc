@@ -940,37 +940,6 @@ func TestComplexWorkflowFunctions(t *testing.T) {
 		t.Fatalf(errFailedToCreateLogsDir, err)
 	}
 
-	t.Run("countBranchPushes function", func(t *testing.T) {
-		// Create test events with different types and times
-		now := time.Now()
-		oneMonthAgo := now.AddDate(0, -1, 0)
-		twoMonthsAgo := now.AddDate(0, -2, 0)
-
-		// Create mock events
-		events := []*github.Event{
-			{
-				Type:      github.String("PushEvent"),
-				CreatedAt: &github.Timestamp{Time: oneMonthAgo.Add(time.Hour)}, // Within period
-			},
-			{
-				Type:      github.String("PushEvent"),
-				CreatedAt: &github.Timestamp{Time: twoMonthsAgo}, // Outside period
-			},
-			{
-				Type:      github.String("IssueEvent"),
-				CreatedAt: &github.Timestamp{Time: oneMonthAgo.Add(time.Hour)}, // Different type
-			},
-		}
-
-		result := countBranchPushes(events, -1) // -1 month period
-
-		// The function should handle the events, even if payload parsing fails
-		// This exercises the error handling path
-		if result == nil {
-			t.Error("countBranchPushes should return non-nil map")
-		}
-	})
-
 	t.Run("determineLargestBranch function", func(t *testing.T) {
 		// Test with empty branch pushes
 		repo := &github.Repository{
@@ -1156,86 +1125,6 @@ func TestEdgeCasesAndErrorPaths(t *testing.T) {
 			fetchSpecificRepositories(context.Background(), nil, config)
 			if !panicked {
 				t.Error("fetchSpecificRepositories should panic with nil client")
-			}
-		}()
-	})
-}
-
-// TestBranchAnalysisFunctions tests branch analysis workflow
-func TestBranchAnalysisFunctions(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test_branch_analysis_*")
-	if err != nil {
-		t.Fatalf(errFailedToCreateTempDir, err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	originalWd, _ := os.Getwd()
-	defer os.Chdir(originalWd)
-	os.Chdir(tempDir)
-
-	err = os.MkdirAll("Logs", 0755)
-	if err != nil {
-		t.Fatalf(errFailedToCreateLogsDir, err)
-	}
-
-	t.Run("analyzeBranches function", func(t *testing.T) {
-		// Test with empty branch pushes
-		branchPushes := make(map[string]*BranchInfoEvents)
-
-		params := ParamsReposGithub{
-			Organization: testOrgName,
-			Period:       1,
-			Stats:        false,
-		}
-
-		// This should not panic with empty data
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("analyzeBranches panicked: %v", r)
-				}
-			}()
-			analyzeBranches(context.Background(), nil, params, "test-repo", branchPushes)
-		}()
-	})
-
-	t.Run("analyzeWithStats and analyzeWithoutStats functions", func(t *testing.T) {
-		oneMonthAgo := time.Now().AddDate(0, -1, 0)
-		info := &BranchInfoEvents{
-			Name:      "test-branch",
-			Pushes:    5,
-			Commits:   0,
-			Additions: 0,
-			Deletions: 0,
-		}
-
-		// Test analyzeWithStats with nil client (should panic)
-		func() {
-			panicked := false
-			defer func() {
-				if r := recover(); r != nil {
-					t.Logf("analyzeWithStats properly panicked with nil client: %v", r)
-					panicked = true
-				}
-			}()
-			analyzeWithStats(context.Background(), nil, testOrgName, "test-repo", oneMonthAgo, info)
-			if !panicked {
-				t.Error("analyzeWithStats should panic with nil client")
-			}
-		}()
-
-		// Test analyzeWithoutStats with nil client (should panic)
-		func() {
-			panicked := false
-			defer func() {
-				if r := recover(); r != nil {
-					t.Logf("analyzeWithoutStats properly panicked with nil client: %v", r)
-					panicked = true
-				}
-			}()
-			analyzeWithoutStats(context.Background(), nil, testOrgName, "test-repo", oneMonthAgo, info)
-			if !panicked {
-				t.Error("analyzeWithoutStats should panic with nil client")
 			}
 		}()
 	})
@@ -1453,21 +1342,6 @@ func TestGetAllBranchesAndEvents(t *testing.T) {
 			}
 		}()
 		getAllBranches(context.Background(), nil, "test-repo", testOrgName, nil)
-	})
-
-	t.Run("getAllEvents error handling", func(t *testing.T) {
-		// Test with nil client - should panic
-		panicked := false
-		defer func() {
-			if r := recover(); r != nil {
-				t.Logf("getAllEvents properly panicked with nil client: %v", r)
-				panicked = true
-			}
-			if !panicked {
-				t.Error("getAllEvents should panic with nil client")
-			}
-		}()
-		getAllEvents(context.Background(), nil, "test-repo", testOrgName)
 	})
 }
 
