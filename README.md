@@ -23,7 +23,6 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 - [Reports](#reports)
 - [Supported Languages](#supported-languages)
 - [Execution Log](#execution-log)
-- [Creating a Release](#creating-a-release)
 
 ---
 
