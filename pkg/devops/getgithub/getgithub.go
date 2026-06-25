@@ -103,14 +103,6 @@ type CommitInfo struct {
 	URL string `json:"url"`
 }
 
-type BranchInfoEvents struct {
-	Name      string
-	Pushes    int
-	Commits   int
-	Additions int
-	Deletions int
-}
-
 type Lastanalyse struct {
 	LastRepos  string
 	LastBranch string
@@ -337,7 +329,6 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 
 func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *github.Client, repo *github.Repository, cpt int, spin1 *spinner.Spinner) (string, []*github.Branch) {
 	var branches []*github.Branch
-	var branchPushes map[string]*BranchInfoEvents
 	loggers := utils.SharedLogger()
 
 	opt := &github.BranchListOptions{
@@ -376,7 +367,7 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 				spin1.Stop()
 				return "", nil
 			}
-			largestRepoBranch = determineLargestBranch(parms, repo, branchPushes)
+			largestRepoBranch = *repo.DefaultBranch
 			nbrbranche = len(branches)
 		}
 	} else {
@@ -387,7 +378,7 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 			spin1.Stop()
 			return "", nil
 		}
-		largestRepoBranch = determineLargestBranch(parms, repo, branchPushes)
+		largestRepoBranch = *repo.DefaultBranch
 		nbrbranche = len(branches)
 	}
 
@@ -417,30 +408,6 @@ func getAllBranches(ctx context.Context, client *github.Client, repoName, organi
 		opt.Page = resp.NextPage
 	}
 	return branches, nil
-}
-
-func determineLargestBranch(parms ParamsReposGithub, repo *github.Repository, branchPushes map[string]*BranchInfoEvents) string {
-	var largestRepoBranch string
-	if len(branchPushes) > 0 {
-		branchList := make([]*BranchInfoEvents, 0, len(branchPushes))
-		for _, info := range branchPushes {
-			branchList = append(branchList, info)
-		}
-		sort.Slice(branchList, func(i, j int) bool {
-			if parms.Stats {
-				if branchList[i].Commits == branchList[j].Commits {
-					return (branchList[i].Additions + branchList[i].Deletions) > (branchList[j].Additions + branchList[j].Deletions)
-				}
-				return branchList[i].Commits > branchList[j].Commits
-			} else {
-				return branchList[i].Commits > branchList[j].Commits
-			}
-		})
-		largestRepoBranch = branchList[0].Name
-	} else {
-		largestRepoBranch = *repo.DefaultBranch
-	}
-	return largestRepoBranch
 }
 
 // Get Infos for all Repositories in Organization
