@@ -337,6 +337,7 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 
 func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *github.Client, repo *github.Repository, cpt int, spin1 *spinner.Spinner) (string, []*github.Branch) {
 	var branches []*github.Branch
+	var branchPushes map[string]*BranchInfoEvents
 	loggers := utils.SharedLogger()
 
 	opt := &github.BranchListOptions{
@@ -375,7 +376,7 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 				spin1.Stop()
 				return "", nil
 			}
-			largestRepoBranch = determineLargestBranch(parms, repo, nil)
+			largestRepoBranch = determineLargestBranch(parms, repo, branchPushes)
 			nbrbranche = len(branches)
 		}
 	} else {
@@ -386,7 +387,7 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 			spin1.Stop()
 			return "", nil
 		}
-		largestRepoBranch = determineLargestBranch(parms, repo, nil)
+		largestRepoBranch = determineLargestBranch(parms, repo, branchPushes)
 		nbrbranche = len(branches)
 	}
 

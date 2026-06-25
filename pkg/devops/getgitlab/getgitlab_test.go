@@ -834,3 +834,274 @@ func TestAnalyzeSpecificBranchForProjects(t *testing.T) {
 		t.Fatalf("branch data mismatch: %+v", branches[0])
 	}
 }
+
+// TestGetDefaultBranchDetails covers the cheap DefaultBranch=true resolver:
+// it returns the project's default branch and its size without enumerating
+// every branch, and errors when the project has no default branch.
+func TestGetDefaultBranchDetails(t *testing.T) {
+	_, cleanup := setupTestEnvironment(t, "gl_default_branch_*")
+	defer cleanup()
+	createTestDirectories(t, []string{"Logs"})
+
+	ts := newFakeGitLabServer(t, func(r *http.Request) (int, any) {
+		if r.URL.Path == apiTreePath {
+			return http.StatusOK, []map[string]any{{"id": "1"}, {"id": "2"}}
+		}
+		return 0, nil
+	})
+	defer ts.Close()
+	client := newGitLabClientForServer(t, ts.URL)
+
+	// Success: default branch + its size, exactly one branch.
+	project := &gitlab.Project{ID: 10, Name: "p", PathWithNamespace: "g/p", DefaultBranch: "main"}
+	branch, size, nbr, err := getDefaultBranchDetails(client, project)
+	if err != nil {
+		t.Fatalf("getDefaultBranchDetails error: %v", err)
+	}
+	if branch != "main" || size != 2 || nbr != 1 {
+		t.Errorf("getDefaultBranchDetails = (%s,%d,%d), want (main,2,1)", branch, size, nbr)
+	}
+
+	// Error: project without a default branch.
+	if _, _, _, err := getDefaultBranchDetails(client, &gitlab.Project{ID: 10, Name: "p"}); err == nil {
+		t.Errorf("getDefaultBranchDetails expected error for empty default branch")
+	}
+}
+
+// TestAnalyzeMainBranchForProjectsModes verifies the defaultBranchOnly switch:
+// true -> the repo default branch only (cheap); false -> the most active branch
+// across all branches (expensive).
+func TestAnalyzeMainBranchForProjectsModes(t *testing.T) {
+	_, cleanup := setupTestEnvironment(t, "gl_mainbranch_modes_*")
+	defer cleanup()
+	createTestDirectories(t, []string{"Logs"})
+
+	commitCounts := map[string]int{"main": 1, "dev": 3}
+	ts := newFakeGitLabServer(t, func(r *http.Request) (int, any) {
+		switch {
+		case r.URL.Path == apiBranchesListPath:
+			return http.StatusOK, []map[string]any{{"name": "main"}, {"name": "dev"}}
+		case strings.HasPrefix(r.URL.Path, apiCommitsPath):
+			ref := r.URL.Query().Get("ref_name")
+			commits := make([]map[string]any, commitCounts[ref])
+			for i := range commits {
+				commits[i] = map[string]any{"id": fmt.Sprintf("c%d", i)}
+			}
+			return http.StatusOK, commits
+		case r.URL.Path == apiTreePath:
+			return http.StatusOK, []map[string]any{{"id": "1"}, {"id": "2"}}
+		default:
+			return 0, nil
+		}
+	})
+	defer ts.Close()
+	client := newGitLabClientForServer(t, ts.URL)
+
+	sp := spinner.New(spinner.CharSets[1], 10*time.Millisecond)
+	projects := []*gitlab.Project{{ID: 10, Name: "p", PathWithNamespace: "g/p", DefaultBranch: "main"}}
+	since := time.Now().Add(-24 * time.Hour)
+	until := time.Now()
+
+	// defaultBranchOnly=true -> default branch only.
+	got, total := analyzeMainBranchForProjects(client, projects, "g", since, until, true, sp)
+	if len(got) != 1 || total != 1 || got[0].MainBranch != "main" {
+		t.Fatalf("default mode unexpected: %+v total=%d", got, total)
+	}
+
+	// defaultBranchOnly=false -> most active branch (dev has more commits).
+	got, _ = analyzeMainBranchForProjects(client, projects, "g", since, until, false, sp)
+	if len(got) != 1 || got[0].MainBranch != "dev" {
+		t.Fatalf("all-branches mode unexpected: %+v", got)
+	}
+}
+
+// TestHandleDefaultBranchCaseAllProjects exercises the DefaultBranch=true,
+// all-projects path end to end and asserts it selects the default branch.
+func TestHandleDefaultBranchCaseAllProjects(t *testing.T) {
+	_, cleanup := setupTestEnvironment(t, "gl_handle_default_*")
+	defer cleanup()
+	createTestDirectories(t, []string{"Logs"})
+
+	ts := newFakeGitLabServer(t, func(r *http.Request) (int, any) {
+		switch {
+		case r.URL.Path == apiGroupGPath:
+			return http.StatusOK, map[string]any{"id": 1, "name": "g"}
+		case r.URL.Path == apiGroup1ProjectsPath:
+			return http.StatusOK, []map[string]any{
+				{"id": 10, "name": "p", "path_with_namespace": "g/p", "default_branch": "main", "empty_repo": false, "archived": false},
+			}
+		case r.URL.Path == apiTreePath:
+			return http.StatusOK, []map[string]any{{"id": "1"}, {"id": "2"}}
+		default:
+			return 0, nil
+		}
+	})
+	defer ts.Close()
+	client := newGitLabClientForServer(t, ts.URL)
+
+	empty, archived, excl := 0, 0, 0
+	ctx := defaultCtx{
+		client:           client,
+		config:           map[string]interface{}{"Project": ""},
+		exclusions:       ExclusionRepos{},
+		orgs:             []string{"g"},
+		since:            time.Now().Add(-24 * time.Hour),
+		until:            time.Now(),
+		spin:             newSpin1(),
+		emptyRepos:       &empty,
+		archivedRepos:    &archived,
+		excludedProjects: &excl,
+	}
+	branches, total := handleDefaultBranchCase(ctx)
+	if len(branches) != 1 || total != 1 || branches[0].MainBranch != "main" {
+		t.Fatalf("handleDefaultBranchCase unexpected: %+v total=%d", branches, total)
+	}
+}
+
+// TestNonDefaultAllProjectsAllBranches exercises the DefaultBranch=false,
+// all-projects/all-branches path and asserts it still selects the most active
+// branch (the behavior preserved by this change).
+func TestNonDefaultAllProjectsAllBranches(t *testing.T) {
+	_, cleanup := setupTestEnvironment(t, "gl_nondefault_all_*")
+	defer cleanup()
+	createTestDirectories(t, []string{"Logs"})
+
+	commitCounts := map[string]int{"main": 1, "dev": 3}
+	ts := newFakeGitLabServer(t, func(r *http.Request) (int, any) {
+		switch {
+		case r.URL.Path == apiGroupGPath:
+			return http.StatusOK, map[string]any{"id": 1, "name": "g"}
+		case r.URL.Path == apiGroup1ProjectsPath:
+			return http.StatusOK, []map[string]any{
+				{"id": 10, "name": "p", "path_with_namespace": "g/p", "default_branch": "main", "empty_repo": false, "archived": false},
+			}
+		case r.URL.Path == apiBranchesListPath:
+			return http.StatusOK, []map[string]any{{"name": "main"}, {"name": "dev"}}
+		case strings.HasPrefix(r.URL.Path, apiCommitsPath):
+			ref := r.URL.Query().Get("ref_name")
+			commits := make([]map[string]any, commitCounts[ref])
+			for i := range commits {
+				commits[i] = map[string]any{"id": fmt.Sprintf("c%d", i)}
+			}
+			return http.StatusOK, commits
+		case r.URL.Path == apiTreePath:
+			return http.StatusOK, []map[string]any{{"id": "1"}}
+		default:
+			return 0, nil
+		}
+	})
+	defer ts.Close()
+	client := newGitLabClientForServer(t, ts.URL)
+
+	empty, archived, excl := 0, 0, 0
+	ctx := nonDefaultCtx{
+		client:           client,
+		config:           map[string]interface{}{"Project": "", "Branch": ""},
+		exclusions:       ExclusionRepos{},
+		orgs:             []string{"g"},
+		since:            time.Now().Add(-24 * time.Hour),
+		until:            time.Now(),
+		spin:             newSpin1(),
+		emptyRepos:       &empty,
+		archivedRepos:    &archived,
+		excludedProjects: &excl,
+	}
+	branches, total := nonDefaultAllProjectsAllBranches(ctx)
+	if len(branches) != 1 || total != 2 || branches[0].MainBranch != "dev" {
+		t.Fatalf("nonDefaultAllProjectsAllBranches unexpected: %+v total=%d", branches, total)
+	}
+}
+
+// TestHandleDefaultBranchCaseSpecificProject exercises the DefaultBranch=true,
+// single-project path (Project set) and asserts it selects the default branch.
+func TestHandleDefaultBranchCaseSpecificProject(t *testing.T) {
+	_, cleanup := setupTestEnvironment(t, "gl_handle_default_proj_*")
+	defer cleanup()
+	createTestDirectories(t, []string{"Logs"})
+
+	ts := newFakeGitLabServer(t, func(r *http.Request) (int, any) {
+		switch {
+		case r.URL.Path == apiTreePath:
+			return http.StatusOK, []map[string]any{{"id": "1"}, {"id": "2"}}
+		case strings.Contains(r.URL.Path, "g/p"):
+			return http.StatusOK, map[string]any{
+				"id": 10, "name": "p", "path_with_namespace": "g/p",
+				"default_branch": "main", "empty_repo": false, "archived": false,
+			}
+		default:
+			return 0, nil
+		}
+	})
+	defer ts.Close()
+	client := newGitLabClientForServer(t, ts.URL)
+
+	empty, archived, excl := 0, 0, 0
+	ctx := defaultCtx{
+		client:           client,
+		config:           map[string]interface{}{"Project": "p"},
+		exclusions:       ExclusionRepos{},
+		orgs:             []string{"g"},
+		since:            time.Now().Add(-24 * time.Hour),
+		until:            time.Now(),
+		spin:             newSpin1(),
+		emptyRepos:       &empty,
+		archivedRepos:    &archived,
+		excludedProjects: &excl,
+	}
+	branches, total := handleDefaultBranchCase(ctx)
+	if len(branches) != 1 || total != 1 || branches[0].MainBranch != "main" {
+		t.Fatalf("handleDefaultBranchCase (specific project) unexpected: %+v total=%d", branches, total)
+	}
+}
+
+// TestNonDefaultSpecificProjectAllBranches exercises the DefaultBranch=false,
+// single-project/all-branches path and asserts most-active-branch selection.
+func TestNonDefaultSpecificProjectAllBranches(t *testing.T) {
+	_, cleanup := setupTestEnvironment(t, "gl_nondefault_proj_*")
+	defer cleanup()
+	createTestDirectories(t, []string{"Logs"})
+
+	commitCounts := map[string]int{"main": 1, "dev": 3}
+	ts := newFakeGitLabServer(t, func(r *http.Request) (int, any) {
+		switch {
+		case r.URL.Path == apiBranchesListPath:
+			return http.StatusOK, []map[string]any{{"name": "main"}, {"name": "dev"}}
+		case strings.HasPrefix(r.URL.Path, apiCommitsPath):
+			ref := r.URL.Query().Get("ref_name")
+			commits := make([]map[string]any, commitCounts[ref])
+			for i := range commits {
+				commits[i] = map[string]any{"id": fmt.Sprintf("c%d", i)}
+			}
+			return http.StatusOK, commits
+		case r.URL.Path == apiTreePath:
+			return http.StatusOK, []map[string]any{{"id": "1"}}
+		case strings.Contains(r.URL.Path, "g/p"):
+			return http.StatusOK, map[string]any{
+				"id": 10, "name": "p", "path_with_namespace": "g/p",
+				"default_branch": "main", "empty_repo": false, "archived": false,
+			}
+		default:
+			return 0, nil
+		}
+	})
+	defer ts.Close()
+	client := newGitLabClientForServer(t, ts.URL)
+
+	empty, archived, excl := 0, 0, 0
+	ctx := nonDefaultCtx{
+		client:           client,
+		config:           map[string]interface{}{"Project": "p", "Branch": ""},
+		exclusions:       ExclusionRepos{},
+		orgs:             []string{"g"},
+		since:            time.Now().Add(-24 * time.Hour),
+		until:            time.Now(),
+		spin:             newSpin1(),
+		emptyRepos:       &empty,
+		archivedRepos:    &archived,
+		excludedProjects: &excl,
+	}
+	branches, total := nonDefaultSpecificProjectAllBranches(ctx)
+	if len(branches) != 1 || total != 2 || branches[0].MainBranch != "dev" {
+		t.Fatalf("nonDefaultSpecificProjectAllBranches unexpected: %+v total=%d", branches, total)
+	}
+}
