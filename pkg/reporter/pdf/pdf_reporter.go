@@ -117,7 +117,7 @@ func (p PdfReporter) GenerateReportByFile(summary *sorter.SortedSummary) error {
 
 func (p PdfReporter) writePdf(pdfReport *report) error {
 	var branch string
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	outputName := strings.Replace(p.OutputName, "/", "_", -1)
 	if !strings.HasSuffix(outputName, ".pdf") {
 		outputName += ".pdf"
@@ -238,7 +238,7 @@ func (p PdfReporter) writePdf(pdfReport *report) error {
 }
 
 func (p PdfReporter) GenerateGlobalReportByFile() error {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	dir := "./Results/byfile-report/"
 	/*	pwd, err1 := os.Getwd()
 		if err1 != nil {

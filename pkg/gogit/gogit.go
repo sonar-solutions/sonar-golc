@@ -20,7 +20,7 @@ import (
 
 func Getrepos(src, branch, token, workDir string) (string, error) {
 
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	suffix, err := randomSuffix()
 	if err != nil {
 		return "", err

@@ -34,7 +34,7 @@ func NewScanner(languages language.Languages) *Scanner {
 func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 	var results []scanResult
 	progress := sc.createProgressbar(len(files))
-	logger := utils.NewLogger()
+	logger := utils.SharedLogger()
 
 	failed := 0
 	for _, file := range files {
