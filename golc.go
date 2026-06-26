@@ -373,10 +373,14 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 			waitForWorkers(len(repolist.([]interface{})), results)
 		}
 	} else {
-		// Without multithreading
+		// Without multithreading: run one repo at a time. analyseRepoFunc always
+		// sends to the unbuffered results channel, so it must run in a goroutine
+		// with a matching receiver — calling it synchronously here would block
+		// forever on that send (deadlock). Waiting for 1 result per iteration
+		// keeps the analysis strictly sequential.
 		for _, project := range repolist.([]interface{}) {
-			// Execute the analysis synchronously
-			analyseRepoFunc(project, DestinationResult, platformConfig, spin, results, &count)
+			go analyseRepoFunc(project, DestinationResult, platformConfig, spin, results, &count)
+			waitForWorkers(1, results)
 		}
 	}
 
@@ -407,6 +411,14 @@ func getWorkDir(platformConfig map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+// exitGolc terminates the process after sweeping any temp clones that deferred
+// cleanup would otherwise miss (os.Exit does not run deferred funcs) — issue #81.
+// Use this instead of os.Exit anywhere a clone may already exist on disk.
+func exitGolc(code int) {
+	utils.CleanupTempClones()
+	os.Exit(code)
 }
 
 // Analysis functions for different repository types
@@ -596,6 +608,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				if err1 := os.RemoveAll(repoPath); err1 != nil {
 					logger.Errorf(errorMessageDi, err1)
 				}
+				utils.UnregisterTempClone(repoPath)
 			}
 		}()
 
@@ -798,6 +811,7 @@ func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX,
 			if err1 := os.RemoveAll(p); err1 != nil {
 				logger.Errorf(errorMessageDi, err1)
 			}
+			utils.UnregisterTempClone(p)
 		}(gc.Repopath)
 	}
 
@@ -870,7 +884,7 @@ func AnalyseRun(params goloc.Params, reponame string) {
 	gc, err := goloc.NewGCloc(params, assets.Languages)
 	if err != nil {
 		fmt.Println(errorMessageRepo, err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	gc.Run()
@@ -907,7 +921,7 @@ func AnalyseRepo(DestinationResult string, Users string, AccessToken string, Dev
 	gc, err := goloc.NewGCloc(params, assets.Languages)
 	if err != nil {
 		fmt.Println(errorMessageRepo, err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	gc.Run()
@@ -1006,11 +1020,11 @@ func runGolcInProcess(platform string) {
 	AppConfig, err = LoadConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Failed to load config: %s\n", err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 	if AppConfig.Release.Version != version1 {
 		fmt.Fprintf(os.Stderr, "\n❌ Version mismatch: expected %s but got %s - Use the correct config.json file!\n", version1, AppConfig.Release.Version)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	// Setup logging
@@ -1018,7 +1032,7 @@ func runGolcInProcess(platform string) {
 	if _, statErr := os.Stat(logDir); os.IsNotExist(statErr) {
 		if mkErr := os.MkdirAll(logDir, 0755); mkErr != nil {
 			fmt.Fprintf(os.Stderr, "❌ Failed to create log directory: %v\n", mkErr)
-			os.Exit(1)
+			exitGolc(1)
 		}
 	}
 	_ = os.Remove("Logs/Logs.log")
@@ -1031,7 +1045,7 @@ func runGolcInProcess(platform string) {
 	platformConfig, ok := AppConfig.Platforms[platform].(map[string]interface{})
 	if !ok {
 		fmt.Fprintf(os.Stderr, "\n❌ Configuration for DevOps platform '%s' not found\n", platform)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	var maxTotalCodeLines int
@@ -1075,7 +1089,7 @@ func runGolcInProcess(platform string) {
 
 		if len(gitproject) == 0 {
 			logger.Error(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
 
@@ -1109,7 +1123,7 @@ func runGolcInProcess(platform string) {
 
 				if len(repositories) == 0 {
 					logger.Error(errorMessageAnalyse)
-					os.Exit(1)
+					exitGolc(1)
 				} else {
 					// Get all branches for each repository and analyze them
 					allBranches, err := getgithub.GetAllBranchesForRepositories(platformConfig, repositories)
@@ -1129,7 +1143,7 @@ func runGolcInProcess(platform string) {
 
 				if len(repositories) == 0 {
 					logger.Error(errorMessageAnalyse)
-					os.Exit(1)
+					exitGolc(1)
 
 				} else {
 
@@ -1154,10 +1168,10 @@ func runGolcInProcess(platform string) {
 
 		if len(gitproject) == 0 {
 			logger.Error(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
-			//os.Exit(1)
+			//exitGolc(1)
 			NumberRepos = AnalyseReposListGitlab(DestinationResult, platformConfig, gitproject)
 
 		}
@@ -1171,12 +1185,12 @@ func runGolcInProcess(platform string) {
 		projects, err := getbibucketdc.GetProjectBitbucketList(platformConfig, fileexclusionEX)
 		if err != nil {
 			logger.Errorf("❌ Error Get Info Projects in Bitbucket server '%s' : ", err)
-			os.Exit(1)
+			exitGolc(1)
 		}
 
 		if len(projects) == 0 {
 			logger.Error(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
 
@@ -1198,7 +1212,7 @@ func runGolcInProcess(platform string) {
 		}
 		if len(projects1) == 0 {
 			logger.Errorf(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
 			// Run scanning repositories
@@ -1216,7 +1230,7 @@ func runGolcInProcess(platform string) {
 			ListExclusion, err = ReadLines(fileexclusionEX)
 			if err != nil {
 				logger.Errorf("❌ Error reading file <.cloc_file_ignore>:%v", err)
-				os.Exit(1)
+				exitGolc(1)
 			}
 		} else {
 			ListExclusion = make([]string, 0)
@@ -1227,7 +1241,7 @@ func runGolcInProcess(platform string) {
 			ListDirectory, err = ReadLines(fileload)
 			if err != nil {
 				logger.Errorf("❌ Error reading file <.cloc_file_load>:%v", err)
-				os.Exit(1)
+				exitGolc(1)
 			}
 			if len(ListDirectory) == 0 {
 				ListDirectory = append(ListDirectory, platformConfig["Directory"].(string))
@@ -1236,7 +1250,7 @@ func runGolcInProcess(platform string) {
 			dirField := platformConfig["Directory"].(string)
 			if len(dirField) == 0 {
 				logger.Error("❌ No analysis possible, no directory, specified file or specified loading file")
-				os.Exit(1)
+				exitGolc(1)
 			} else {
 				for _, d := range strings.Split(dirField, "\n") {
 					if d = strings.TrimSpace(d); d != "" {
@@ -1314,7 +1328,7 @@ func runGolcInProcess(platform string) {
 	files, err := os.ReadDir(DestinationResult)
 	if err != nil {
 		logger.Errorf("❌ Error listing files:%v", err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	// Initialize the sum of TotalCodeLines (excluding JSON to match SonarQube behavior)
@@ -1400,7 +1414,7 @@ func runGolcInProcess(platform string) {
 		logger.Errorf("     • No source files with recognised extensions were found")
 		logger.Errorf("     • Check the logs above for per-repo errors")
 		fmt.Println("\n --------------------------------------------------------------------")
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	// Global Result file
@@ -1441,7 +1455,7 @@ func runGolcInProcess(platform string) {
 	err = utils.CreateGlobalReport(baseResultsDir)
 	if err != nil {
 		logger.Errorf("❌ Error creating global report: %v", err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	err = utils.GenerateRepositorySummaryReports(baseResultsDir)

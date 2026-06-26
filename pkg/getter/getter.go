@@ -41,6 +41,9 @@ func Getter(src, workDir string) (string, error) {
 	}
 
 	dst := filepath.Join(baseDir, fmt.Sprintf("gcloc-extract-%s", suffix))
+	// Track the destination so it is swept on os.Exit() paths that skip deferred
+	// cleanup (issue #81). Registered before fetching so a partial fetch is covered too.
+	utils.RegisterTempClone(dst)
 	pwd, err := os.Getwd()
 	if err != nil {
 		return "", err

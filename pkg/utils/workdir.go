@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"os"
+	"sync"
 )
 
 // WorkDirEnvVar is the name of the environment variable that provides a global
@@ -42,4 +43,53 @@ func ResolveWorkDir(configured string) (string, error) {
 	os.Remove(probeName)
 
 	return dir, nil
+}
+
+// Temp-clone registry.
+//
+// Deferred cleanup in the analysis code removes a temp clone on every normal
+// return, but golc also calls os.Exit() on a number of error paths (e.g. an
+// analysis that produced 0 lines of code), and os.Exit() does NOT run deferred
+// functions. To keep those paths from leaking clones (issue #81), every temp
+// clone is registered here when created and the process sweeps the registry
+// just before calling os.Exit().
+var (
+	tempCloneMu sync.Mutex
+	tempClones  = map[string]struct{}{}
+)
+
+// RegisterTempClone records a temp clone/extraction directory so it can be
+// swept before an os.Exit(). No-op for empty paths.
+func RegisterTempClone(path string) {
+	if path == "" {
+		return
+	}
+	tempCloneMu.Lock()
+	tempClones[path] = struct{}{}
+	tempCloneMu.Unlock()
+}
+
+// UnregisterTempClone drops a path from the registry (e.g. once it has already
+// been removed by deferred cleanup on the normal path).
+func UnregisterTempClone(path string) {
+	tempCloneMu.Lock()
+	delete(tempClones, path)
+	tempCloneMu.Unlock()
+}
+
+// CleanupTempClones removes any still-registered temp clones. It is safe to
+// call multiple times and concurrently; RemoveAll on an already-deleted path
+// is a no-op. Call this immediately before os.Exit().
+func CleanupTempClones() {
+	tempCloneMu.Lock()
+	paths := make([]string, 0, len(tempClones))
+	for p := range tempClones {
+		paths = append(paths, p)
+	}
+	tempClones = map[string]struct{}{}
+	tempCloneMu.Unlock()
+
+	for _, p := range paths {
+		_ = os.RemoveAll(p)
+	}
 }

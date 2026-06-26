@@ -671,17 +671,22 @@ func GetRepoGithubList(platformConfig map[string]interface{}, exclusionfile stri
 
 	ctx, client := initializeGithubClient(platformConfig)
 
-	if len(platformConfig["Repos"].(string)) == 0 {
-		if platformConfig["Org"].(bool) {
+	// Use comma-ok assertions: a config.json (or hand-edited config) that omits
+	// these keys must yield a clear error path, not a nil-interface panic (issue #81).
+	reposCfg, _ := platformConfig["Repos"].(string)
+	orgFlag, _ := platformConfig["Org"].(bool)
+	orgName, _ := platformConfig["Organization"].(string)
+	if len(reposCfg) == 0 {
+		if orgFlag {
 
-			repositories, err1 = fetchAllRepositories(ctx, client, platformConfig["Organization"].(string), opt)
+			repositories, err1 = fetchAllRepositories(ctx, client, orgName, opt)
 		} else {
 			repositories, err1 = fetchUserRepositories(ctx, client, opt1)
 			// Personal account: the per-repo API calls (ListCommits, ListBranches,
 			// ListRepositoryEvents) need an owner. If the user did not fill the
 			// Organization field (it does not apply to personal accounts), resolve
 			// it from the authenticated user so downstream calls don't 404.
-			if err1 == nil && strings.TrimSpace(platformConfig["Organization"].(string)) == "" {
+			if err1 == nil && strings.TrimSpace(orgName) == "" {
 				user, _, uerr := client.Users.Get(ctx, "")
 				if uerr != nil {
 					loggers.Errorf("❌ Failed to resolve authenticated user for personal-account analysis: %v", uerr)

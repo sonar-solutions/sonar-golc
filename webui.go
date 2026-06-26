@@ -144,7 +144,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"GithubEnterprise": {
 		"DevOps": "github", "Apiver": "2022-11-28", "FileExclusion": "",
@@ -152,7 +152,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"Gitlab": {
 		"DevOps": "gitlab", "Url": "https://gitlab.com/", "Apiver": "v4",
@@ -161,7 +161,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"BitBucket": {
 		"DevOps": "bitbucket", "Url": "https://api.bitbucket.org/", "Apiver": "2.0",
@@ -170,7 +170,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"BitBucketSRV": {
 		"DevOps": "bitbucket_dc", "Apiver": "1.0", "Baseapi": "rest/api/",
@@ -179,7 +179,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-5), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"Azure": {
 		"DevOps": "azure", "Url": "https://dev.azure.com/", "Apiver": "7.1",
@@ -188,7 +188,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"File": {
 		"DevOps": "file", "FileExclusion": "", "FileLoad": ".cloc_file_load",

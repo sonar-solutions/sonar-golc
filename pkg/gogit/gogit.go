@@ -32,6 +32,9 @@ func Getrepos(src, branch, token, workDir string) (string, error) {
 	}
 
 	dst := filepath.Join(baseDir, fmt.Sprintf("gcloc-extract-%s", suffix))
+	// Track the destination so it is swept on os.Exit() paths that skip deferred
+	// cleanup (issue #81). Registered before cloning so a partial clone is covered too.
+	utils.RegisterTempClone(dst)
 	log.SetOutput(os.Stderr)
 
 	transport.UnsupportedCapabilities = []capability.Capability{
