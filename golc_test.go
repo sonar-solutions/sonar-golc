@@ -15,7 +15,18 @@ import (
 	getbibucketdc "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucketdc"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgithub"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgitlab"
+
+	"github.com/sirupsen/logrus"
 )
+
+// TestMain initializes the package-level logger that production code paths
+// reference (it is normally set up inside runGolcInProcess, which the unit
+// tests don't call). Without this, functions like parseJSONFile that log on
+// error would nil-panic. See issue #81 coverage-pipeline repair.
+func TestMain(m *testing.M) {
+	logger = logrus.New()
+	os.Exit(m.Run())
+}
 
 // Constants to avoid duplicating string literals (SonarQube maintainability)
 const (
@@ -590,7 +601,7 @@ func TestAnalysisListFunctions(t *testing.T) {
 					t.Errorf("AnalyseReposListFile panicked: %v", r)
 				}
 			}()
-			AnalyseReposListFile(emptyDirs, emptyExclusions, emptyExtensions, false, false, "Results")
+			AnalyseReposListFile(emptyDirs, emptyExclusions, emptyExtensions, []string{}, []string{}, false, false, "Results")
 		}()
 	})
 }
@@ -613,15 +624,9 @@ func TestFlagsFunctions(t *testing.T) {
 	}
 
 	t.Run("setupResultsDirectory function", func(t *testing.T) {
-		flags := ApplicationFlags{
-			DevOps:      "test-platform",
-			Fast:        false,
-			AllBranches: false,
-		}
-
 		// Note: This test may require user interaction if Results directory exists
 		// In a real scenario, you might want to mock os.Stat or use a temporary directory
-		result := setupResultsDirectory(flags)
+		result := setupResultsDirectory("test-platform")
 
 		// Should return a valid directory path
 		if result == "" {

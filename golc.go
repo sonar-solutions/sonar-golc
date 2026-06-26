@@ -1,5 +1,5 @@
-//go:build webui
-// +build webui
+//go:build webui || golc
+// +build webui golc
 
 package main
 
