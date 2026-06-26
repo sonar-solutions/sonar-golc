@@ -934,6 +934,7 @@ func AnalyseRepo(DestinationResult string, Users string, AccessToken string, Dev
 			fmt.Printf(errorMessageDi, err1)
 			return
 		}
+		utils.UnregisterTempClone(gc.Repopath)
 	}
 
 	return cpt
@@ -1011,6 +1012,12 @@ func setupResultsDirectory(platform string) string {
 // runGolcInProcess runs the GoLC analysis for the given platform key (e.g. "Github").
 // It is invoked by the webui binary when started with --internal-run <platform>.
 func runGolcInProcess(platform string) {
+	// Sweep any temp clones still registered by failed/partial analyses on the
+	// normal completion path too. Successful repos self-clean via their own
+	// deferred RemoveAll; this catches clones whose NewGCloc/clone failed before
+	// that defer was installed (os.Exit paths are covered by exitGolc) — issue #81.
+	defer utils.CleanupTempClones()
+
 	// Load config
 	configPath := os.Getenv("GOLC_CONFIG_FILE")
 	if configPath == "" {
