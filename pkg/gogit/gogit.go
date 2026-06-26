@@ -18,7 +18,7 @@ import (
 	//"github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
-func Getrepos(src, branch, token string) (string, error) {
+func Getrepos(src, branch, token, workDir string) (string, error) {
 
 	loggers := utils.NewLogger()
 	suffix, err := randomSuffix()
@@ -26,11 +26,15 @@ func Getrepos(src, branch, token string) (string, error) {
 		return "", err
 	}
 
-	dst := filepath.Join(os.TempDir(), fmt.Sprintf("gcloc-extract-%s", suffix))
-	//pwd, err := os.Getwd()
+	baseDir, err := utils.ResolveWorkDir(workDir)
 	if err != nil {
 		return "", err
 	}
+
+	dst := filepath.Join(baseDir, fmt.Sprintf("gcloc-extract-%s", suffix))
+	// Track the destination so it is swept on os.Exit() paths that skip deferred
+	// cleanup (issue #81). Registered before cloning so a partial clone is covered too.
+	utils.RegisterTempClone(dst)
 	log.SetOutput(os.Stderr)
 
 	transport.UnsupportedCapabilities = []capability.Capability{

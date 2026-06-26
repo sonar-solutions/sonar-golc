@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/briandowns/spinner"
 	getter "github.com/hashicorp/go-getter"
 )
@@ -19,7 +20,7 @@ func extractLastString(url string) string {
 	return filepath.Base(url)
 }
 
-func Getter(src string) (string, error) {
+func Getter(src, workDir string) (string, error) {
 	RepoString := extractLastString(src)
 
 	spinner := newSpinner(fmt.Sprintf("\r Extracting files from %s \n", RepoString))
@@ -34,7 +35,15 @@ func Getter(src string) (string, error) {
 		return "", err
 	}
 
-	dst := filepath.Join(os.TempDir(), fmt.Sprintf("gcloc-extract-%s", suffix))
+	baseDir, err := utils.ResolveWorkDir(workDir)
+	if err != nil {
+		return "", err
+	}
+
+	dst := filepath.Join(baseDir, fmt.Sprintf("gcloc-extract-%s", suffix))
+	// Track the destination so it is swept on os.Exit() paths that skip deferred
+	// cleanup (issue #81). Registered before fetching so a partial fetch is covered too.
+	utils.RegisterTempClone(dst)
 	pwd, err := os.Getwd()
 	if err != nil {
 		return "", err

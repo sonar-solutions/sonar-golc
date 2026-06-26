@@ -44,6 +44,7 @@ type Params struct {
 	Cloned            bool
 	Repopath          string
 	RepopathDisposable bool // if true, Repopath is a temp clone safe to delete; if false, it is the user's directory and must not be removed
+	WorkDir           string // base directory for temp clones/extractions; empty => GOLC_WORKDIR env or os.TempDir()
 }
 
 type GCloc struct {
@@ -189,7 +190,7 @@ func getRepoPath(params Params) (path string, disposable bool, err error) {
 	}
 
 	if len(params.Branch) != 0 {
-		p, e := gogit.Getrepos(params.Path, params.Branch, params.Token)
+		p, e := gogit.Getrepos(params.Path, params.Branch, params.Token, params.WorkDir)
 		return p, true, e
 	}
 	// Use local path directly when it is an existing directory (Directory / file analysis).
@@ -197,7 +198,7 @@ func getRepoPath(params Params) (path string, disposable bool, err error) {
 	// the copy is a symlink and we then apply the wrong .gitignore; using the path as-is fixes that.
 	absPath, err := filepath.Abs(params.Path)
 	if err != nil {
-		p, e := getter.Getter(params.Path)
+		p, e := getter.Getter(params.Path, params.WorkDir)
 		return p, true, e
 	}
 	// Normalize for trailing slash / "." so Stat works (e.g. "repo/." -> "repo")
@@ -206,7 +207,7 @@ func getRepoPath(params Params) (path string, disposable bool, err error) {
 	if err == nil && info.IsDir() {
 		return absPath, false, nil
 	}
-	p, e := getter.Getter(params.Path)
+	p, e := getter.Getter(params.Path, params.WorkDir)
 	return p, true, e
 }
 

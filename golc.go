@@ -1,5 +1,5 @@
-//go:build webui
-// +build webui
+//go:build webui || golc
+// +build webui golc
 
 package main
 
@@ -104,6 +104,7 @@ type RepoParams struct {
 	RepoSlug   string
 	MainBranch string
 	PathToScan string
+	WorkDir    string
 }
 
 type logWriter struct {
@@ -372,10 +373,14 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 			waitForWorkers(len(repolist.([]interface{})), results)
 		}
 	} else {
-		// Without multithreading
+		// Without multithreading: run one repo at a time. analyseRepoFunc always
+		// sends to the unbuffered results channel, so it must run in a goroutine
+		// with a matching receiver — calling it synchronously here would block
+		// forever on that send (deadlock). Waiting for 1 result per iteration
+		// keeps the analysis strictly sequential.
 		for _, project := range repolist.([]interface{}) {
-			// Execute the analysis synchronously
-			analyseRepoFunc(project, DestinationResult, platformConfig, spin, results, &count)
+			go analyseRepoFunc(project, DestinationResult, platformConfig, spin, results, &count)
+			waitForWorkers(1, results)
 		}
 	}
 
@@ -394,6 +399,26 @@ func getExcludePaths(configValue interface{}) []string {
 
 func getStringSliceConfig(platformConfig map[string]interface{}, key string) []string {
 	return getExcludePaths(platformConfig[key])
+}
+
+// getWorkDir returns the optional per-platform "WorkDir" setting (base directory for
+// temporary clones). Absent or non-string => "", which makes goloc fall back to the
+// GOLC_WORKDIR env var and then os.TempDir() (historical default).
+func getWorkDir(platformConfig map[string]interface{}) string {
+	if v, ok := platformConfig["WorkDir"]; ok && v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// exitGolc terminates the process after sweeping any temp clones that deferred
+// cleanup would otherwise miss (os.Exit does not run deferred funcs) — issue #81.
+// Use this instead of os.Exit anywhere a clone may already exist on disk.
+func exitGolc(code int) {
+	utils.CleanupTempClones()
+	os.Exit(code)
 }
 
 // Analysis functions for different repository types
@@ -435,6 +460,7 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: pathToScan,
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -455,6 +481,7 @@ func analyseBitSRVRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s:%s@%sscm/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["Users"].(string), platformConfig["AccessToken"].(string), trimmedURL, p.ProjectKey, p.RepoSlug),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -476,6 +503,7 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), baseapi, p.Org, p.RepoSlug),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -498,6 +526,7 @@ func analyseGitlabRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://gitlab-ci-token:%s@%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), domain, p.Namespace),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -517,6 +546,7 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), "dev.azure.com", platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -551,6 +581,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		Branch:            params.MainBranch,
 		Cloned:            false,
 		Repopath:          "",
+		WorkDir:           params.WorkDir,
 	}
 	if ResultAll {
 		golocParams.ByFile = true
@@ -566,6 +597,20 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		results <- 1
 		return
 	} else {
+
+		// Guarantee cleanup of the temp clone on every exit path (including the
+		// gc.Run() / NewGCloc error returns below). Both analysis passes share the
+		// same clone directory, so capture it once here; without this, a failed
+		// analysis leaked its clone and slowly filled the work dir (issue #81).
+		repoPath, repoDisposable := gc.Repopath, gc.RepopathDisposable
+		defer func() {
+			if repoDisposable && repoPath != "" {
+				if err1 := os.RemoveAll(repoPath); err1 != nil {
+					logger.Errorf(errorMessageDi, err1)
+				}
+				utils.UnregisterTempClone(repoPath)
+			}
+		}()
 
 		//gc.Run()
 		//*count++
@@ -613,13 +658,8 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			}
 		}
 
-		// Remove repository directory only if it is a temp clone, not the user's source directory
-		if gc.RepopathDisposable && gc.Repopath != "" {
-			err1 := os.RemoveAll(gc.Repopath)
-			if err1 != nil {
-				logger.Errorf(errorMessageDi, err1)
-			}
-		}
+		// Temp-clone cleanup is handled by the deferred RemoveAll registered above,
+		// so it runs on success and on every early-return error path alike.
 		golocParams.Cloned = false
 		spin.Stop()
 		logger.Infof("\r\t\t\t\t✅ %d The repository <%s> has been analyzed\n", *count, params.RepoSlug)
@@ -763,6 +803,18 @@ func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX,
 		return
 	}
 
+	// Directory analysis normally points at the user's local path (not disposable),
+	// but if goloc had to extract to a temp dir this guarantees it is removed on
+	// every exit path, consistent with the repository analysis path (issue #81).
+	if gc.RepopathDisposable && gc.Repopath != "" {
+		defer func(p string) {
+			if err1 := os.RemoveAll(p); err1 != nil {
+				logger.Errorf(errorMessageDi, err1)
+			}
+			utils.UnregisterTempClone(p)
+		}(gc.Repopath)
+	}
+
 	if err := runGlocPasses(gc, params, ResultAll); err != nil {
 		return
 	}
@@ -832,7 +884,7 @@ func AnalyseRun(params goloc.Params, reponame string) {
 	gc, err := goloc.NewGCloc(params, assets.Languages)
 	if err != nil {
 		fmt.Println(errorMessageRepo, err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	gc.Run()
@@ -869,7 +921,7 @@ func AnalyseRepo(DestinationResult string, Users string, AccessToken string, Dev
 	gc, err := goloc.NewGCloc(params, assets.Languages)
 	if err != nil {
 		fmt.Println(errorMessageRepo, err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	gc.Run()
@@ -882,6 +934,7 @@ func AnalyseRepo(DestinationResult string, Users string, AccessToken string, Dev
 			fmt.Printf(errorMessageDi, err1)
 			return
 		}
+		utils.UnregisterTempClone(gc.Repopath)
 	}
 
 	return cpt
@@ -959,6 +1012,12 @@ func setupResultsDirectory(platform string) string {
 // runGolcInProcess runs the GoLC analysis for the given platform key (e.g. "Github").
 // It is invoked by the webui binary when started with --internal-run <platform>.
 func runGolcInProcess(platform string) {
+	// Sweep any temp clones still registered by failed/partial analyses on the
+	// normal completion path too. Successful repos self-clean via their own
+	// deferred RemoveAll; this catches clones whose NewGCloc/clone failed before
+	// that defer was installed (os.Exit paths are covered by exitGolc) — issue #81.
+	defer utils.CleanupTempClones()
+
 	// Load config
 	configPath := os.Getenv("GOLC_CONFIG_FILE")
 	if configPath == "" {
@@ -968,11 +1027,11 @@ func runGolcInProcess(platform string) {
 	AppConfig, err = LoadConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Failed to load config: %s\n", err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 	if AppConfig.Release.Version != version1 {
 		fmt.Fprintf(os.Stderr, "\n❌ Version mismatch: expected %s but got %s - Use the correct config.json file!\n", version1, AppConfig.Release.Version)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	// Setup logging
@@ -980,7 +1039,7 @@ func runGolcInProcess(platform string) {
 	if _, statErr := os.Stat(logDir); os.IsNotExist(statErr) {
 		if mkErr := os.MkdirAll(logDir, 0755); mkErr != nil {
 			fmt.Fprintf(os.Stderr, "❌ Failed to create log directory: %v\n", mkErr)
-			os.Exit(1)
+			exitGolc(1)
 		}
 	}
 	_ = os.Remove("Logs/Logs.log")
@@ -993,7 +1052,7 @@ func runGolcInProcess(platform string) {
 	platformConfig, ok := AppConfig.Platforms[platform].(map[string]interface{})
 	if !ok {
 		fmt.Fprintf(os.Stderr, "\n❌ Configuration for DevOps platform '%s' not found\n", platform)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	var maxTotalCodeLines int
@@ -1037,7 +1096,7 @@ func runGolcInProcess(platform string) {
 
 		if len(gitproject) == 0 {
 			logger.Error(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
 
@@ -1071,7 +1130,7 @@ func runGolcInProcess(platform string) {
 
 				if len(repositories) == 0 {
 					logger.Error(errorMessageAnalyse)
-					os.Exit(1)
+					exitGolc(1)
 				} else {
 					// Get all branches for each repository and analyze them
 					allBranches, err := getgithub.GetAllBranchesForRepositories(platformConfig, repositories)
@@ -1091,7 +1150,7 @@ func runGolcInProcess(platform string) {
 
 				if len(repositories) == 0 {
 					logger.Error(errorMessageAnalyse)
-					os.Exit(1)
+					exitGolc(1)
 
 				} else {
 
@@ -1116,10 +1175,10 @@ func runGolcInProcess(platform string) {
 
 		if len(gitproject) == 0 {
 			logger.Error(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
-			//os.Exit(1)
+			//exitGolc(1)
 			NumberRepos = AnalyseReposListGitlab(DestinationResult, platformConfig, gitproject)
 
 		}
@@ -1133,12 +1192,12 @@ func runGolcInProcess(platform string) {
 		projects, err := getbibucketdc.GetProjectBitbucketList(platformConfig, fileexclusionEX)
 		if err != nil {
 			logger.Errorf("❌ Error Get Info Projects in Bitbucket server '%s' : ", err)
-			os.Exit(1)
+			exitGolc(1)
 		}
 
 		if len(projects) == 0 {
 			logger.Error(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
 
@@ -1160,7 +1219,7 @@ func runGolcInProcess(platform string) {
 		}
 		if len(projects1) == 0 {
 			logger.Errorf(errorMessageAnalyse)
-			os.Exit(1)
+			exitGolc(1)
 
 		} else {
 			// Run scanning repositories
@@ -1178,7 +1237,7 @@ func runGolcInProcess(platform string) {
 			ListExclusion, err = ReadLines(fileexclusionEX)
 			if err != nil {
 				logger.Errorf("❌ Error reading file <.cloc_file_ignore>:%v", err)
-				os.Exit(1)
+				exitGolc(1)
 			}
 		} else {
 			ListExclusion = make([]string, 0)
@@ -1189,7 +1248,7 @@ func runGolcInProcess(platform string) {
 			ListDirectory, err = ReadLines(fileload)
 			if err != nil {
 				logger.Errorf("❌ Error reading file <.cloc_file_load>:%v", err)
-				os.Exit(1)
+				exitGolc(1)
 			}
 			if len(ListDirectory) == 0 {
 				ListDirectory = append(ListDirectory, platformConfig["Directory"].(string))
@@ -1198,7 +1257,7 @@ func runGolcInProcess(platform string) {
 			dirField := platformConfig["Directory"].(string)
 			if len(dirField) == 0 {
 				logger.Error("❌ No analysis possible, no directory, specified file or specified loading file")
-				os.Exit(1)
+				exitGolc(1)
 			} else {
 				for _, d := range strings.Split(dirField, "\n") {
 					if d = strings.TrimSpace(d); d != "" {
@@ -1276,7 +1335,7 @@ func runGolcInProcess(platform string) {
 	files, err := os.ReadDir(DestinationResult)
 	if err != nil {
 		logger.Errorf("❌ Error listing files:%v", err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	// Initialize the sum of TotalCodeLines (excluding JSON to match SonarQube behavior)
@@ -1362,7 +1421,7 @@ func runGolcInProcess(platform string) {
 		logger.Errorf("     • No source files with recognised extensions were found")
 		logger.Errorf("     • Check the logs above for per-repo errors")
 		fmt.Println("\n --------------------------------------------------------------------")
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	// Global Result file
@@ -1403,7 +1462,7 @@ func runGolcInProcess(platform string) {
 	err = utils.CreateGlobalReport(baseResultsDir)
 	if err != nil {
 		logger.Errorf("❌ Error creating global report: %v", err)
-		os.Exit(1)
+		exitGolc(1)
 	}
 
 	err = utils.GenerateRepositorySummaryReports(baseResultsDir)

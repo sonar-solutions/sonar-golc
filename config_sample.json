@@ -24,7 +24,8 @@
         "NumberWorkerRepos": 10,
         "ResultByFile": true,
         "ResultAll": true,
-        "Org": true
+        "Org": true,
+        "WorkDir": ""
       },
       "BitBucket": {
         "Users": "XXXXX",
@@ -51,7 +52,8 @@
         "NumberWorkerRepos": 10,
         "ResultByFile": true,
         "ResultAll": true,
-        "Org": true
+        "Org": true,
+        "WorkDir": ""
       },
       "Github": {
         "AccessToken": "XXXXX",
@@ -76,7 +78,8 @@
         "NumberWorkerRepos": 10,
         "ResultByFile": true,
         "ResultAll": true,
-        "Org": true
+        "Org": true,
+        "WorkDir": ""
       },
       "GithubEnterprise": {
         "AccessToken": "XXXXX",
@@ -101,7 +104,8 @@
         "NumberWorkerRepos": 10,
         "ResultByFile": true,
         "ResultAll": true,
-        "Org": true
+        "Org": true,
+        "WorkDir": ""
       },
       "Gitlab": {
         "AccessToken": "XXXXX",
@@ -126,7 +130,8 @@
         "NumberWorkerRepos": 10,
         "ResultByFile": true,
         "ResultAll": true,
-        "Org": true
+        "Org": true,
+        "WorkDir": ""
       },
       "Azure": {
         "AccessToken": "XXXXX",
@@ -151,7 +156,8 @@
         "NumberWorkerRepos": 10,
         "ResultByFile": true,
         "ResultAll": true,
-        "Org": true
+        "Org": true,
+        "WorkDir": ""
       },
       "File": {
         "Organization": "XXXXX",

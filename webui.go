@@ -144,6 +144,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"GithubEnterprise": {
 		"DevOps": "github", "Apiver": "2022-11-28", "FileExclusion": "",
@@ -151,6 +152,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"Gitlab": {
 		"DevOps": "gitlab", "Url": "https://gitlab.com/", "Apiver": "v4",
@@ -159,6 +161,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"BitBucket": {
 		"DevOps": "bitbucket", "Url": "https://api.bitbucket.org/", "Apiver": "2.0",
@@ -167,6 +170,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"BitBucketSRV": {
 		"DevOps": "bitbucket_dc", "Apiver": "1.0", "Baseapi": "rest/api/",
@@ -175,6 +179,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-5), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"Azure": {
 		"DevOps": "azure", "Url": "https://dev.azure.com/", "Apiver": "7.1",
@@ -183,6 +188,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
 	},
 	"File": {
 		"DevOps": "file", "FileExclusion": "", "FileLoad": ".cloc_file_load",
@@ -1262,6 +1268,20 @@ const htmlTemplate = `<!DOCTYPE html>
               </div>
             </div>
 
+            <!-- Working directory for clones -->
+            <div class="col-12" id="adv-workdir-wrap">
+              <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:.75rem 1rem;">
+                <label class="form-label" for="adv-workDir">Working directory for clones <small class="text-muted">(optional)</small></label>
+                <input class="form-control" id="adv-workDir" placeholder="/data/golc-tmp">
+                <div class="mt-2 px-3 py-2" style="background:rgba(96,165,250,.07);border-left:3px solid rgba(96,165,250,.4);border-radius:0 4px 4px 0;font-size:.75rem;color:#94a3b8;line-height:1.7;">
+                  <i class="fas fa-info-circle me-1" style="color:#60a5fa;"></i>
+                  <strong style="color:#cbd5e1;">What this does</strong> — golc clones every repository here before counting lines, then deletes it.
+                  <div class="mt-1"><strong style="color:#cbd5e1;">Leave empty</strong> to use the system temp directory (the default). Many hosts mount <code style="color:#93c5fd;">/tmp</code> as a small or RAM-backed volume, so cloning many or large repos can fail with <em>"no space left on device"</em>.</div>
+                  <div class="mt-1"><strong style="color:#cbd5e1;">Set a path</strong> on a disk with enough free space (it is created if missing and must be writable) to avoid that. It can also be overridden globally with the <code style="color:#93c5fd;">GOLC_WORKDIR</code> environment variable.</div>
+                </div>
+              </div>
+            </div>
+
             <!-- Org vs personal toggle (GitHub only) -->
             <div class="col-12" id="adv-org-wrap" style="display:none;">
               <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:.75rem 1rem;">
@@ -1510,6 +1530,7 @@ async function selectPlatform(key) {
   const isFile = key === 'File';
   document.getElementById('adv-mt-wrap').style.display = isFile ? 'none' : '';
   document.getElementById('adv-workers-wrap').style.display = isFile ? 'none' : '';
+  document.getElementById('adv-workdir-wrap').style.display = isFile ? 'none' : '';
   document.getElementById('adv-defaultBranch-wrap').style.display = isFile ? 'none' : '';
   document.getElementById('adv-repos-wrap').style.display = (isFile || key === 'Gitlab') ? 'none' : '';
   const isGithub = key === 'Github' || key === 'GithubEnterprise';
@@ -1708,7 +1729,7 @@ function syncPresetKeywords() {
 }
 
 function populateAdvanced(key, saved) {
-  const defaults = {DefaultBranch:true,Branch:'',Multithreading:true,Workers:10,
+  const defaults = {DefaultBranch:true,Branch:'',Multithreading:true,Workers:10,WorkDir:'',
     FileExclusion:'',ExtExclusion:[],ExcludeTests:true,ExcludeVendor:true,ExcludeBuild:true,
     FolderKeywords:[],FileNamePatterns:DEFAULT_FILE_PATTERNS,Repos:'',Project:'',ResultByFile:true,Org:true};
   const cfg = Object.assign({}, defaults, saved);
@@ -1717,6 +1738,7 @@ function populateAdvanced(key, saved) {
   document.getElementById('adv-branch').value = cfg.Branch || '';
   document.getElementById('adv-multithreading').checked = cfg.Multithreading !== false;
   document.getElementById('adv-workers').value = cfg.Workers || 10;
+  document.getElementById('adv-workDir').value = cfg.WorkDir || '';
   document.getElementById('adv-extExclusion').value = Array.isArray(cfg.ExtExclusion)
     ? cfg.ExtExclusion.filter(Boolean).join(',') : (cfg.ExtExclusion||'');
   document.getElementById('adv-org').checked = cfg.Org !== false;
@@ -1832,6 +1854,7 @@ function gatherConfig() {
   cfg.Multithreading = document.getElementById('adv-multithreading').checked;
   cfg.Workers = parseInt(document.getElementById('adv-workers').value) || 10;
   cfg.NumberWorkerRepos = cfg.Workers;
+  cfg.WorkDir = document.getElementById('adv-workDir').value.trim();
   cfg.FileExclusion = '';
   const ext = document.getElementById('adv-extExclusion').value.trim();
   cfg.ExtExclusion = ext ? ext.split(',').map(s=>s.trim()).filter(Boolean) : [];
