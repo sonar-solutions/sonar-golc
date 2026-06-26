@@ -104,6 +104,11 @@ var allLevels = []logrus.Level{
 // NewLogger returns a logger that:
 //   - writes Info+ (coloured) to stdout and Logs/Logs.log  — visible in the UI SSE stream
 //   - writes Debug+ (plain text) to Logs/debug.log         — downloadable from the UI
+//
+// Each call opens two file handles (Logs.log + debug.log) that are only closed
+// when the GC finalizes the returned logger, so it is NOT safe to call per-repo
+// on hot paths. Production code MUST use SharedLogger() instead; NewLogger is
+// intended for test fixtures that want an isolated logger instance.
 func NewLogger() *logrus.Logger {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)

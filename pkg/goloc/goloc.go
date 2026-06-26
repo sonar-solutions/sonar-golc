@@ -60,7 +60,7 @@ type GCloc struct {
 /* func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
 	var path string
 	var err error
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 
 	if !params.Cloned {
 		// The repository is not cloned, clone it
@@ -156,7 +156,7 @@ func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
 		if lastPart := filepath.Base(path); lastPart != "" {
 			params.OutputName = fmt.Sprintf("%s%s", params.OutputName, lastPart)
 		} else {
-			utils.NewLogger().Errorf("❌ Failed to create OutputName")
+			utils.SharedLogger().Errorf("❌ Failed to create OutputName")
 		}
 	}
 
@@ -333,7 +333,7 @@ func getReporters(reportFormats []string, outputName, outputPath string, byfile 
 		case "prompt":
 			reporters = append(reporters, prompt.PromptReporter{})
 		case "json":
-			//loggers := utils.NewLogger()
+			//loggers := utils.SharedLogger()
 
 			if byfile {
 

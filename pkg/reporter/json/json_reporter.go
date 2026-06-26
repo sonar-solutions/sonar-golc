@@ -89,7 +89,7 @@ func (j JsonReporter) GenerateReportByFile(summary *sorter.SortedSummary) error 
 }
 
 func (j JsonReporter) writeJson(jsonReport *report) error {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	file, err := json.MarshalIndent(jsonReport, "", "  ")
 	if err != nil {
 		return err

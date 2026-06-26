@@ -90,7 +90,7 @@ func (c CsvReporter) GenerateReportByFile(summary *sorter.SortedSummary) error {
 }
 
 func (c CsvReporter) writeCsv(csvReport *report) error {
-	loggers := utils.NewLogger()
+	loggers := utils.SharedLogger()
 	outputName := strings.Replace(c.OutputName, "/", "_", -1)
 	if !strings.HasSuffix(outputName, ".csv") {
 		outputName += ".csv"
