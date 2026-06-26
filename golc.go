@@ -104,6 +104,7 @@ type RepoParams struct {
 	RepoSlug   string
 	MainBranch string
 	PathToScan string
+	WorkDir    string
 }
 
 type logWriter struct {
@@ -396,6 +397,18 @@ func getStringSliceConfig(platformConfig map[string]interface{}, key string) []s
 	return getExcludePaths(platformConfig[key])
 }
 
+// getWorkDir returns the optional per-platform "WorkDir" setting (base directory for
+// temporary clones). Absent or non-string => "", which makes goloc fall back to the
+// GOLC_WORKDIR env var and then os.TempDir() (historical default).
+func getWorkDir(platformConfig map[string]interface{}) string {
+	if v, ok := platformConfig["WorkDir"]; ok && v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 // Analysis functions for different repository types
 
 // Analysis functions for Bitbucket Cloud
@@ -435,6 +448,7 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: pathToScan,
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -455,6 +469,7 @@ func analyseBitSRVRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s:%s@%sscm/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["Users"].(string), platformConfig["AccessToken"].(string), trimmedURL, p.ProjectKey, p.RepoSlug),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -476,6 +491,7 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), baseapi, p.Org, p.RepoSlug),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -498,6 +514,7 @@ func analyseGitlabRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://gitlab-ci-token:%s@%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), domain, p.Namespace),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -517,6 +534,7 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 		RepoSlug:   p.RepoSlug,
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), "dev.azure.com", platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
+		WorkDir:    getWorkDir(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -551,6 +569,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		Branch:            params.MainBranch,
 		Cloned:            false,
 		Repopath:          "",
+		WorkDir:           params.WorkDir,
 	}
 	if ResultAll {
 		golocParams.ByFile = true
@@ -566,6 +585,19 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		results <- 1
 		return
 	} else {
+
+		// Guarantee cleanup of the temp clone on every exit path (including the
+		// gc.Run() / NewGCloc error returns below). Both analysis passes share the
+		// same clone directory, so capture it once here; without this, a failed
+		// analysis leaked its clone and slowly filled the work dir (issue #81).
+		repoPath, repoDisposable := gc.Repopath, gc.RepopathDisposable
+		defer func() {
+			if repoDisposable && repoPath != "" {
+				if err1 := os.RemoveAll(repoPath); err1 != nil {
+					logger.Errorf(errorMessageDi, err1)
+				}
+			}
+		}()
 
 		//gc.Run()
 		//*count++
@@ -613,13 +645,8 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			}
 		}
 
-		// Remove repository directory only if it is a temp clone, not the user's source directory
-		if gc.RepopathDisposable && gc.Repopath != "" {
-			err1 := os.RemoveAll(gc.Repopath)
-			if err1 != nil {
-				logger.Errorf(errorMessageDi, err1)
-			}
-		}
+		// Temp-clone cleanup is handled by the deferred RemoveAll registered above,
+		// so it runs on success and on every early-return error path alike.
 		golocParams.Cloned = false
 		spin.Stop()
 		logger.Infof("\r\t\t\t\t✅ %d The repository <%s> has been analyzed\n", *count, params.RepoSlug)
@@ -761,6 +788,17 @@ func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX,
 	if err != nil {
 		logger.Errorf(errorMessageRepo+"%v", err)
 		return
+	}
+
+	// Directory analysis normally points at the user's local path (not disposable),
+	// but if goloc had to extract to a temp dir this guarantees it is removed on
+	// every exit path, consistent with the repository analysis path (issue #81).
+	if gc.RepopathDisposable && gc.Repopath != "" {
+		defer func(p string) {
+			if err1 := os.RemoveAll(p); err1 != nil {
+				logger.Errorf(errorMessageDi, err1)
+			}
+		}(gc.Repopath)
 	}
 
 	if err := runGlocPasses(gc, params, ResultAll); err != nil {

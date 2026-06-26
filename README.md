@@ -82,6 +82,7 @@ Credentials are entered in the browser and saved automatically — no config fil
 | `Project` | string | Limit to a specific project key (Bitbucket, Azure DevOps). |
 | `Repos` | string | Limit to specific repositories (comma-separated). GitHub/GHE: repository name. Bitbucket: repository slug. Azure DevOps: repository name. Not applicable for GitLab — use the Group URL slug field instead. |
 | `Org` | bool | `true` = analyze an organization account, `false` = analyze a personal account. GitHub and GitHub Enterprise only. Default: `true`. |
+| `WorkDir` | string | Base directory where repositories are cloned before counting, then deleted. Leave blank to use the system temp directory (the default). Set this to a path on a disk with enough free space when `/tmp` is small or RAM-backed and large/many repos fail with `no space left on device`. The directory is created if missing and must be writable. Can also be set globally with the `GOLC_WORKDIR` environment variable; the per-platform `WorkDir` value takes precedence over the environment variable. |
 
 
 ---
