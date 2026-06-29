@@ -189,7 +189,8 @@ type PageData struct {
 	Languages        []LanguageData
 	GlobalReport     Globalinfo
 	Repositories     []RepositoryData
-	NoteLOCExcluded  string // Note that JSON is excluded from total (SonarQube behavior)
+	SkippedRepos     []utils.SkippedRepo // repos the analysis phase could not complete (clone timeout/failure, analysis error)
+	NoteLOCExcluded  string              // Note that JSON is excluded from total (SonarQube behavior)
 	Platform         string
 }
 
@@ -911,10 +912,15 @@ func loadApplicationData() (PageData, error) {
 
 	detectedPlatform, _, _ := detectPlatformAndReadAnalysis()
 
+	// Repositories that could not be analyzed (clone timeout/failure or counting
+	// error). Missing file (older result sets) => empty list, so the page still renders.
+	skippedRepos := utils.LoadSkippedRepos("Results")
+
 	pageData = PageData{
 		Languages:       languages,
 		GlobalReport:    globalInfo,
 		Repositories:    repositoryData,
+		SkippedRepos:    skippedRepos,
 		NoteLOCExcluded: utils.NoteExcludedFromTotal,
 		Platform:        detectedPlatform,
 	}
@@ -924,8 +930,11 @@ func loadApplicationData() (PageData, error) {
 
 // setupHTTPHandlers configures all HTTP route handlers
 func setupHTTPHandlers(pageData PageData) {
-	// Load HTML template
-	tmpl := template.Must(template.New("index").Parse(htmlTemplate))
+	// Load HTML template. The "add" helper renders 1-based row numbers in the
+	// skipped-repositories table (Go templates have no built-in increment).
+	tmpl := template.Must(template.New("index").Funcs(template.FuncMap{
+		"add": func(a, b int) int { return a + b },
+	}).Parse(htmlTemplate))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		err := tmpl.Execute(w, pageData)
@@ -980,6 +989,17 @@ func setupHTTPHandlers(pageData PageData) {
 	http.HandleFunc("/api/repositories", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeHeader, applicationJSONType)
 		json.NewEncoder(w).Encode(pageData.Repositories)
+	})
+
+	// API Endpoint for repositories that could not be analyzed (clone timeout/failure,
+	// analysis error). Always returns a JSON array (empty when nothing was skipped).
+	http.HandleFunc("/api/skipped-repositories", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(contentTypeHeader, applicationJSONType)
+		skipped := pageData.SkippedRepos
+		if skipped == nil {
+			skipped = []utils.SkippedRepo{}
+		}
+		json.NewEncoder(w).Encode(skipped)
 	})
 
 	// Repository Detail Page Handler
@@ -1418,6 +1438,50 @@ const htmlTemplate = `
           </div>
         </div>
       </section>
+
+      {{if .SkippedRepos}}
+      <!-- Skipped Repositories Section -->
+      <section id="skipped-section" style="background-color: #f8f9fa; padding: 0 0 3rem 0;">
+        <div class="container">
+          <div class="row">
+            <div class="col-12">
+              <div class="card shadow-lg">
+                <h5 class="card-header text-white" style="background-color:#d68910;">
+                  <i class="fas fa-exclamation-triangle"></i> Skipped Repositories ({{len .SkippedRepos}})
+                </h5>
+                <div class="card-body">
+                  <p class="text-muted mb-3" style="font-size:0.9rem;">
+                    These repositories were targeted but could not be analyzed (clone timeout, clone failure, or analysis error) and are <strong>not</strong> included in the totals above. Review the reason, then retry, raise the clone timeout, or add them to the exclusion list.
+                  </p>
+                  <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                      <thead class="table-dark">
+                        <tr>
+                          <th scope="col">#</th>
+                          <th scope="col">Repository</th>
+                          <th scope="col">Branch</th>
+                          <th scope="col">Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {{range $i, $r := .SkippedRepos}}
+                        <tr>
+                          <td>{{add $i 1}}</td>
+                          <td>{{if $r.ProjectKey}}<span class="text-muted" style="font-size:0.85em;">{{$r.ProjectKey}}&thinsp;/&thinsp;</span>{{end}}{{$r.RepoSlug}}</td>
+                          <td>{{$r.Branch}}</td>
+                          <td><code style="color:#b9770e;">{{$r.Reason}}</code></td>
+                        </tr>
+                        {{end}}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      {{end}}
     </main>
 
      <!-- Modal -->

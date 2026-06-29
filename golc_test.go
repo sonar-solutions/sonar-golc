@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getazure"
 	getbibucket "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucket"
@@ -482,24 +484,45 @@ func TestAnalysisFunctions(t *testing.T) {
 		}
 	})
 
-	t.Run("waitForWorkers function", func(t *testing.T) {
-		// Create a test channel
-		results := make(chan int, 3)
+	t.Run("getCloneTimeout function", func(t *testing.T) {
+		// Absent key -> default.
+		if got := getCloneTimeout(map[string]interface{}{}); got != time.Duration(defaultCloneTimeoutMinutes*float64(time.Minute)) {
+			t.Errorf("absent CloneTimeout: got %v, want default %v minutes", got, defaultCloneTimeoutMinutes)
+		}
+		// Explicit value (minutes) -> that duration.
+		if got := getCloneTimeout(map[string]interface{}{"CloneTimeout": float64(5)}); got != 5*time.Minute {
+			t.Errorf("CloneTimeout=5: got %v, want 5m", got)
+		}
+		// Zero -> disabled (0 duration, no deadline).
+		if got := getCloneTimeout(map[string]interface{}{"CloneTimeout": float64(0)}); got != 0 {
+			t.Errorf("CloneTimeout=0: got %v, want 0 (disabled)", got)
+		}
+		// Negative -> disabled.
+		if got := getCloneTimeout(map[string]interface{}{"CloneTimeout": float64(-3)}); got != 0 {
+			t.Errorf("CloneTimeout<0: got %v, want 0 (disabled)", got)
+		}
+	})
 
-		// Send some results
-		results <- 1
-		results <- 1
-		results <- 1
-
-		// Should not hang or panic
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("waitForWorkers panicked: %v", r)
-				}
-			}()
-			waitForWorkers(3, results)
-		}()
+	t.Run("skipRecorder is concurrency-safe", func(t *testing.T) {
+		r := &skipRecorder{}
+		r.reset()
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				r.add(skippedRepo{RepoSlug: "repo", Branch: "main", Reason: "clone timed out"})
+			}(i)
+		}
+		wg.Wait()
+		if got := len(r.snapshot()); got != 50 {
+			t.Errorf("skipRecorder recorded %d entries, want 50", got)
+		}
+		// reset clears the slate for the next run.
+		r.reset()
+		if got := len(r.snapshot()); got != 0 {
+			t.Errorf("after reset, got %d entries, want 0", got)
+		}
 	})
 }
 

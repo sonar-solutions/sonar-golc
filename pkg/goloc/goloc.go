@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/analyzer"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/filesystem"
@@ -45,6 +46,7 @@ type Params struct {
 	Repopath          string
 	RepopathDisposable bool // if true, Repopath is a temp clone safe to delete; if false, it is the user's directory and must not be removed
 	WorkDir           string // base directory for temp clones/extractions; empty => GOLC_WORKDIR env or os.TempDir()
+	CloneTimeout      time.Duration // per-repo clone deadline; 0 disables (bounds hung clones, see gogit.Getrepos)
 }
 
 type GCloc struct {
@@ -190,7 +192,7 @@ func getRepoPath(params Params) (path string, disposable bool, err error) {
 	}
 
 	if len(params.Branch) != 0 {
-		p, e := gogit.Getrepos(params.Path, params.Branch, params.Token, params.WorkDir)
+		p, e := gogit.Getrepos(params.Path, params.Branch, params.Token, params.WorkDir, params.CloneTimeout)
 		return p, true, e
 	}
 	// Use local path directly when it is an existing directory (Directory / file analysis).

@@ -99,12 +99,13 @@ type LanguageRes struct {
 }
 
 type RepoParams struct {
-	ProjectKey string
-	Namespace  string
-	RepoSlug   string
-	MainBranch string
-	PathToScan string
-	WorkDir    string
+	ProjectKey   string
+	Namespace    string
+	RepoSlug     string
+	MainBranch   string
+	PathToScan   string
+	WorkDir      string
+	CloneTimeout time.Duration
 }
 
 type logWriter struct {
@@ -341,50 +342,64 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 
 	spin := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin.Color("green", "bold")
-	messageF := ""
-	spin.FinalMSG = messageF
+	spin.FinalMSG = ""
 
-	// Create a channel to receive results
-	results := make(chan int)
-	count := 1
+	repos := repolist.([]interface{})
+	total := len(repos)
 
+	// Reset the per-run skip recorder so a re-run does not inherit stale entries.
+	skipped.reset()
+
+	// Effective concurrency:
+	//   - multithreading off        -> 1 (strictly sequential)
+	//   - list <= NumberWorkerRepos -> run them all at once (preserves prior behavior)
+	//   - otherwise                 -> Workers
+	concurrency := 1
 	if platformConfig["Multithreading"].(bool) {
-		if len(repolist.([]interface{})) > int(platformConfig["NumberWorkerRepos"].(float64)) {
-			// Launch goroutines in batches of X
-			X := int(platformConfig["Workers"].(float64))
-			batches := len(repolist.([]interface{})) / X
-			remainder := len(repolist.([]interface{})) % X
-			for i := 0; i < batches; i++ {
-				for j := i * X; j < (i+1)*X; j++ {
-					go analyseRepoFunc(repolist.([]interface{})[j], DestinationResult, platformConfig, spin, results, &count)
-				}
-				waitForWorkers(X, results)
-			}
-			// Launch remaining goroutines
-			for i := batches * X; i < batches*X+remainder; i++ {
-				go analyseRepoFunc(repolist.([]interface{})[i], DestinationResult, platformConfig, spin, results, &count)
-			}
-			waitForWorkers(remainder, results)
+		if total <= int(platformConfig["NumberWorkerRepos"].(float64)) {
+			concurrency = total
 		} else {
-			// Launch goroutines for each repo
-			for _, project := range repolist.([]interface{}) {
-				go analyseRepoFunc(project, DestinationResult, platformConfig, spin, results, &count)
-			}
-			waitForWorkers(len(repolist.([]interface{})), results)
-		}
-	} else {
-		// Without multithreading: run one repo at a time. analyseRepoFunc always
-		// sends to the unbuffered results channel, so it must run in a goroutine
-		// with a matching receiver — calling it synchronously here would block
-		// forever on that send (deadlock). Waiting for 1 result per iteration
-		// keeps the analysis strictly sequential.
-		for _, project := range repolist.([]interface{}) {
-			go analyseRepoFunc(project, DestinationResult, platformConfig, spin, results, &count)
-			waitForWorkers(1, results)
+			concurrency = int(platformConfig["Workers"].(float64))
 		}
 	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
 
-	return len(repolist.([]interface{}))
+	// Rolling worker pool: a semaphore caps concurrency while every finished repo
+	// frees its slot for the next one immediately. This replaces the old fixed-batch
+	// barrier, where a single slow or hung repository stalled its entire batch (up to
+	// Workers-1 idle workers) and froze overall progress. Combined with the per-repo
+	// clone timeout in gogit.Getrepos, no single repository can hang the whole scan.
+	results := make(chan int, total) // buffered so worker sends never block
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	count := 1
+
+	for _, project := range repos {
+		wg.Add(1)
+		sem <- struct{}{} // acquire a slot (blocks once concurrency is reached)
+		go func(p interface{}) {
+			defer wg.Done()
+			defer func() { <-sem }() // release the slot
+			analyseRepoFunc(p, DestinationResult, platformConfig, spin, results, &count)
+		}(project)
+	}
+
+	wg.Wait()
+	close(results)
+
+	// Persist the skipped repositories so the ResultsAll web page and the PDF report
+	// can surface them. DestinationResult is the base Results directory at this point.
+	skippedList := skipped.snapshot()
+	if err := utils.SaveSkippedRepos(DestinationResult, skippedList); err != nil {
+		logger.Errorf("❌ Error saving skipped repositories: %v", err)
+	}
+	if len(skippedList) > 0 {
+		logger.Warnf("⚠️  %d repository(ies) were skipped during analysis (see report for details)", len(skippedList))
+	}
+
+	return total
 }
 
 func getExcludePaths(configValue interface{}) []string {
@@ -412,6 +427,75 @@ func getWorkDir(platformConfig map[string]interface{}) string {
 	}
 	return ""
 }
+
+// defaultCloneTimeoutMinutes bounds a single repository clone by default so that
+// one stalled clone can no longer hang an entire org-wide scan. Operators can raise
+// it for very large repos, or set CloneTimeout to 0 to disable the deadline.
+const defaultCloneTimeoutMinutes = 15.0
+
+// getCloneTimeout reads the optional per-platform "CloneTimeout" setting (in minutes)
+// and returns it as a duration. Absent/invalid => default; an explicit 0 (or negative)
+// disables the deadline.
+func getCloneTimeout(platformConfig map[string]interface{}) time.Duration {
+	minutes := defaultCloneTimeoutMinutes
+	if v, ok := platformConfig["CloneTimeout"]; ok && v != nil {
+		if f, ok := v.(float64); ok {
+			if f <= 0 {
+				return 0
+			}
+			minutes = f
+		}
+	}
+	return time.Duration(minutes * float64(time.Minute))
+}
+
+// skippedRepo describes a repository/branch that the analysis phase could not
+// complete (clone timeout, clone failure, or counting error). It maps directly to
+// utils.SkippedRepo for persistence.
+type skippedRepo struct {
+	ProjectKey string
+	RepoSlug   string
+	Branch     string
+	Reason     string
+}
+
+// skipRecorder accumulates skipped repositories across the concurrent analysis
+// workers. A single golc run analyzes one platform, so a package-level recorder
+// (reset at the start of each AnalyseReposList) is sufficient; the mutex makes it
+// safe for the worker goroutines to record concurrently.
+type skipRecorder struct {
+	mu    sync.Mutex
+	items []skippedRepo
+}
+
+func (r *skipRecorder) reset() {
+	r.mu.Lock()
+	r.items = nil
+	r.mu.Unlock()
+}
+
+func (r *skipRecorder) add(s skippedRepo) {
+	r.mu.Lock()
+	r.items = append(r.items, s)
+	r.mu.Unlock()
+}
+
+func (r *skipRecorder) snapshot() []utils.SkippedRepo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]utils.SkippedRepo, len(r.items))
+	for i, s := range r.items {
+		out[i] = utils.SkippedRepo{
+			ProjectKey: s.ProjectKey,
+			RepoSlug:   s.RepoSlug,
+			Branch:     s.Branch,
+			Reason:     s.Reason,
+		}
+	}
+	return out
+}
+
+var skipped = &skipRecorder{}
 
 // exitGolc terminates the process after sweeping any temp clones that deferred
 // cleanup would otherwise miss (os.Exit does not run deferred funcs) — issue #81.
@@ -461,6 +545,7 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 		MainBranch: p.MainBranch,
 		PathToScan: pathToScan,
 		WorkDir:    getWorkDir(platformConfig),
+		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -482,6 +567,7 @@ func analyseBitSRVRepo(project interface{}, DestinationResult string, platformCo
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s:%s@%sscm/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["Users"].(string), platformConfig["AccessToken"].(string), trimmedURL, p.ProjectKey, p.RepoSlug),
 		WorkDir:    getWorkDir(platformConfig),
+		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -504,6 +590,7 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), baseapi, p.Org, p.RepoSlug),
 		WorkDir:    getWorkDir(platformConfig),
+		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -527,6 +614,7 @@ func analyseGitlabRepo(project interface{}, DestinationResult string, platformCo
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://gitlab-ci-token:%s@%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), domain, p.Namespace),
 		WorkDir:    getWorkDir(platformConfig),
+		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -547,6 +635,7 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 		MainBranch: p.MainBranch,
 		PathToScan: fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), "dev.azure.com", platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
 		WorkDir:    getWorkDir(platformConfig),
+		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
@@ -582,17 +671,33 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		Cloned:            false,
 		Repopath:          "",
 		WorkDir:           params.WorkDir,
+		CloneTimeout:      params.CloneTimeout,
 	}
 	if ResultAll {
 		golocParams.ByFile = true
 	}
+
+	// recordSkip notes that this repository/branch could not be analyzed so it can be
+	// surfaced (with a reason) in the web page and PDF report instead of silently
+	// vanishing from the totals.
+	recordSkip := func(reason string) {
+		skipped.add(skippedRepo{
+			ProjectKey: params.ProjectKey,
+			RepoSlug:   params.RepoSlug,
+			Branch:     params.MainBranch,
+			Reason:     reason,
+		})
+	}
+
 	MessB := fmt.Sprintf("   Extracting files from repo : %s ", params.RepoSlug)
 	spin.Suffix = MessB
 	spin.Start()
 
 	gc, err := goloc.NewGCloc(golocParams, assets.Languages)
 	if err != nil {
+		spin.Stop()
 		logger.Errorf(errorMessageRepo+"%v", err)
+		recordSkip(err.Error())
 		*count++
 		results <- 1
 		return
@@ -620,6 +725,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			if err := gc.Run(); err != nil {
 				fmt.Print("\n")
 				logger.Errorf("❌ Error during analysis with ByAll = true: %v", err)
+				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				*count++
 				results <- 1
 				return
@@ -635,6 +741,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			if err != nil {
 				fmt.Print("\n")
 				logger.Errorf("❌ Error initializing GCloc for ByFile = false: %v", err)
+				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				*count++
 				results <- 1
 				return
@@ -643,6 +750,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			if err := gc.Run(); err != nil {
 				fmt.Print("\n")
 				logger.Errorf("❌ Error during analysis with ByFile = false: %v", err)
+				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				*count++
 				results <- 1
 				return
@@ -652,6 +760,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 			if err := gc.Run(); err != nil {
 				fmt.Print("\n")
 				logger.Errorf("❌ Error during analysis: %v", err)
+				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				*count++
 				results <- 1
 				return
@@ -665,14 +774,6 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		logger.Infof("\r\t\t\t\t✅ %d The repository <%s> has been analyzed\n", *count, params.RepoSlug)
 		// Send result through channel
 		results <- 1
-	}
-}
-
-// Wait for all goroutines to complete
-func waitForWorkers(numWorkers int, results chan int) {
-	for i := 0; i < numWorkers; i++ {
-		fmt.Printf("\r Waiting for workers...\n")
-		<-results
 	}
 }
 
