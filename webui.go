@@ -1861,7 +1861,11 @@ function gatherConfig() {
   cfg.Workers = parseInt(document.getElementById('adv-workers').value) || 10;
   cfg.NumberWorkerRepos = cfg.Workers;
   const ctRaw = document.getElementById('adv-cloneTimeout');
-  cfg.CloneTimeout = ctRaw ? (parseInt(ctRaw.value, 10) || 0) : 15;
+  // Empty/blank field falls back to the default (15); an explicit "0" still disables
+  // the deadline. Treating a cleared field as 0 would silently turn off the very
+  // hang-protection this setting exists for.
+  const ctVal = ctRaw ? ctRaw.value.trim() : '';
+  cfg.CloneTimeout = ctVal === '' ? 15 : (parseInt(ctVal, 10) || 0);
   cfg.WorkDir = document.getElementById('adv-workDir').value.trim();
   cfg.FileExclusion = '';
   const ext = document.getElementById('adv-extExclusion').value.trim();

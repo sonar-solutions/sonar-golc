@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -336,7 +337,7 @@ func addFileToZip(filePath, relPath string, fileInfo os.FileInfo, zipWriter *zip
 }
 
 // Generic function to analyze repositories
-func AnalyseReposList(DestinationResult string, platformConfig map[string]interface{}, repolist interface{}, analyseRepoFunc func(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *int)) (cpt int) {
+func AnalyseReposList(DestinationResult string, platformConfig map[string]interface{}, repolist interface{}, analyseRepoFunc func(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64)) (cpt int) {
 	//fmt.Print("\n🔎 Analysis of Repos ...\n")
 	logger.Infof("🔎 Analysis of Repos ...\n")
 
@@ -374,7 +375,9 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 	results := make(chan int, total) // buffered so worker sends never block
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
-	count := 1
+	// Progress counter shared across the worker goroutines. It is read and bumped
+	// concurrently by performRepoAnalysis, so it must be atomic, not a plain int.
+	var count atomic.Int64
 
 	for _, project := range repos {
 		wg.Add(1)
@@ -508,7 +511,7 @@ func exitGolc(code int) {
 // Analysis functions for different repository types
 
 // Analysis functions for Bitbucket Cloud
-func analyseBitCRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *int) {
+func analyseBitCRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64) {
 	p := project.(getbibucket.ProjectBranch)
 	var excludeExtensions []string
 
@@ -551,7 +554,7 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 }
 
 // Analysis functions for Bitbucket DC
-func analyseBitSRVRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, trimmedURL string, spin *spinner.Spinner, results chan int, count *int) {
+func analyseBitSRVRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, trimmedURL string, spin *spinner.Spinner, results chan int, count *atomic.Int64) {
 	p := project.(getbibucketdc.ProjectBranch)
 	var excludeExtensions []string
 
@@ -573,7 +576,7 @@ func analyseBitSRVRepo(project interface{}, DestinationResult string, platformCo
 }
 
 // Analysis functions for GitHub
-func analyseGithubRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *int) {
+func analyseGithubRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64) {
 	p := project.(getgithub.ProjectBranch)
 	var excludeExtensions []string
 
@@ -596,7 +599,7 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 }
 
 // Analysis functions for GitLab
-func analyseGitlabRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *int) {
+func analyseGitlabRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64) {
 	p := project.(getgitlab.ProjectBranch)
 	var excludeExtensions []string
 
@@ -619,7 +622,7 @@ func analyseGitlabRepo(project interface{}, DestinationResult string, platformCo
 	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
 }
 
-func analyseAzurebRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *int) {
+func analyseAzurebRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64) {
 	p := project.(getazure.ProjectBranch)
 	var excludeExtensions []string
 
@@ -641,7 +644,7 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 }
 
 // Perform repository analysis (common logic)
-func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spinner.Spinner, results chan int, count *int, excludeExtension []string, excludePaths []string, folderKeywords []string, fileNamePatterns []string, ResultByFile bool, ResultAll bool) {
+func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spinner.Spinner, results chan int, count *atomic.Int64, excludeExtension []string, excludePaths []string, folderKeywords []string, fileNamePatterns []string, ResultByFile bool, ResultAll bool) {
 	// Always use a consistent filename pattern so downstream parsing works across platforms.
 	// Format: Result_<OrgOrProjectKey>__<RepoSlug>__<Branch>
 	// The double-underscore field separator keeps `_` free to appear inside any component
@@ -698,7 +701,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		spin.Stop()
 		logger.Errorf(errorMessageRepo+"%v", err)
 		recordSkip(err.Error())
-		*count++
+		count.Add(1)
 		results <- 1
 		return
 	} else {
@@ -718,7 +721,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		}()
 
 		//gc.Run()
-		//*count++
+		//count.Add(1)
 
 		if ResultAll {
 
@@ -726,7 +729,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				fmt.Print("\n")
 				logger.Errorf("❌ Error during analysis with ByAll = true: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
-				*count++
+				count.Add(1)
 				results <- 1
 				return
 			}
@@ -742,7 +745,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				fmt.Print("\n")
 				logger.Errorf("❌ Error initializing GCloc for ByFile = false: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
-				*count++
+				count.Add(1)
 				results <- 1
 				return
 			}
@@ -751,7 +754,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				fmt.Print("\n")
 				logger.Errorf("❌ Error during analysis with ByFile = false: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
-				*count++
+				count.Add(1)
 				results <- 1
 				return
 			}
@@ -761,7 +764,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				fmt.Print("\n")
 				logger.Errorf("❌ Error during analysis: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
-				*count++
+				count.Add(1)
 				results <- 1
 				return
 			}
@@ -771,7 +774,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		// so it runs on success and on every early-return error path alike.
 		golocParams.Cloned = false
 		spin.Stop()
-		logger.Infof("\r\t\t\t\t✅ %d The repository <%s> has been analyzed\n", *count, params.RepoSlug)
+		logger.Infof("\r\t\t\t\t✅ %d The repository <%s> has been analyzed\n", count.Add(1), params.RepoSlug)
 		// Send result through channel
 		results <- 1
 	}
@@ -796,7 +799,7 @@ func AnalyseReposListBitSRV(DestinationResult string, platformConfig map[string]
 	for i, v := range repolist {
 		repoInterfaces[i] = v
 	}
-	return AnalyseReposList(DestinationResult, platformConfig, repoInterfaces, func(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *int) {
+	return AnalyseReposList(DestinationResult, platformConfig, repoInterfaces, func(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64) {
 		analyseBitSRVRepo(project, DestinationResult, platformConfig, trimmedURL, spin, results, count)
 	})
 }
@@ -869,7 +872,7 @@ func saveFileAnalysisResult(destDir, org string, dirs []string) error {
 /* ---------------- Analyse Directory ---------------- */
 
 // analyseDirectory runs the goloc analysis for a single directory entry.
-func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX, extexclusion, folderKeywords, fileNamePatterns []string, destDir string, count *int) {
+func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX, extexclusion, folderKeywords, fileNamePatterns []string, destDir string, count *atomic.Int64) {
 	params := goloc.Params{
 		Path:              dir,
 		ByFile:            ResultByFile,
@@ -920,8 +923,7 @@ func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX,
 		return
 	}
 
-	logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", *count, dir)
-	*count++
+	logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", count.Add(1), dir)
 }
 
 // runGlocPasses executes either a dual-pass (ResultAll) or single-pass analysis.
@@ -967,7 +969,8 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 
 	var wg sync.WaitGroup
 	wg.Add(len(Listdirectorie))
-	count := 1
+	// Shared across the per-directory goroutines below; atomic to avoid a data race.
+	var count atomic.Int64
 
 	for _, Listdirectories := range Listdirectorie {
 		go func(dir string) {

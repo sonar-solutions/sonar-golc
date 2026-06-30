@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,7 +60,7 @@ func TestPerformRepoAnalysisCloneCleanup(t *testing.T) {
 	}
 	spin := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	results := make(chan int, 1)
-	count := 0
+	var count atomic.Int64
 
 	performRepoAnalysis(params, dest, spin, results, &count, nil, nil, nil, nil, false, false)
 	<-results
@@ -120,7 +121,7 @@ func TestPerformRepoAnalysisLocalDir(t *testing.T) {
 	}
 	spin := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	results := make(chan int, 1)
-	count := 0
+	var count atomic.Int64
 
 	performRepoAnalysis(params, dest, spin, results, &count, nil, nil, nil, nil, false, false)
 
@@ -137,7 +138,7 @@ func TestPerformRepoAnalysisLocalDir(t *testing.T) {
 func TestAnalyseDirectoryLocal(t *testing.T) {
 	src := writeSourceDir(t)
 	dest := t.TempDir()
-	count := 1
+	var count atomic.Int64
 
 	// Should analyse the directory in place without panicking or deleting it.
 	analyseDirectory(src, false, false, nil, nil, nil, nil, dest, &count)
@@ -160,7 +161,7 @@ func TestAnalyseReposListSingleThreaded(t *testing.T) {
 	repolist := []interface{}{"repo-a", "repo-b"}
 	var processed int
 
-	stub := func(_ interface{}, _ string, _ map[string]interface{}, _ *spinner.Spinner, results chan int, count *int) {
+	stub := func(_ interface{}, _ string, _ map[string]interface{}, _ *spinner.Spinner, results chan int, count *atomic.Int64) {
 		processed++
 		results <- 1
 	}
@@ -180,5 +181,40 @@ func TestAnalyseReposListSingleThreaded(t *testing.T) {
 	}
 	if processed != len(repolist) {
 		t.Errorf("stub processed %d repos, want %d", processed, len(repolist))
+	}
+}
+
+// TestAnalyseReposListConcurrentCountNoRace exercises the multithreaded dispatch
+// path with many repos so several worker goroutines run concurrently and all touch
+// the shared progress counter. Under `go test -race` this fails if that counter is
+// not synchronized — it is the regression guard for the count data race fixed by
+// switching to atomic.Int64.
+func TestAnalyseReposListConcurrentCountNoRace(t *testing.T) {
+	dest := t.TempDir()
+	cfg := map[string]interface{}{
+		"Multithreading":    true,
+		"NumberWorkerRepos": float64(4), // < len(repolist) => concurrency == Workers
+		"Workers":           float64(8),
+	}
+	repolist := make([]interface{}, 50)
+	for i := range repolist {
+		repolist[i] = "repo"
+	}
+
+	var processed atomic.Int64
+	// The stub stands in for performRepoAnalysis: it both bumps and reads the shared
+	// counter concurrently, the exact access pattern that used to race on a plain int.
+	stub := func(_ interface{}, _ string, _ map[string]interface{}, _ *spinner.Spinner, results chan int, count *atomic.Int64) {
+		_ = count.Add(1)
+		processed.Add(1)
+		results <- 1
+	}
+
+	n := AnalyseReposList(dest, cfg, repolist, stub)
+	if n != len(repolist) {
+		t.Errorf("AnalyseReposList returned %d, want %d", n, len(repolist))
+	}
+	if got := processed.Load(); got != int64(len(repolist)) {
+		t.Errorf("stub processed %d repos, want %d", got, len(repolist))
 	}
 }
