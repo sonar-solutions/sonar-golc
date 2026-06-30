@@ -550,7 +550,14 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 		WorkDir:    getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
-	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
+		ExcludeExtensions: excludeExtensions,
+		ExcludePaths:      excludePath,
+		FolderKeywords:    folderKeywords,
+		FileNamePatterns:  fileNamePatterns,
+		ResultByFile:      platformConfig["ResultByFile"].(bool),
+		ResultAll:         platformConfig["ResultAll"].(bool),
+	})
 }
 
 // Analysis functions for Bitbucket DC
@@ -572,7 +579,14 @@ func analyseBitSRVRepo(project interface{}, DestinationResult string, platformCo
 		WorkDir:    getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
-	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
+		ExcludeExtensions: excludeExtensions,
+		ExcludePaths:      excludePath,
+		FolderKeywords:    folderKeywords,
+		FileNamePatterns:  fileNamePatterns,
+		ResultByFile:      platformConfig["ResultByFile"].(bool),
+		ResultAll:         platformConfig["ResultAll"].(bool),
+	})
 }
 
 // Analysis functions for GitHub
@@ -595,7 +609,14 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 		WorkDir:    getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
-	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
+		ExcludeExtensions: excludeExtensions,
+		ExcludePaths:      excludePath,
+		FolderKeywords:    folderKeywords,
+		FileNamePatterns:  fileNamePatterns,
+		ResultByFile:      platformConfig["ResultByFile"].(bool),
+		ResultAll:         platformConfig["ResultAll"].(bool),
+	})
 }
 
 // Analysis functions for GitLab
@@ -619,7 +640,14 @@ func analyseGitlabRepo(project interface{}, DestinationResult string, platformCo
 		WorkDir:    getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
-	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
+		ExcludeExtensions: excludeExtensions,
+		ExcludePaths:      excludePath,
+		FolderKeywords:    folderKeywords,
+		FileNamePatterns:  fileNamePatterns,
+		ResultByFile:      platformConfig["ResultByFile"].(bool),
+		ResultAll:         platformConfig["ResultAll"].(bool),
+	})
 }
 
 func analyseAzurebRepo(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64) {
@@ -640,11 +668,30 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 		WorkDir:    getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
-	performRepoAnalysis(params, DestinationResult, spin, results, count, excludeExtensions, excludePath, folderKeywords, fileNamePatterns, platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool))
+	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
+		ExcludeExtensions: excludeExtensions,
+		ExcludePaths:      excludePath,
+		FolderKeywords:    folderKeywords,
+		FileNamePatterns:  fileNamePatterns,
+		ResultByFile:      platformConfig["ResultByFile"].(bool),
+		ResultAll:         platformConfig["ResultAll"].(bool),
+	})
+}
+
+// analysisOptions bundles the per-repo analysis knobs (exclusions, keyword/name
+// filters, and the report-mode flags) so the worker functions can pass them as a
+// single value instead of a long parameter list.
+type analysisOptions struct {
+	ExcludeExtensions []string
+	ExcludePaths      []string
+	FolderKeywords    []string
+	FileNamePatterns  []string
+	ResultByFile      bool
+	ResultAll         bool
 }
 
 // Perform repository analysis (common logic)
-func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spinner.Spinner, results chan int, count *atomic.Int64, excludeExtension []string, excludePaths []string, folderKeywords []string, fileNamePatterns []string, ResultByFile bool, ResultAll bool) {
+func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spinner.Spinner, results chan int, count *atomic.Int64, opts analysisOptions) {
 	// Always use a consistent filename pattern so downstream parsing works across platforms.
 	// Format: Result_<OrgOrProjectKey>__<RepoSlug>__<Branch>
 	// The double-underscore field separator keeps `_` free to appear inside any component
@@ -653,13 +700,13 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 	outputFileName := fmt.Sprintf("Result_%s__%s__%s", params.ProjectKey, params.RepoSlug, params.MainBranch)
 	golocParams := goloc.Params{
 		Path:             params.PathToScan,
-		ByFile:           ResultByFile,
-		ByAll:            ResultAll,
-		ExcludePaths:     excludePaths,
-		ExcludeExtensions: excludeExtension,
+		ByFile:           opts.ResultByFile,
+		ByAll:            opts.ResultAll,
+		ExcludePaths:     opts.ExcludePaths,
+		ExcludeExtensions: opts.ExcludeExtensions,
 		IncludeExtensions: []string{},
-		FolderKeywords:   folderKeywords,
-		FileNamePatterns: fileNamePatterns,
+		FolderKeywords:   opts.FolderKeywords,
+		FileNamePatterns: opts.FileNamePatterns,
 		OrderByLang:       false,
 		OrderByFile:       false,
 		OrderByCode:       false,
@@ -676,7 +723,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		WorkDir:           params.WorkDir,
 		CloneTimeout:      params.CloneTimeout,
 	}
-	if ResultAll {
+	if opts.ResultAll {
 		golocParams.ByFile = true
 	}
 
@@ -723,7 +770,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		//gc.Run()
 		//count.Add(1)
 
-		if ResultAll {
+		if opts.ResultAll {
 
 			if err := gc.Run(); err != nil {
 				fmt.Print("\n")
@@ -872,16 +919,18 @@ func saveFileAnalysisResult(destDir, org string, dirs []string) error {
 /* ---------------- Analyse Directory ---------------- */
 
 // analyseDirectory runs the goloc analysis for a single directory entry.
-func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX, extexclusion, folderKeywords, fileNamePatterns []string, destDir string, count *atomic.Int64) {
+// opts carries the exclusions/keyword filters and report-mode flags (ExcludePaths
+// holds the file-exclusion list for the File platform).
+func analyseDirectory(dir string, opts analysisOptions, destDir string, count *atomic.Int64) {
 	params := goloc.Params{
 		Path:              dir,
-		ByFile:            ResultByFile,
-		ByAll:             ResultAll,
-		ExcludePaths:      fileexclusionEX,
-		ExcludeExtensions: extexclusion,
+		ByFile:            opts.ResultByFile,
+		ByAll:             opts.ResultAll,
+		ExcludePaths:      opts.ExcludePaths,
+		ExcludeExtensions: opts.ExcludeExtensions,
 		IncludeExtensions: []string{},
-		FolderKeywords:    folderKeywords,
-		FileNamePatterns:  fileNamePatterns,
+		FolderKeywords:    opts.FolderKeywords,
+		FileNamePatterns:  opts.FileNamePatterns,
 		OrderByLang:       false,
 		OrderByFile:       false,
 		OrderByCode:       false,
@@ -897,7 +946,7 @@ func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX,
 		Cloned:            false,
 		Repopath:          "",
 	}
-	if ResultAll {
+	if opts.ResultAll {
 		params.ByFile = true
 	}
 
@@ -919,7 +968,7 @@ func analyseDirectory(dir string, ResultByFile, ResultAll bool, fileexclusionEX,
 		}(gc.Repopath)
 	}
 
-	if err := runGlocPasses(gc, params, ResultAll); err != nil {
+	if err := runGlocPasses(gc, params, opts.ResultAll); err != nil {
 		return
 	}
 
@@ -972,10 +1021,18 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 	// Shared across the per-directory goroutines below; atomic to avoid a data race.
 	var count atomic.Int64
 
+	opts := analysisOptions{
+		ExcludeExtensions: extexclusion,
+		ExcludePaths:      fileexclusionEX,
+		FolderKeywords:    folderKeywords,
+		FileNamePatterns:  fileNamePatterns,
+		ResultByFile:      ResultByFile,
+		ResultAll:         ResultAll,
+	}
 	for _, Listdirectories := range Listdirectorie {
 		go func(dir string) {
 			defer wg.Done()
-			analyseDirectory(dir, ResultByFile, ResultAll, fileexclusionEX, extexclusion, folderKeywords, fileNamePatterns, destDir, &count)
+			analyseDirectory(dir, opts, destDir, &count)
 		}(Listdirectories)
 	}
 
