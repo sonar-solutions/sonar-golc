@@ -25,7 +25,8 @@
         "ResultByFile": true,
         "ResultAll": true,
         "Org": true,
-        "WorkDir": ""
+        "WorkDir": "",
+        "CloneTimeout": 15
       },
       "BitBucket": {
         "Users": "XXXXX",
@@ -53,7 +54,8 @@
         "ResultByFile": true,
         "ResultAll": true,
         "Org": true,
-        "WorkDir": ""
+        "WorkDir": "",
+        "CloneTimeout": 15
       },
       "Github": {
         "AccessToken": "XXXXX",
@@ -79,7 +81,8 @@
         "ResultByFile": true,
         "ResultAll": true,
         "Org": true,
-        "WorkDir": ""
+        "WorkDir": "",
+        "CloneTimeout": 15
       },
       "GithubEnterprise": {
         "AccessToken": "XXXXX",
@@ -105,7 +108,8 @@
         "ResultByFile": true,
         "ResultAll": true,
         "Org": true,
-        "WorkDir": ""
+        "WorkDir": "",
+        "CloneTimeout": 15
       },
       "Gitlab": {
         "AccessToken": "XXXXX",
@@ -131,7 +135,8 @@
         "ResultByFile": true,
         "ResultAll": true,
         "Org": true,
-        "WorkDir": ""
+        "WorkDir": "",
+        "CloneTimeout": 15
       },
       "Azure": {
         "AccessToken": "XXXXX",
@@ -157,7 +162,8 @@
         "ResultByFile": true,
         "ResultAll": true,
         "Org": true,
-        "WorkDir": ""
+        "WorkDir": "",
+        "CloneTimeout": 15
       },
       "File": {
         "Organization": "XXXXX",

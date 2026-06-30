@@ -144,7 +144,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
 	},
 	"GithubEnterprise": {
 		"DevOps": "github", "Apiver": "2022-11-28", "FileExclusion": "",
@@ -152,7 +152,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
 	},
 	"Gitlab": {
 		"DevOps": "gitlab", "Url": "https://gitlab.com/", "Apiver": "v4",
@@ -161,7 +161,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
 	},
 	"BitBucket": {
 		"DevOps": "bitbucket", "Url": "https://api.bitbucket.org/", "Apiver": "2.0",
@@ -170,7 +170,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
 	},
 	"BitBucketSRV": {
 		"DevOps": "bitbucket_dc", "Apiver": "1.0", "Baseapi": "rest/api/",
@@ -179,7 +179,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-5), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
 	},
 	"Azure": {
 		"DevOps": "azure", "Url": "https://dev.azure.com/", "Apiver": "7.1",
@@ -188,7 +188,7 @@ var platformDefaults = map[string]map[string]interface{}{
 		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "", "Repos": "", "Project": "", "Branch": "",
+		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
 	},
 	"File": {
 		"DevOps": "file", "FileExclusion": "", "FileLoad": ".cloc_file_load",
@@ -1254,15 +1254,19 @@ const htmlTemplate = `<!DOCTYPE html>
             <div class="col-12" id="adv-mt-wrap">
               <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:.75rem 1rem;">
                 <div class="row g-2 align-items-end">
-                  <div class="col-md-6">
+                  <div class="col-md-4">
                     <div class="form-check form-switch mt-1">
                       <input class="form-check-input" type="checkbox" id="adv-multithreading" checked onchange="syncMTState()">
                       <label class="form-check-label form-label mb-0" for="adv-multithreading">Enable multithreading</label>
                     </div>
                   </div>
-                  <div class="col-md-6" id="adv-workers-wrap" style="transition:opacity .2s;">
+                  <div class="col-md-4" id="adv-workers-wrap" style="transition:opacity .2s;">
                     <label class="form-label" for="adv-workers">Number of workers</label>
                     <input class="form-control" id="adv-workers" type="number" min="1" max="50" value="10">
+                  </div>
+                  <div class="col-md-4" id="adv-cloneTimeout-wrap">
+                    <label class="form-label" for="adv-cloneTimeout">Clone timeout (min) <small class="text-muted">(0 = none)</small></label>
+                    <input class="form-control" id="adv-cloneTimeout" type="number" min="0" max="180" value="15" title="Per-repository clone deadline. A repo whose clone exceeds this is skipped (and listed in the report) instead of hanging the whole scan. 0 disables the deadline.">
                   </div>
                 </div>
               </div>
@@ -1729,7 +1733,7 @@ function syncPresetKeywords() {
 }
 
 function populateAdvanced(key, saved) {
-  const defaults = {DefaultBranch:true,Branch:'',Multithreading:true,Workers:10,WorkDir:'',
+  const defaults = {DefaultBranch:true,Branch:'',Multithreading:true,Workers:10,WorkDir:'',CloneTimeout:15,
     FileExclusion:'',ExtExclusion:[],ExcludeTests:true,ExcludeVendor:true,ExcludeBuild:true,
     FolderKeywords:[],FileNamePatterns:DEFAULT_FILE_PATTERNS,Repos:'',Project:'',ResultByFile:true,Org:true};
   const cfg = Object.assign({}, defaults, saved);
@@ -1738,6 +1742,8 @@ function populateAdvanced(key, saved) {
   document.getElementById('adv-branch').value = cfg.Branch || '';
   document.getElementById('adv-multithreading').checked = cfg.Multithreading !== false;
   document.getElementById('adv-workers').value = cfg.Workers || 10;
+  const ctEl = document.getElementById('adv-cloneTimeout');
+  if (ctEl) ctEl.value = (cfg.CloneTimeout === undefined || cfg.CloneTimeout === null) ? 15 : cfg.CloneTimeout;
   document.getElementById('adv-workDir').value = cfg.WorkDir || '';
   document.getElementById('adv-extExclusion').value = Array.isArray(cfg.ExtExclusion)
     ? cfg.ExtExclusion.filter(Boolean).join(',') : (cfg.ExtExclusion||'');
@@ -1854,6 +1860,12 @@ function gatherConfig() {
   cfg.Multithreading = document.getElementById('adv-multithreading').checked;
   cfg.Workers = parseInt(document.getElementById('adv-workers').value) || 10;
   cfg.NumberWorkerRepos = cfg.Workers;
+  const ctRaw = document.getElementById('adv-cloneTimeout');
+  // Empty/blank field falls back to the default (15); an explicit "0" still disables
+  // the deadline. Treating a cleared field as 0 would silently turn off the very
+  // hang-protection this setting exists for.
+  const ctVal = ctRaw ? ctRaw.value.trim() : '';
+  cfg.CloneTimeout = ctVal === '' ? 15 : (parseInt(ctVal, 10) || 0);
   cfg.WorkDir = document.getElementById('adv-workDir').value.trim();
   cfg.FileExclusion = '';
   const ext = document.getElementById('adv-extExclusion').value.trim();

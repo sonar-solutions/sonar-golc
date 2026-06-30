@@ -92,8 +92,13 @@ func CreateGlobalReport(directory string) error {
 		return err
 	}
 
+	// Repositories the analysis phase could not complete (clone timeout/failure or
+	// counting error). Surfaced in the PDF so a large scan that skips a few problem
+	// repos does not silently undercount. Missing file => empty list.
+	skippedRepos := LoadSkippedRepos(directory)
+
 	// Create a PDF
-	if err := renderGlobalPDF(languages, ginfo); err != nil {
+	if err := renderGlobalPDF(languages, ginfo, skippedRepos); err != nil {
 		return err
 	}
 
@@ -313,8 +318,88 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 	pdf.SetXY(marginL, rowY+rowH)
 }
 
+// renderSkippedReposSection appends a "Skipped Repositories" section to the global
+// PDF. When no repositories were skipped it renders a short confirmation line; when
+// some were, it lists each with its branch and the reason it was skipped (clone
+// timeout, clone failure, or analysis error).
+func renderSkippedReposSection(pdf *gofpdf.Fpdf, skippedRepos []SkippedRepo, marginL, contentW float64) {
+	pdf.Ln(8)
+
+	// Section header bar (amber to read as a warning, distinct from the blue
+	// "Language Breakdown" header).
+	pdf.SetFillColor(214, 137, 16)
+	pdf.Rect(marginL, pdf.GetY(), contentW, 8, "F")
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetX(marginL + 2)
+	pdf.CellFormat(contentW-2, 8, fmt.Sprintf("Skipped Repositories (%d)", len(skippedRepos)), "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+
+	if len(skippedRepos) == 0 {
+		pdf.SetFont("Helvetica", "I", 8)
+		pdf.SetTextColor(110, 110, 120)
+		pdf.SetX(marginL)
+		pdf.CellFormat(contentW, 6, "None — all targeted repositories were analyzed.", "", 1, "L", false, 0, "")
+		pdf.SetTextColor(0, 0, 0)
+		return
+	}
+
+	const (
+		colNum    = 10.0
+		colRepo   = 55.0
+		colBranch = 38.0
+	)
+	colReason := contentW - colNum - colRepo - colBranch
+
+	drawHeaders := func() {
+		pdf.SetFillColor(245, 226, 196)
+		pdf.SetFont("Helvetica", "B", 8)
+		pdf.SetTextColor(60, 45, 20)
+		pdf.SetX(marginL)
+		pdf.CellFormat(colNum, 6, "#", "0", 0, "C", true, 0, "")
+		pdf.CellFormat(colRepo, 6, "REPOSITORY", "0", 0, "L", true, 0, "")
+		pdf.CellFormat(colBranch, 6, "BRANCH", "0", 0, "L", true, 0, "")
+		pdf.CellFormat(colReason, 6, "REASON", "0", 1, "L", true, 0, "")
+	}
+	drawHeaders()
+
+	// Truncate a cell value so it fits its column width (gofpdf has no native
+	// ellipsis); width is estimated from the current font's string width.
+	fit := func(s string, w float64) string {
+		if pdf.GetStringWidth(s) <= w-2 {
+			return s
+		}
+		for len(s) > 1 && pdf.GetStringWidth(s+"...") > w-2 {
+			s = s[:len(s)-1]
+		}
+		return s + "..."
+	}
+
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetTextColor(40, 40, 50)
+	for i, r := range skippedRepos {
+		// Repeat the header after an auto page break so long lists stay readable.
+		if pdf.GetY() > 270 {
+			pdf.AddPage()
+			drawHeaders()
+			pdf.SetFont("Helvetica", "", 8)
+			pdf.SetTextColor(40, 40, 50)
+		}
+		repo := r.RepoSlug
+		if r.ProjectKey != "" {
+			repo = r.ProjectKey + "/" + r.RepoSlug
+		}
+		pdf.SetX(marginL)
+		pdf.CellFormat(colNum, 6, fmt.Sprintf("%d", i+1), "0", 0, "C", false, 0, "")
+		pdf.CellFormat(colRepo, 6, fit(repo, colRepo), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colBranch, 6, fit(r.Branch, colBranch), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colReason, 6, fit(r.Reason, colReason), "0", 1, "L", false, 0, "")
+	}
+	pdf.SetTextColor(0, 0, 0)
+}
+
 // renderGlobalPDF generates the GlobalReport.pdf from languages and global info.
-func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo) error {
+func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []SkippedRepo) error {
 	loggers := NewLogger()
 
 	languages, maxLOC := prepareLanguagesForPDF(languages)
@@ -462,6 +547,10 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo) error {
 
 	rowH := 7.0
 	renderLanguageRows(pdf, languages, maxLOC, drawColHeaders, marginL, pageH, marginB, colNum, colLang, colLOC, colPct, colBar, rowH, barColors)
+
+	// ── Skipped repositories section ─────────────────────────────────
+	renderSkippedReposSection(pdf, skippedRepos, marginL, contentW)
+
 	if err := pdf.OutputFileAndClose("Results/GlobalReport.pdf"); err != nil {
 		loggers.Errorf("Error saving PDF file: %v", err)
 		return err
