@@ -23,6 +23,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 - [Reports](#reports)
 - [Supported Languages](#supported-languages)
 - [Execution Log](#execution-log)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -192,3 +193,15 @@ YAML               | .yaml, .yml                              | #               
 ## Execution Log
 
 GoLC writes a detailed log to `Logs/Logs.log` next to the binary. The file is recreated on each run. Use it to troubleshoot authentication errors, rate limits, or unexpected results.
+
+---
+
+## Troubleshooting
+
+### "Apple could not verify" message
+When starting the app on MacOS you may get `Apple could not verify webui is free of malware that may harm your Mac or compromise your privacy."` message. To go around it, run:
+
+```
+xattr -cr /path/to/webui
+xattr -cr /path/to/ResultsAll
+```
