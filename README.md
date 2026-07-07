@@ -23,6 +23,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 - [Reports](#reports)
 - [Supported Languages](#supported-languages)
 - [Execution Log](#execution-log)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -202,4 +203,5 @@ When starting the app on MacOS you may get `Apple could not verify webui is free
 
 ```
 xattr -cr /path/to/webui
+xattr -cr /path/to/ResultsAll
 ```
