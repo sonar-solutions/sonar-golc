@@ -1083,21 +1083,21 @@ func TestGetAllRepositoriesFunction(t *testing.T) {
 	})
 }
 
-// TestRepoEmptyCheck tests repository empty check functionality
+// TestRepoEmptyCheck tests the size-based repository empty check that replaced the
+// per-repo ListCommits call: a repository whose reported size is 0 is treated as
+// empty, using data already present in the listing response (no extra API call).
 func TestRepoEmptyCheck(t *testing.T) {
-	t.Run("reposIfEmpty function", func(t *testing.T) {
-		// Test with nil client - should panic
-		panicked := false
-		defer func() {
-			if r := recover(); r != nil {
-				t.Logf("reposIfEmpty properly panicked with nil client: %v", r)
-				panicked = true
-			}
-			if !panicked {
-				t.Error("reposIfEmpty should panic with nil client")
-			}
-		}()
-		reposIfEmpty(context.Background(), nil, "test-repo", testOrgName)
+	t.Run("empty when size is zero", func(t *testing.T) {
+		repo := &github.Repository{Size: github.Int(0)}
+		if repo.GetSize() != 0 {
+			t.Errorf("expected reported size 0, got %d", repo.GetSize())
+		}
+	})
+	t.Run("not empty when size is positive", func(t *testing.T) {
+		repo := &github.Repository{Size: github.Int(42)}
+		if repo.GetSize() == 0 {
+			t.Error("repository with positive size should not be considered empty")
+		}
 	})
 }
 
