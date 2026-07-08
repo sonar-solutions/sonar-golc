@@ -16,9 +16,10 @@ import (
 func strPtr(s string) *string { return &s }
 
 // fakeGitClient embeds git.Client (so it satisfies the 121-method interface)
-// and only overrides the three calls exercised by the branch-resolution logic.
-// Any un-overridden method is nil and will panic if called — which is the
-// signal that a test reached code it should not.
+// and only overrides the calls exercised by the branch-resolution and
+// repo-analysis logic (GetRepository, GetRepositories, GetItems, GetBranches,
+// GetCommits). Any un-overridden method is nil and will panic if called — which
+// is the signal that a test reached code it should not.
 type fakeGitClient struct {
 	git.Client
 	repo      *git.GitRepository
