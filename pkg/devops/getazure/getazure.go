@@ -450,7 +450,15 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 					// Skip this repository if SingleBranch is set but not found
 					continue
 				}
-				largestRepoBranch = *repo.DefaultBranch
+				branchName, ok := defaultBranchName(&repo)
+				if !ok {
+					// Branch analysis failed and the repo has no usable default
+					// branch (e.g. disabled/archived). Skip it instead of
+					// dereferencing a nil pointer and crashing the whole run.
+					loggers.Errorf("\r❌ Skipping repo %s/%s: branch analysis failed and no default branch is set: %v", *project.Name, *repo.Name, err)
+					continue
+				}
+				largestRepoBranch = branchName
 			} else {
 				// Check if SingleBranch is set and the returned branch is not SingleBranch
 				if params.SingleBranch != "" && !params.DefaultB && largestRepoBranch != params.SingleBranch {
@@ -581,10 +589,21 @@ func analyzeRepoBranches(parms ParamsProjectAzure, projectKey string, repo strin
 	return largestRepoBranch, nbrbranch, brsize, nil
 
 }
-func getMostImportantBranch(ctx context.Context, gitClient git.Client, projectID string, repoID string, periode int, DefaultB bool, Singlebranch string) (string, int64, int, error) {
+// defaultBranchName safely extracts a repository's default branch name, with
+// the "refs/heads/" prefix stripped. The Azure DevOps API marks DefaultBranch
+// as omitempty, so GetRepository can legitimately return it as nil — for
+// example for a disabled/archived repository, or one whose HEAD ref was never
+// initialized. Dereferencing it unconditionally previously crashed the whole
+// analysis with "panic: runtime error: invalid memory address or nil pointer
+// dereference". The bool result reports whether a usable default branch exists.
+func defaultBranchName(repo *git.GitRepository) (string, bool) {
+	if repo == nil || repo.DefaultBranch == nil || *repo.DefaultBranch == "" {
+		return "", false
+	}
+	return strings.TrimPrefix(*repo.DefaultBranch, REF), true
+}
 
-	var defaultBranch string
-	var err error
+func getMostImportantBranch(ctx context.Context, gitClient git.Client, projectID string, repoID string, periode int, DefaultB bool, Singlebranch string) (string, int64, int, error) {
 
 	since := time.Now().AddDate(0, periode, 0)
 	sinceStr := since.Format(time.RFC3339)
@@ -597,15 +616,22 @@ func getMostImportantBranch(ctx context.Context, gitClient git.Client, projectID
 	if err != nil {
 		return "", 0, 0, err
 	}
-	defaultBranch = *repo.DefaultBranch
 
-	// Prioritize DefaultB over Singlebranch if DefaultB is true
-	if DefaultB {
-		return handleDefaultOrSingleBranch(ctx, gitClient, projectID, repoID, strings.TrimPrefix(defaultBranch, REF), "", sinceStr)
-	} else if Singlebranch != "" {
+	branchName, hasDefault := defaultBranchName(repo)
+
+	switch {
+	case DefaultB && hasDefault:
+		// Default-branch mode with a known default branch: analyze it directly.
+		return handleDefaultOrSingleBranch(ctx, gitClient, projectID, repoID, branchName, "", sinceStr)
+	case Singlebranch != "":
 		return handleDefaultOrSingleBranch(ctx, gitClient, projectID, repoID, "", Singlebranch, sinceStr)
-	} else {
-		return handleNonDefaultBranch(ctx, gitClient, projectID, repoID, sinceStr, defaultBranch)
+	default:
+		// Either we are not in default-branch mode, or the repository has no
+		// default branch set (e.g. a disabled/archived repo, or one whose HEAD
+		// ref was never initialized). Instead of skipping it, scan every branch
+		// and pick the most active one. branchName is the fallback default and
+		// may be empty when none is set.
+		return handleNonDefaultBranch(ctx, gitClient, projectID, repoID, sinceStr, branchName)
 	}
 }
 func handleNonDefaultBranch(ctx context.Context, gitClient git.Client, projectID string, repoID string, sinceStr string, defaultBranch string) (string, int64, int, error) {
@@ -622,7 +648,19 @@ func handleNonDefaultBranch(ctx context.Context, gitClient git.Client, projectID
 		return "", 0, 0, err
 	}
 
+	// firstBranch is the ultimate fallback: the first branch with a usable name.
+	// It keeps the repository in the analysis when no branch has commits in the
+	// window and the repo has no default branch set.
+	var firstBranch string
 	for _, branch := range *branches {
+		if branch.Name == nil {
+			continue
+		}
+		name := strings.TrimPrefix(*branch.Name, REF)
+		if firstBranch == "" {
+			firstBranch = name
+		}
+
 		commitCount, branchCommitSize, err := getCommitDetails(ctx, gitClient, projectID, repoID, *branch.Name, sinceStr)
 		if err != nil {
 			return "", 0, 0, err
@@ -630,13 +668,24 @@ func handleNonDefaultBranch(ctx context.Context, gitClient git.Client, projectID
 
 		if commitCount > maxCommits {
 			maxCommits = commitCount
-			mostImportantBranch = strings.TrimPrefix(*branch.Name, REF)
+			mostImportantBranch = name
 			totalCommitSize = branchCommitSize
 		}
 	}
 
 	if maxCommits == 0 {
-		mostImportantBranch = strings.TrimPrefix(defaultBranch, REF)
+		// No branch had commits in the analysis window. Prefer the repo's
+		// default branch when known, otherwise fall back to the first branch so
+		// the repository is still analyzed rather than dropped.
+		if trimmed := strings.TrimPrefix(defaultBranch, REF); trimmed != "" {
+			mostImportantBranch = trimmed
+		} else {
+			mostImportantBranch = firstBranch
+		}
+	}
+
+	if mostImportantBranch == "" {
+		return "", 0, 0, fmt.Errorf("repository %s has no analyzable branch", repoID)
 	}
 
 	return mostImportantBranch, totalCommitSize, len(*branches), nil
@@ -683,7 +732,10 @@ func handleDefaultOrSingleBranch(ctx context.Context, gitClient git.Client, proj
 		if err != nil {
 			return "", 0, 0, err
 		}
-		commitSize = int64(*repo.Size)
+		// Size is an omitempty pointer and may be nil for some repositories.
+		if repo.Size != nil {
+			commitSize = int64(*repo.Size)
+		}
 	}
 
 	return branchName, commitSize, 1, nil
