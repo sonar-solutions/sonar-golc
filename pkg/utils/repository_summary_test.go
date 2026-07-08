@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,34 @@ import (
 
 	"github.com/jung-kurt/gofpdf"
 )
+
+// TestCreateRepositoryPDFRow_NoMojibake guards against the gofpdf latin1 bug: an
+// accented repository or branch name must be translated to the font encoding, so
+// no raw multi-byte UTF-8 sequence survives into the PDF content stream.
+func TestCreateRepositoryPDFRow_NoMojibake(t *testing.T) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.SetCompression(false)
+	pdf.SetFont("Arial", "", 8)
+	pdf.AddPage()
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
+
+	createRepositoryPDFRow(pdf, tr, RepositoryData{
+		Number: 1, Repository: "café-service", Branch: "fonctionnalité",
+		LinesF: "1", CommentsF: "0", BlankLinesF: "0", CodeLinesF: "1",
+	}, true)
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		t.Fatalf("pdf output: %v", err)
+	}
+	raw := buf.Bytes()
+	// é -> C3 A9, and generally any C3-prefixed 2-byte UTF-8 must not survive.
+	for label, seq := range map[string][]byte{"é": {0xC3, 0xA9}} {
+		if bytes.Contains(raw, seq) {
+			t.Errorf("untranslated UTF-8 %s leaked into the repository summary PDF", label)
+		}
+	}
+}
 
 // Constants to avoid duplicating string literals (SonarQube maintainability)
 const (
@@ -702,6 +731,7 @@ func TestCreateRepositoryPDFRow(t *testing.T) {
 		// This tests the helper function that was extracted during refactoring
 		pdf := gofpdf.New("P", "mm", "A4", "")
 		pdf.AddPage()
+		tr := pdf.UnicodeTranslatorFromDescriptor("")
 
 		repo := RepositoryData{
 			Number:      1,
@@ -724,8 +754,8 @@ func TestCreateRepositoryPDFRow(t *testing.T) {
 			}
 		}()
 
-		createRepositoryPDFRow(pdf, repo, true)
-		createRepositoryPDFRow(pdf, repo, false) // Test alternating colors
+		createRepositoryPDFRow(pdf, tr, repo, true)
+		createRepositoryPDFRow(pdf, tr, repo, false) // Test alternating colors
 
 		if pdf.PageCount() == 0 {
 			t.Error("createRepositoryPDFRow did not add content to PDF")

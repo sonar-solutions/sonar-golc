@@ -251,10 +251,13 @@ func createPDFTableHeader(pdf *gofpdf.Fpdf, codeLinesHeader string) {
 	pdf.CellFormat(25, 8, codeLinesHeader, "1", 1, "C", true, 0, "")
 }
 
-// createRepositoryPDFRow creates a single row in the PDF table
-func createRepositoryPDFRow(pdf *gofpdf.Fpdf, repo RepositoryData, fill bool) {
-	repoName := truncateText(repo.Repository, 20)
-	branchName := truncateText(repo.Branch, 12)
+// createRepositoryPDFRow creates a single row in the PDF table. tr converts UTF-8
+// into the font's Windows-1252 encoding so accented repository/branch names render
+// correctly instead of as mojibake; it is applied before truncation so the
+// byte-based length limit matches the rendered single-byte characters.
+func createRepositoryPDFRow(pdf *gofpdf.Fpdf, tr func(string) string, repo RepositoryData, fill bool) {
+	repoName := truncateText(tr(repo.Repository), 20)
+	branchName := truncateText(tr(repo.Branch), 12)
 
 	pdf.CellFormat(10, 6, strconv.Itoa(repo.Number), "1", 0, "C", fill, 0, "")
 	pdf.CellFormat(50, 6, repoName, "1", 0, "L", fill, 0, "")
@@ -371,6 +374,10 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.AddPage()
 
+	// gofpdf core fonts render text as Windows-1252, so UTF-8 repository/branch
+	// names must be translated before drawing to avoid mojibake.
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
+
 	// Add logo if it exists
 	logoPath := GetLogoPath()
 	if _, err := os.Stat(logoPath); err == nil {
@@ -426,7 +433,7 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 		}
 
 		fill := rowCount%2 == 0
-		createRepositoryPDFRow(pdf, repo, fill)
+		createRepositoryPDFRow(pdf, tr, repo, fill)
 		rowCount++
 	}
 
