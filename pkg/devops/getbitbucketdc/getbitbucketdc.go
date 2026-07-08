@@ -253,15 +253,7 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 	// Persist the per-run repository breakdown for the ResultsAll page and the
 	// global PDF report. nbRepos counts the non-archived, non-excluded repos found,
 	// so the analyzed count is that minus the empty ones.
-	if err := utils.SaveScanSummary("Results", utils.ScanSummary{
-		Platform: "bitbucketdc",
-		Analyzed: nbRepos - emptyRepo,
-		Archived: archivedRepo,
-		Empty:    emptyRepo,
-		Excluded: excludedRepo,
-	}); err != nil {
-		loggers.Errorf("❌ Error saving scan summary: %v", err)
-	}
+	utils.PersistScanSummary("Results", utils.NewScanSummary("bitbucketdc", nbRepos-emptyRepo, archivedRepo, emptyRepo, excludedRepo, 0))
 
 	return importantBranches, nbRepos, emptyRepo
 }
@@ -422,13 +414,7 @@ func GetRepos(project string, repos []Repo, parms ParamsReposDC, bitbucketURLBas
 	// Persist the scan summary for the explicitly-requested repos. Archived and
 	// excluded repos are filtered out before this point, so only the analyzed and
 	// empty counts are meaningful here.
-	if err := utils.SaveScanSummary("Results", utils.ScanSummary{
-		Platform: "bitbucketdc",
-		Analyzed: len(importantBranches),
-		Empty:    emptyRepo,
-	}); err != nil {
-		loggers.Errorf("❌ Error saving scan summary: %v", err)
-	}
+	utils.PersistScanSummary("Results", utils.NewScanSummary("bitbucketdc", len(importantBranches), 0, emptyRepo, 0, 0))
 
 	return importantBranches, nbRepos, emptyRepo
 }

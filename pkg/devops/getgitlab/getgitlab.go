@@ -907,15 +907,7 @@ func GetRepoGitLabList(platformConfig map[string]interface{}, exclusionfile stri
 	// Persist the per-run repository breakdown for the ResultsAll page and the
 	// global PDF report. Analyzed is the number of projects that will actually be
 	// analyzed; Scanned is derived from the sum of all categories.
-	if err := utils.SaveScanSummary("Results", utils.ScanSummary{
-		Platform: "gitlab",
-		Analyzed: len(projectBranches),
-		Archived: archivedRepos,
-		Empty:    emptyRepos,
-		Excluded: excludedProjects,
-	}); err != nil {
-		loggers.Errorf("❌ Error saving scan summary: %v", err)
-	}
+	utils.PersistScanSummary("Results", utils.NewScanSummary("gitlab", len(projectBranches), archivedRepos, emptyRepos, excludedProjects, 0))
 
 	fmt.Print("\n")
 	loggers.Infof("✅ The largest Repository is <%s> with the branch <%s>", largesRepo, largestRepoBranch)

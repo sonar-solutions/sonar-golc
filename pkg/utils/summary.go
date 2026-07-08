@@ -12,11 +12,14 @@ import (
 // so a large org-wide scan makes clear how many repositories were analyzed versus
 // filtered out (archived/disabled, empty, or excluded).
 //
-// By construction Scanned == Analyzed + Archived + Empty + Excluded, so the
-// breakdown always reconciles regardless of each platform's internal counting.
-// Repositories that could not be completed during the analysis phase (clone
-// timeout/failure) are tracked separately in SkippedRepo and rendered alongside
-// this summary.
+// By construction Scanned == Analyzed + Archived + Empty + Excluded + Skipped, so
+// the breakdown always reconciles regardless of each platform's internal counting.
+//
+// Skipped here counts repositories discovered during the analysis-discovery phase
+// that were neither analyzed nor filtered into a category — e.g. a repo with no
+// usable default branch, or one dropped by a single-branch selection. Repositories
+// that fail later during the analysis phase (clone timeout/failure) are tracked
+// separately in SkippedRepo; the reports add those two skip sources together.
 type ScanSummary struct {
 	Platform string `json:"Platform"`
 	Scanned  int    `json:"Scanned"`
@@ -24,6 +27,21 @@ type ScanSummary struct {
 	Archived int    `json:"Archived"`
 	Empty    int    `json:"Empty"`
 	Excluded int    `json:"Excluded"`
+	Skipped  int    `json:"Skipped"`
+}
+
+// NewScanSummary builds a ScanSummary from a platform's per-run counts. It exists
+// so every platform shares one field mapping instead of repeating the struct
+// literal; Scanned is left to SaveScanSummary to derive.
+func NewScanSummary(platform string, analyzed, archived, empty, excluded, skipped int) ScanSummary {
+	return ScanSummary{
+		Platform: platform,
+		Analyzed: analyzed,
+		Archived: archived,
+		Empty:    empty,
+		Excluded: excluded,
+		Skipped:  skipped,
+	}
 }
 
 // ScanSummaryPath returns the canonical location of the scan-summary file for a
@@ -37,7 +55,7 @@ func ScanSummaryPath(baseResultsDir string) string {
 // breakdown always reconciles. The file is always overwritten so a clean re-run
 // clears any stale summary from a previous analysis.
 func SaveScanSummary(baseResultsDir string, summary ScanSummary) error {
-	summary.Scanned = summary.Analyzed + summary.Archived + summary.Empty + summary.Excluded
+	summary.Scanned = summary.Analyzed + summary.Archived + summary.Empty + summary.Excluded + summary.Skipped
 
 	path := ScanSummaryPath(baseResultsDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -48,6 +66,16 @@ func SaveScanSummary(baseResultsDir string, summary ScanSummary) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// PersistScanSummary saves the scan summary and logs (rather than propagates) any
+// error. A failed summary write must never abort an otherwise-successful scan, so
+// every platform funnels through this helper instead of repeating the same
+// save-and-log boilerplate.
+func PersistScanSummary(baseResultsDir string, summary ScanSummary) {
+	if err := SaveScanSummary(baseResultsDir, summary); err != nil {
+		NewLogger().Errorf("❌ Error saving scan summary: %v", err)
+	}
 }
 
 // LoadScanSummary reads the scan summary for a base Results directory. A missing

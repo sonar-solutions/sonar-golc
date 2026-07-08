@@ -335,15 +335,13 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 	// Persist the per-run repository breakdown for the ResultsAll page and the
 	// global PDF report. Analyzed is the number of repos that will actually be
 	// analyzed (one important branch per repo); Scanned is derived from the sum.
-	if err := utils.SaveScanSummary("Results", utils.ScanSummary{
-		Platform: "azure",
-		Analyzed: len(importantBranches),
-		Archived: totalArchiv,
-		Empty:    emptyRepo,
-		Excluded: totalExclude,
-	}); err != nil {
-		loggers.Errorf("❌ Error saving scan summary: %v", err)
-	}
+	//
+	// nbRepos is the true count of discovered repos (analyzed + filtered), so any
+	// repo discovered but dropped inside the analysis loop (no usable default
+	// branch, or filtered out by single-branch selection) without landing in a
+	// category is surfaced as Skipped, keeping Scanned equal to the real total.
+	discoverySkipped := azureDiscoverySkipped(nbRepos, emptyRepo, totalExclude, totalArchiv, len(importantBranches))
+	utils.PersistScanSummary("Results", utils.NewScanSummary("azure", len(importantBranches), totalArchiv, emptyRepo, totalExclude, discoverySkipped))
 
 	printSummary(platformConfig["Organization"].(string), stats)
 
@@ -548,8 +546,14 @@ func fetchDisabledRepoIDs(parms ParamsProjectAzure, projectKey string) map[strin
 		loggers.Warnf("⚠️  Skipping disabled-repo detection for project %s: "+reason, append([]interface{}{projectKey}, args...)...)
 	}
 
+	// Bound the call: the shared HTTP client has no request timeout, so a server
+	// that accepts the connection but never responds would otherwise hang the
+	// whole scan instead of degrading gracefully.
+	ctx, cancel := context.WithTimeout(parms.Context, 30*time.Second)
+	defer cancel()
+
 	endpoint := fmt.Sprintf("%s/%s/_apis/git/repositories?api-version=6.0", parms.ApiURL, url.PathEscape(projectKey))
-	req, err := http.NewRequestWithContext(parms.Context, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		warn("%v", err)
 		return disabled
@@ -580,6 +584,19 @@ func fetchDisabledRepoIDs(parms ParamsProjectAzure, projectKey string) map[strin
 		}
 	}
 	return disabled
+}
+
+// azureDiscoverySkipped returns the number of repositories that were discovered
+// (nbRepos includes analyzed + all filtered categories) but dropped inside the
+// analysis loop without being analyzed or filed under archived/empty/excluded —
+// e.g. no usable default branch, or filtered out by a single-branch selection.
+// Surfacing this keeps the scan summary's Scanned total equal to the real count.
+func azureDiscoverySkipped(nbRepos, empty, excluded, archived, analyzed int) int {
+	skipped := nbRepos - empty - excluded - archived - analyzed
+	if skipped < 0 {
+		return 0
+	}
+	return skipped
 }
 
 func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient git.Client) (int, int, int, []git.GitRepository, error) {

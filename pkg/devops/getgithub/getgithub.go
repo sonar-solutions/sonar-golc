@@ -1006,15 +1006,7 @@ func findLargestRepository(importantBranches []ProjectBranch, totalSize *int64) 
 // ResultsAll page and the global PDF report. Analyzed is the number of repos that
 // will actually be analyzed; Scanned is derived from the sum of all categories.
 func saveGithubScanSummary(analyzed, archived, empty, excluded int) {
-	if err := utils.SaveScanSummary("Results", utils.ScanSummary{
-		Platform: "github",
-		Analyzed: analyzed,
-		Archived: archived,
-		Empty:    empty,
-		Excluded: excluded,
-	}); err != nil {
-		utils.SharedLogger().Errorf("❌ Error saving scan summary: %v", err)
-	}
+	utils.PersistScanSummary("Results", utils.NewScanSummary("github", analyzed, archived, empty, excluded, 0))
 }
 
 func printSummary(config PlatformConfig, stats SummaryStats) {

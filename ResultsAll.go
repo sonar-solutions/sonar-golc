@@ -946,9 +946,12 @@ func loadApplicationData() (PageData, error) {
 	return pageData, nil
 }
 
-// buildScanSummaryView adapts a persisted utils.ScanSummary into the template view,
-// subtracting repos that failed during analysis from the analyzed count and
-// exposing that failure count as Skipped. Returns nil when no summary was persisted.
+// buildScanSummaryView adapts a persisted utils.ScanSummary into the template view.
+// Analysis-phase failures (skippedCount, from analysis_skipped.json) are subtracted
+// from the analyzed count and folded together with the summary's discovery-phase
+// Skipped total, so the displayed row reconciles:
+// Scanned = Analyzed + Archived + Empty + Excluded + Skipped. Returns nil when no
+// summary was persisted.
 func buildScanSummaryView(summary *utils.ScanSummary, skippedCount int) *ScanSummaryView {
 	if summary == nil {
 		return nil
@@ -963,7 +966,7 @@ func buildScanSummaryView(summary *utils.ScanSummary, skippedCount int) *ScanSum
 		Archived: summary.Archived,
 		Empty:    summary.Empty,
 		Excluded: summary.Excluded,
-		Skipped:  skippedCount,
+		Skipped:  summary.Skipped + skippedCount,
 	}
 }
 

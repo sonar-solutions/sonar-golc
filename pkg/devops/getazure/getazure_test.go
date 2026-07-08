@@ -234,6 +234,40 @@ func TestGetRepoAnalyse_Fallback(t *testing.T) {
 	}
 }
 
+// TestGetRepoAnalyse_EmptyRepos drives getRepoAnalyse with a repo that has no
+// content so it is counted as empty and excluded from the analyzed set, covering
+// the empty-counting branch and the "found … empty/archived/excluded" log path.
+func TestGetRepoAnalyse_EmptyRepos(t *testing.T) {
+	id := uuid.New()
+	fc := &fakeGitClient{
+		repos:    &[]git.GitRepository{{Id: &id, Name: strPtr("emptyrepo")}},
+		items:    &[]git.GitItem{},        // no items -> repo is empty
+		branches: &[]git.GitBranchStats{}, // no branches
+	}
+
+	spin := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
+	spin.Writer = io.Discard
+	params := ParamsProjectAzure{
+		Context:       context.Background(),
+		Projects:      []core.TeamProjectReference{{Name: strPtr("proj1")}},
+		Organization:  "org",
+		Exclusionlist: utils.NewExclusionList(nil, nil),
+		Spin:          spin,
+		Period:        -1,
+	}
+
+	branches, empty, nbRepos, _, excluded, archived, err := getRepoAnalyse(params, fc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if empty != 1 || nbRepos != 1 || len(branches) != 0 {
+		t.Errorf("empty=%d nbRepos=%d analyzed=%d, want 1/1/0", empty, nbRepos, len(branches))
+	}
+	if excluded != 0 || archived != 0 {
+		t.Errorf("excluded=%d archived=%d, want 0/0", excluded, archived)
+	}
+}
+
 func TestDefaultBranchName(t *testing.T) {
 	tests := []struct {
 		name     string

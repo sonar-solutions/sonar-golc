@@ -17,18 +17,24 @@ func TestBuildScanSummaryView(t *testing.T) {
 		t.Errorf("nil summary should produce nil view, got %+v", got)
 	}
 
-	// Analyzed subtracts the repos that failed during analysis (Skipped).
+	// Analyzed subtracts the analysis-phase failures (skippedCount); the displayed
+	// Skipped folds the persisted discovery-phase Skipped together with them.
+	// Persisted Scanned = 10+2+3+5+1 = 21.
 	v := buildScanSummaryView(&utils.ScanSummary{
-		Scanned: 20, Analyzed: 10, Archived: 2, Empty: 3, Excluded: 5,
+		Scanned: 21, Analyzed: 10, Archived: 2, Empty: 3, Excluded: 5, Skipped: 1,
 	}, 4)
 	if v == nil {
 		t.Fatal("expected non-nil view")
 	}
-	if v.Analyzed != 6 || v.Skipped != 4 {
-		t.Errorf("Analyzed=%d Skipped=%d, want 6 and 4", v.Analyzed, v.Skipped)
+	if v.Analyzed != 6 || v.Skipped != 5 {
+		t.Errorf("Analyzed=%d Skipped=%d, want 6 and 5 (1 discovery + 4 analysis)", v.Analyzed, v.Skipped)
 	}
-	if v.Scanned != 20 || v.Archived != 2 || v.Empty != 3 || v.Excluded != 5 {
+	if v.Scanned != 21 || v.Archived != 2 || v.Empty != 3 || v.Excluded != 5 {
 		t.Errorf("unexpected passthrough values: %+v", *v)
+	}
+	// The displayed row must reconcile: Scanned == Analyzed+Archived+Empty+Excluded+Skipped.
+	if sum := v.Analyzed + v.Archived + v.Empty + v.Excluded + v.Skipped; sum != v.Scanned {
+		t.Errorf("row does not reconcile: parts sum to %d, Scanned is %d", sum, v.Scanned)
 	}
 
 	// Analyzed must floor at 0 when more repos were skipped than projected.

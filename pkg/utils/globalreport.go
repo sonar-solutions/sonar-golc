@@ -332,11 +332,13 @@ func renderScanSummarySection(pdf *gofpdf.Fpdf, summary *ScanSummary, skippedCou
 	}
 
 	// Repos that failed during the analysis phase were part of the projected
-	// analyzed set, so subtract them for the displayed analyzed count.
+	// analyzed set, so subtract them for the displayed analyzed count and fold them
+	// together with the discovery-phase skips so the row reconciles.
 	analyzed := summary.Analyzed - skippedCount
 	if analyzed < 0 {
 		analyzed = 0
 	}
+	totalSkipped := summary.Skipped + skippedCount
 
 	pdf.Ln(8)
 
@@ -350,7 +352,7 @@ func renderScanSummarySection(pdf *gofpdf.Fpdf, summary *ScanSummary, skippedCou
 	pdf.Ln(2)
 
 	labels := []string{"Scanned", "Analyzed", "Archived", "Empty", "Excluded", "Skipped"}
-	values := []int{summary.Scanned, analyzed, summary.Archived, summary.Empty, summary.Excluded, skippedCount}
+	values := []int{summary.Scanned, analyzed, summary.Archived, summary.Empty, summary.Excluded, totalSkipped}
 	colW := contentW / float64(len(labels))
 
 	// Value row
