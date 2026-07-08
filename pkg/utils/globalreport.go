@@ -379,7 +379,7 @@ func renderScanSummarySection(pdf *gofpdf.Fpdf, summary *ScanSummary, skippedCou
 // PDF. When no repositories were skipped it renders a short confirmation line; when
 // some were, it lists each with its branch and the reason it was skipped (clone
 // timeout, clone failure, or analysis error).
-func renderSkippedReposSection(pdf *gofpdf.Fpdf, skippedRepos []SkippedRepo, marginL, contentW float64) {
+func renderSkippedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, skippedRepos []SkippedRepo, marginL, contentW float64) {
 	pdf.Ln(8)
 
 	// Section header bar (amber to read as a warning, distinct from the blue
@@ -396,7 +396,7 @@ func renderSkippedReposSection(pdf *gofpdf.Fpdf, skippedRepos []SkippedRepo, mar
 		pdf.SetFont("Helvetica", "I", 8)
 		pdf.SetTextColor(110, 110, 120)
 		pdf.SetX(marginL)
-		pdf.CellFormat(contentW, 6, "None — all targeted repositories were analyzed.", "", 1, "L", false, 0, "")
+		pdf.CellFormat(contentW, 6, tr("None — all targeted repositories were analyzed."), "", 1, "L", false, 0, "")
 		pdf.SetTextColor(0, 0, 0)
 		return
 	}
@@ -448,9 +448,9 @@ func renderSkippedReposSection(pdf *gofpdf.Fpdf, skippedRepos []SkippedRepo, mar
 		}
 		pdf.SetX(marginL)
 		pdf.CellFormat(colNum, 6, fmt.Sprintf("%d", i+1), "0", 0, "C", false, 0, "")
-		pdf.CellFormat(colRepo, 6, fit(repo, colRepo), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colBranch, 6, fit(r.Branch, colBranch), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colReason, 6, fit(r.Reason, colReason), "0", 1, "L", false, 0, "")
+		pdf.CellFormat(colRepo, 6, fit(tr(repo), colRepo), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colBranch, 6, fit(tr(r.Branch), colBranch), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colReason, 6, fit(tr(r.Reason), colReason), "0", 1, "L", false, 0, "")
 	}
 	pdf.SetTextColor(0, 0, 0)
 }
@@ -475,6 +475,11 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []
 	pdf.AliasNbPages("{nb}")
 	pdf.SetMargins(marginL, marginT, marginR)
 	pdf.SetAutoPageBreak(true, marginB+8)
+
+	// gofpdf's core fonts render text as Windows-1252, so UTF-8 strings (an em
+	// dash, or an accented repository/organization name) would otherwise appear as
+	// mojibake. tr converts UTF-8 into the font's encoding before it is drawn.
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
 
 	logoPath := GetLogoPath()
 	_, logoErr := os.Stat(logoPath)
@@ -503,7 +508,7 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []
 		if len(org) > 50 {
 			org = org[:47] + "..."
 		}
-		pdf.CellFormat(140, 5, "Organization: "+org, "", 0, "L", false, 0, "")
+		pdf.CellFormat(140, 5, tr("Organization: "+org), "", 0, "L", false, 0, "")
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetY(marginT)
 	})
@@ -609,7 +614,7 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []
 	renderScanSummarySection(pdf, summary, len(skippedRepos), marginL, contentW)
 
 	// ── Skipped repositories section ─────────────────────────────────
-	renderSkippedReposSection(pdf, skippedRepos, marginL, contentW)
+	renderSkippedReposSection(pdf, tr, skippedRepos, marginL, contentW)
 
 	if err := pdf.OutputFileAndClose("Results/GlobalReport.pdf"); err != nil {
 		loggers.Errorf("Error saving PDF file: %v", err)
