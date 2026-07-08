@@ -92,7 +92,6 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	github.com/yuin/goldmark v1.8.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect
@@ -118,6 +117,11 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
+
+// goldmark v1.4.13 (pulled only via golang.org/x/tools in the module graph, never
+// built — MVS selects v1.8.2) carries CVE-2026-5160. Exclude it so it drops out of
+// the graph entirely and is not reported as a transitive risk.
+exclude github.com/yuin/goldmark v1.4.13
 
 replace golang.org/x/image v0.0.0-20190910094157-69e4b8554b2a => golang.org/x/image v0.30.0
 
