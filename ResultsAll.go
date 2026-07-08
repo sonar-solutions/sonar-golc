@@ -186,12 +186,25 @@ type RepositoryDetailData struct {
 }
 
 type PageData struct {
-	Languages        []LanguageData
-	GlobalReport     Globalinfo
-	Repositories     []RepositoryData
-	SkippedRepos     []utils.SkippedRepo // repos the analysis phase could not complete (clone timeout/failure, analysis error)
-	NoteLOCExcluded  string              // Note that JSON is excluded from total (SonarQube behavior)
-	Platform         string
+	Languages       []LanguageData
+	GlobalReport    Globalinfo
+	Repositories    []RepositoryData
+	SkippedRepos    []utils.SkippedRepo // repos the analysis phase could not complete (clone timeout/failure, analysis error)
+	ScanSummary     *ScanSummaryView    // per-run repository breakdown; nil on older result sets
+	NoteLOCExcluded string              // Note that JSON is excluded from total (SonarQube behavior)
+	Platform        string
+}
+
+// ScanSummaryView is the template-facing view of utils.ScanSummary. Analyzed is
+// adjusted for repos that failed during the analysis phase, and Skipped is that
+// failure count, so the row reconciles: Scanned = Analyzed + Archived + Empty + Excluded + Skipped.
+type ScanSummaryView struct {
+	Scanned  int
+	Analyzed int
+	Archived int
+	Empty    int
+	Excluded int
+	Skipped  int
 }
 
 var globalInfo Globalinfo       // Variable pour stocker les infos globales
@@ -916,16 +929,45 @@ func loadApplicationData() (PageData, error) {
 	// error). Missing file (older result sets) => empty list, so the page still renders.
 	skippedRepos := utils.LoadSkippedRepos("Results")
 
+	// Per-run repository breakdown for the Scan Summary card. Missing file (older
+	// result sets) => nil, so the card is omitted and the page still renders.
+	scanSummary := buildScanSummaryView(utils.LoadScanSummary("Results"), len(skippedRepos))
+
 	pageData = PageData{
 		Languages:       languages,
 		GlobalReport:    globalInfo,
 		Repositories:    repositoryData,
 		SkippedRepos:    skippedRepos,
+		ScanSummary:     scanSummary,
 		NoteLOCExcluded: utils.NoteExcludedFromTotal,
 		Platform:        detectedPlatform,
 	}
 
 	return pageData, nil
+}
+
+// buildScanSummaryView adapts a persisted utils.ScanSummary into the template view.
+// Analysis-phase failures (skippedCount, from analysis_skipped.json) are subtracted
+// from the analyzed count and folded together with the summary's discovery-phase
+// Skipped total, so the displayed row reconciles:
+// Scanned = Analyzed + Archived + Empty + Excluded + Skipped. Returns nil when no
+// summary was persisted.
+func buildScanSummaryView(summary *utils.ScanSummary, skippedCount int) *ScanSummaryView {
+	if summary == nil {
+		return nil
+	}
+	analyzed := summary.Analyzed - skippedCount
+	if analyzed < 0 {
+		analyzed = 0
+	}
+	return &ScanSummaryView{
+		Scanned:  summary.Scanned,
+		Analyzed: analyzed,
+		Archived: summary.Archived,
+		Empty:    summary.Empty,
+		Excluded: summary.Excluded,
+		Skipped:  summary.Skipped + skippedCount,
+	}
 }
 
 // setupHTTPHandlers configures all HTTP route handlers
@@ -1000,6 +1042,13 @@ func setupHTTPHandlers(pageData PageData) {
 			skipped = []utils.SkippedRepo{}
 		}
 		json.NewEncoder(w).Encode(skipped)
+	})
+
+	// API Endpoint for the per-run repository breakdown (scanned/analyzed/archived/
+	// empty/excluded/skipped). Returns null when no summary was persisted.
+	http.HandleFunc("/api/scan-summary", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(contentTypeHeader, applicationJSONType)
+		json.NewEncoder(w).Encode(pageData.ScanSummary)
 	})
 
 	// Repository Detail Page Handler
@@ -1438,6 +1487,54 @@ const htmlTemplate = `
           </div>
         </div>
       </section>
+
+      {{if .ScanSummary}}
+      <!-- Scan Summary Section -->
+      <section id="scan-summary-section" style="background-color: #f8f9fa; padding: 2rem 0 1rem 0;">
+        <div class="container">
+          <div class="row">
+            <div class="col-12">
+              <div class="card shadow-lg">
+                <h5 class="card-header text-white" style="background-color:#0073ba;">
+                  <i class="fas fa-clipboard-list"></i> Scan Summary
+                </h5>
+                <div class="card-body">
+                  <p class="text-muted mb-3" style="font-size:0.9rem;">
+                    Repository breakdown for this run. <strong>Scanned</strong> is the total discovered; it splits into <strong>Analyzed</strong> plus the repositories filtered out (<strong>Archived</strong>/disabled, <strong>Empty</strong>, <strong>Excluded</strong>) and those that could not be completed (<strong>Skipped</strong>).
+                  </p>
+                  <div class="row text-center">
+                    <div class="col">
+                      <div class="h3 mb-0">{{.ScanSummary.Scanned}}</div>
+                      <div class="text-muted small">Scanned</div>
+                    </div>
+                    <div class="col">
+                      <div class="h3 mb-0 text-success">{{.ScanSummary.Analyzed}}</div>
+                      <div class="text-muted small">Analyzed</div>
+                    </div>
+                    <div class="col">
+                      <div class="h3 mb-0">{{.ScanSummary.Archived}}</div>
+                      <div class="text-muted small">Archived</div>
+                    </div>
+                    <div class="col">
+                      <div class="h3 mb-0">{{.ScanSummary.Empty}}</div>
+                      <div class="text-muted small">Empty</div>
+                    </div>
+                    <div class="col">
+                      <div class="h3 mb-0">{{.ScanSummary.Excluded}}</div>
+                      <div class="text-muted small">Excluded</div>
+                    </div>
+                    <div class="col">
+                      <div class="h3 mb-0" style="color:#d68910;">{{.ScanSummary.Skipped}}</div>
+                      <div class="text-muted small">Skipped</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      {{end}}
 
       {{if .SkippedRepos}}
       <!-- Skipped Repositories Section -->

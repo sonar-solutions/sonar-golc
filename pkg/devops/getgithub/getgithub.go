@@ -700,6 +700,10 @@ func GetRepoGithubListAllBranches(platformConfig map[string]interface{}, exclusi
 		TotalBranches:     stats.TotalBranches,
 	}
 
+	// In all-branches mode NbRepos is incremented once per analyzed repo, so it is
+	// already the analyzed count (empty/archived/excluded are tracked separately).
+	saveGithubScanSummary(stats.NbRepos, stats.TotalArchiv, stats.EmptyRepo, stats.TotalExclude)
+
 	loggers.Infof("✅ Analysis completed:")
 	loggers.Infof("   - Repositories analyzed: %d", stats.NbRepos)
 	loggers.Infof("   - Total branches found: %d", stats.TotalBranches)
@@ -803,6 +807,10 @@ func GetRepoGithubList(platformConfig map[string]interface{}, exclusionfile stri
 		TotalArchiv:       totalArchiv,
 		TotalBranches:     TotalBranches,
 	}
+
+	// Here NbRepos is the total discovered, so the analyzed count is the remainder
+	// after removing empty/excluded/archived (matches the printed summary line).
+	saveGithubScanSummary(nbRepos-emptyRepo-totalExclude-totalArchiv, totalArchiv, emptyRepo, totalExclude)
 
 	printSummary(config, stats)
 
@@ -992,6 +1000,13 @@ func findLargestRepository(importantBranches []ProjectBranch, totalSize *int64) 
 	}
 	//return largestRepoSize, largestRepoBranch, largesRepo
 	return largestRepoBranch, largesRepo
+}
+
+// saveGithubScanSummary persists the per-run repository breakdown for the
+// ResultsAll page and the global PDF report. Analyzed is the number of repos that
+// will actually be analyzed; Scanned is derived from the sum of all categories.
+func saveGithubScanSummary(analyzed, archived, empty, excluded int) {
+	utils.PersistScanSummary("Results", utils.NewScanSummary("github", analyzed, archived, empty, excluded, 0))
 }
 
 func printSummary(config PlatformConfig, stats SummaryStats) {

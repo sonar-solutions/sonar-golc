@@ -346,12 +346,62 @@ func TestFetchAllRepos_Pagination(t *testing.T) {
 	defer ts.Close()
 
 	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{}}
-	repos, err := fetchAllRepos(ts.URL+"/repos", "token", el)
+	repos, archived, excluded, err := fetchAllRepos(ts.URL+"/repos", "token", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repos) != 2 {
 		t.Errorf("expected 2 repos across 2 pages, got %d", len(repos))
+	}
+	if archived != 0 || excluded != 0 {
+		t.Errorf("expected no archived/excluded repos, got archived=%d excluded=%d", archived, excluded)
+	}
+}
+
+func TestFetchAllRepos_CountsArchivedAndExcluded(t *testing.T) {
+	// One archived repo (skipped + counted), one excluded repo (skipped + counted),
+	// and one analyzable repo returned.
+	proj := func(k string) struct {
+		Key string `json:"key"`
+	} {
+		return struct {
+			Key string `json:"key"`
+		}{Key: k}
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(RepoResponse{
+			IsLastPage: true,
+			Values: []Repo{
+				{Slug: "archived-repo", Name: "archived-repo", Archived: true, Project: proj("PROJ")},
+				{Slug: "excluded-repo", Name: "excluded-repo", Project: proj("PROJ")},
+				{Slug: "live-repo", Name: "live-repo", Project: proj("PROJ")},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	el := &utils.ExclusionList{
+		Projects: map[string]bool{},
+		Repos:    map[string]bool{"PROJ/excluded-repo": true},
+	}
+	repos, archived, excluded, err := fetchAllRepos(ts.URL+"/repos", "token", el)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if archived != 1 || excluded != 1 {
+		t.Errorf("archived=%d excluded=%d, want 1 and 1", archived, excluded)
+	}
+	if len(repos) != 1 || repos[0].Slug != "live-repo" {
+		t.Errorf("expected only the live repo returned, got %d repos", len(repos))
+	}
+}
+
+func TestFetchAllRepos_FetchError(t *testing.T) {
+	// An unreachable endpoint must surface the fetch error rather than silently
+	// returning an empty repo list.
+	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{}}
+	if _, _, _, err := fetchAllRepos("http://127.0.0.1:0/repos", "token", el); err == nil {
+		t.Error("expected an error from an unreachable server, got nil")
 	}
 }
 

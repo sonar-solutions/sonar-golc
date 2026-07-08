@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -330,6 +332,17 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 		TotalBranches:     TotalBranches,
 	}
 
+	// Persist the per-run repository breakdown for the ResultsAll page and the
+	// global PDF report. Analyzed is the number of repos that will actually be
+	// analyzed (one important branch per repo); Scanned is derived from the sum.
+	//
+	// nbRepos is the true count of discovered repos (analyzed + filtered), so any
+	// repo discovered but dropped inside the analysis loop (no usable default
+	// branch, or filtered out by single-branch selection) without landing in a
+	// category is surfaced as Skipped, keeping Scanned equal to the real total.
+	discoverySkipped := azureDiscoverySkipped(nbRepos, emptyRepo, totalExclude, totalArchiv, len(importantBranches))
+	utils.PersistScanSummary("Results", utils.NewScanSummary("azure", len(importantBranches), totalArchiv, emptyRepo, totalExclude, discoverySkipped))
+
 	printSummary(platformConfig["Organization"].(string), stats)
 
 	return importantBranches, nil
@@ -416,7 +429,7 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 
 		loggers.Infof("\t🟢  Analyse Project: %s \n", *project.Name)
 
-		emptyOrArchivedCount, emptyRepos, excludedCount, repos, err := listReposForProject(params, *project.Name, gitClient)
+		archivedCount, emptyCount, excludedCount, repos, err := listReposForProject(params, *project.Name, gitClient)
 
 		if err != nil {
 			if len(params.SingleRepos) == 0 {
@@ -430,14 +443,19 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 			}
 		}
 
-		totalexclude = totalexclude + excludedCount
+		// Accumulate into the function-level counters. Using distinct local names
+		// above avoids shadowing these accumulators inside the loop body.
+		totalexclude += excludedCount
+		emptyRepos += emptyCount
+		cptarchiv += archivedCount
 
 		spin1.Stop()
-		if emptyOrArchivedCount > 0 {
-			NBRrepo = len(repos) + emptyOrArchivedCount
-			loggers.Infof("\t  ✅ The number of %s found is: %d - Find empty %d:\n", message4, NBRrepo, emptyOrArchivedCount)
+		// NBRrepo counts every repo discovered for the project (analyzed + filtered)
+		// so the summary total reconciles with the per-category counts.
+		NBRrepo = len(repos) + emptyCount + archivedCount + excludedCount
+		if emptyCount+archivedCount+excludedCount > 0 {
+			loggers.Infof("\t  ✅ The number of %s found is: %d - Empty: %d, Archived: %d, Excluded: %d\n", message4, NBRrepo, emptyCount, archivedCount, excludedCount)
 		} else {
-			NBRrepo = len(repos)
 			loggers.Infof("\t  ✅ The number of %s found is: %d\n", message4, NBRrepo)
 		}
 
@@ -503,10 +521,92 @@ func parseSingleRepos(singleRepos string) []string {
 	return list
 }
 
+// azureRepoList mirrors the subset of the Azure DevOps "list repositories" REST
+// response we need. The pinned SDK (v1.0.0-b5) drops isDisabled from its
+// git.GitRepository struct, so disabled repositories — the ADO equivalent of an
+// "archived" repo: no default branch, cannot be cloned — can only be detected
+// through a raw REST call.
+type azureRepoList struct {
+	Value []struct {
+		Id         string `json:"id"`
+		IsDisabled bool   `json:"isDisabled"`
+	} `json:"value"`
+}
+
+// fetchDisabledRepoIDs returns the set of disabled repository IDs for a project,
+// keyed by lowercased UUID. Disabled repos must be excluded from the analysis the
+// same way archived repositories are on the other platforms. On any error
+// (insufficient permissions, older server, network) it logs a warning and returns
+// an empty set so the scan proceeds rather than failing.
+func fetchDisabledRepoIDs(parms ParamsProjectAzure, projectKey string) map[string]bool {
+	loggers := utils.SharedLogger()
+	disabled := make(map[string]bool)
+
+	warn := func(reason string, args ...interface{}) {
+		loggers.Warnf("⚠️  Skipping disabled-repo detection for project %s: "+reason, append([]interface{}{projectKey}, args...)...)
+	}
+
+	// Bound the call: the shared HTTP client has no request timeout, so a server
+	// that accepts the connection but never responds would otherwise hang the
+	// whole scan instead of degrading gracefully.
+	ctx, cancel := context.WithTimeout(parms.Context, 30*time.Second)
+	defer cancel()
+
+	endpoint := fmt.Sprintf("%s/%s/_apis/git/repositories?api-version=6.0", parms.ApiURL, url.PathEscape(projectKey))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		warn("%v", err)
+		return disabled
+	}
+	req.SetBasicAuth("", parms.AccessToken)
+
+	resp, err := utils.HTTPClient.Do(req)
+	if err != nil {
+		warn("%v", err)
+		return disabled
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		warn("API returned %s", resp.Status)
+		return disabled
+	}
+
+	var list azureRepoList
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		warn("%v", err)
+		return disabled
+	}
+
+	for _, repo := range list.Value {
+		if repo.IsDisabled {
+			disabled[strings.ToLower(repo.Id)] = true
+		}
+	}
+	return disabled
+}
+
+// azureDiscoverySkipped returns the number of repositories that were discovered
+// (nbRepos includes analyzed + all filtered categories) but dropped inside the
+// analysis loop without being analyzed or filed under archived/empty/excluded —
+// e.g. no usable default branch, or filtered out by a single-branch selection.
+// Surfacing this keeps the scan summary's Scanned total equal to the real count.
+func azureDiscoverySkipped(nbRepos, empty, excluded, archived, analyzed int) int {
+	skipped := nbRepos - empty - excluded - archived - analyzed
+	if skipped < 0 {
+		return 0
+	}
+	return skipped
+}
+
 func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient git.Client) (int, int, int, []git.GitRepository, error) {
 	var allRepos []git.GitRepository
 	var archivedCount, emptyCount, excludedCount int
 	loggers := utils.SharedLogger()
+
+	// Disabled (archived-equivalent) repos are detected via a raw REST call
+	// because the pinned SDK does not expose the isDisabled flag.
+	disabledRepos := fetchDisabledRepoIDs(parms, projectKey)
 
 	// Convert SingleRepos (comma-separated) to a clean slice, ignoring blank
 	// entries and surrounding whitespace (e.g. "repo1, repo2 ,repo3").
@@ -539,6 +639,14 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 			continue
 		}
 		repoID := repo.Id.String()
+
+		// Skip disabled repos (ADO equivalent of archived): they have no default
+		// branch and cannot be cloned, so they must not inflate the analyzed count.
+		if disabledRepos[strings.ToLower(repoID)] {
+			loggers.Debugf("→ repo %s/%s: skipped (disabled/archived)", projectKey, repoName)
+			archivedCount++
+			continue
+		}
 
 		isEmpty, err := isRepoEmpty(parms.Context, gitClient, projectKey, repoID)
 

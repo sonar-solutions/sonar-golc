@@ -200,6 +200,8 @@ var ErrEmptyRepo = errors.New("repository is empty")
 func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketURLBase string, nbRepos int, exclusionList *utils.ExclusionList) ([]ProjectBranch, int, int) {
 	var importantBranches []ProjectBranch
 	emptyRepo := 0
+	archivedRepo := 0
+	excludedRepo := 0
 	result := AnalysisResult{}
 	loggers := utils.SharedLogger()
 
@@ -216,11 +218,13 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 		loggers.Infof("\t🟢  Analyse Project: %s ", project.Name)
 		urlrepos := fmt.Sprintf("%s%s%s/projects/%s/repos", parms.URL, parms.BaseAPI, parms.APIVersion, project.Key)
 
-		repos, err := fetchAllRepos(urlrepos, parms.AccessToken, exclusionList)
+		repos, archivedCount, excludedCount, err := fetchAllRepos(urlrepos, parms.AccessToken, exclusionList)
 		if err != nil {
 			loggers.Errorf("\r❌ Get Repos for each Project:%v", err)
 			continue
 		}
+		archivedRepo += archivedCount
+		excludedRepo += excludedCount
 
 		nbRepos += len(repos)
 		loggers.Infof("\t  ✅ The number of Repo(s) found is: %d", len(repos))
@@ -245,6 +249,11 @@ func GetReposProject(projects []Project, parms ParamsReposProjectDC, bitbucketUR
 		loggers.Errorf("❌ Error creating Analysis file:%v", err)
 		return importantBranches, nbRepos, emptyRepo
 	}
+
+	// Persist the per-run repository breakdown for the ResultsAll page and the
+	// global PDF report. nbRepos counts the non-archived, non-excluded repos found,
+	// so the analyzed count is that minus the empty ones.
+	utils.PersistScanSummary("Results", utils.NewScanSummary("bitbucketdc", nbRepos-emptyRepo, archivedRepo, emptyRepo, excludedRepo, 0))
 
 	return importantBranches, nbRepos, emptyRepo
 }
@@ -401,6 +410,11 @@ func GetRepos(project string, repos []Repo, parms ParamsReposDC, bitbucketURLBas
 	if err := saveAnalysisResult(result); err != nil {
 		logAndExit(fmt.Sprintf("❌ Error creating Analysis file: %v\n", err), parms.Spin)
 	}
+
+	// Persist the scan summary for the explicitly-requested repos. Archived and
+	// excluded repos are filtered out before this point, so only the analyzed and
+	// empty counts are meaningful here.
+	utils.PersistScanSummary("Results", utils.NewScanSummary("bitbucketdc", len(importantBranches), 0, emptyRepo, 0, 0))
 
 	return importantBranches, nbRepos, emptyRepo
 }
@@ -899,14 +913,18 @@ func isRepoExcluded(exclusionList *utils.ExclusionList, repo string) bool {
 	return excluded
 }
 
-func fetchAllRepos(baseURL string, accessToken string, exclusionList *utils.ExclusionList) ([]Repo, error) {
+// fetchAllRepos returns the analyzable repositories for a project along with the
+// number skipped because they are archived or excluded, so the scan summary can
+// report the full breakdown.
+func fetchAllRepos(baseURL string, accessToken string, exclusionList *utils.ExclusionList) ([]Repo, int, int, error) {
 	var allRepos []Repo
+	var archivedCount, excludedCount int
 	loggers := utils.SharedLogger()
 	url := baseURL
 	for {
 		reposResp, err := fetchRepos(url, accessToken, true)
 		if err != nil {
-			return nil, err
+			return nil, 0, 0, err
 		}
 		ReposResponse := reposResp.(*RepoResponse)
 		for _, repo := range ReposResponse.Values {
@@ -914,6 +932,7 @@ func fetchAllRepos(baseURL string, accessToken string, exclusionList *utils.Excl
 
 			if repo.Archived {
 				loggers.Debugf("→ repo %s: skipped (archived)", KEYTEST)
+				archivedCount++
 				continue
 			}
 
@@ -922,6 +941,7 @@ func fetchAllRepos(baseURL string, accessToken string, exclusionList *utils.Excl
 			} else {
 				if isRepoExcluded(exclusionList, KEYTEST) {
 					loggers.Debugf("→ repo %s: skipped (excluded)", KEYTEST)
+					excludedCount++
 				} else {
 					allRepos = append(allRepos, repo)
 				}
@@ -934,7 +954,7 @@ func fetchAllRepos(baseURL string, accessToken string, exclusionList *utils.Excl
 		}
 		url = fmt.Sprintf("%s?start=%d", baseURL, ReposResponse.NextPageStart)
 	}
-	return allRepos, nil
+	return allRepos, archivedCount, excludedCount, nil
 }
 
 func fetchRepos(url string, accessToken string, isProjectResponse bool) (interface{}, error) {
