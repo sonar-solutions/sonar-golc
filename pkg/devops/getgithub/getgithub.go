@@ -124,7 +124,80 @@ const MessageApiRate = "❗️ Rate limit exceeded. Waiting for rate limit reset
 const ApiHeader1 = "application/vnd.github.v3+json"
 const ErrorMesssage1 = "❌ Error saving repositories in file Results/config/analysis_repos_github.json: %v\n"
 
-//var loggers = utils.SharedLogger()
+// maxSecondaryRateLimitRetries bounds how many times a single call is retried
+// after a GitHub secondary ("abuse") rate-limit error, so a persistently failing
+// call can never loop forever.
+const maxSecondaryRateLimitRetries = 5
+
+// defaultSecondaryRateLimitWait is used when GitHub returns a secondary rate-limit
+// error without a usable Retry-After hint.
+const defaultSecondaryRateLimitWait = 60 * time.Second
+
+// withRateLimitSleep enriches ctx so the go-github client transparently sleeps
+// until the PRIMARY (hourly) rate limit resets and then retries, instead of
+// returning a *github.RateLimitError. This covers both go-github's pre-emptive
+// short-circuit ("API rate limit ... still exceeded ... not making remote request")
+// and a live 403 from the API — the failure mode that previously caused every
+// repository processed after the quota was exhausted to be silently skipped.
+func withRateLimitSleep(ctx context.Context) context.Context {
+	return context.WithValue(ctx, github.SleepUntilPrimaryRateLimitResetWhenRateLimited, true)
+}
+
+// secondaryRateLimitPause reports how long to wait before retrying after a GitHub
+// secondary ("abuse") rate-limit error, and whether the error is in fact such a
+// limit. Primary rate limits are handled transparently by the client via
+// withRateLimitSleep, so callers only need this for the secondary case.
+func secondaryRateLimitPause(err error) (time.Duration, bool) {
+	var abuseErr *github.AbuseRateLimitError
+	if !errors.As(err, &abuseErr) {
+		return 0, false
+	}
+	wait := abuseErr.GetRetryAfter()
+	if wait <= 0 {
+		wait = defaultSecondaryRateLimitWait
+	}
+	return wait, true
+}
+
+// repoIsEmpty reports whether a repository has no content to analyze.
+//
+// repo.GetSize() (kilobytes, from the listing response) is a zero-cost fast path:
+// any repo with size > 0 definitely has content. GitHub computes size
+// asynchronously, though, so a repository that *does* contain commits can
+// transiently report size 0 — right after creation/import, or on GitHub
+// Enterprise Server where size recalculation lags. Treating size 0 as
+// unconditionally empty would therefore silently drop such repos (the same
+// symptom this change set out to remove). So size 0 is only a *candidate*: it is
+// confirmed with a single lightweight ListCommits call, which is guarded by the
+// client's primary rate-limit sleep and a secondary-limit retry. If the check
+// cannot be completed, we err on the side of "not empty" so the repo is analyzed
+// rather than dropped.
+func repoIsEmpty(ctx context.Context, client *github.Client, repo *github.Repository, org string) bool {
+	if repo.GetSize() > 0 {
+		return false
+	}
+	repoName := repo.GetName()
+	opt := &github.CommitsListOptions{ListOptions: github.ListOptions{PerPage: 1}}
+	for attempt := 0; ; attempt++ {
+		commits, _, err := client.Repositories.ListCommits(ctx, org, repoName, opt)
+		if err == nil {
+			return len(commits) == 0
+		}
+		if wait, ok := secondaryRateLimitPause(err); ok && attempt < maxSecondaryRateLimitRetries {
+			time.Sleep(wait)
+			continue
+		}
+		// "Git Repository is empty." is GitHub's explicit signal for a repo with no
+		// commits. Any other error is inconclusive, so treat the repo as non-empty
+		// and let normal analysis proceed rather than dropping it as empty.
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Message == "Git Repository is empty." {
+			return true
+		}
+		utils.SharedLogger().Debugf("→ repo %s: size-0 empty-check inconclusive (%v); treating as non-empty", repoName, err)
+		return false
+	}
+}
 
 // Load repository ignore map from file
 func loadExclusionRepos1(filename string) (ExclusionRepos, error) {
@@ -290,16 +363,13 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 			notAnalyzedCount++
 			continue
 		}
-		isEmpty, err := reposIfEmpty(ctx, client, repoName, parms.Organization)
-		if err != nil {
-			loggers.Errorf("❌ repo %s: skipped — empty-check failed: %v", repoName, err)
-			notAnalyzedCount++
-			continue
-		}
-		if isEmpty {
-			loggers.Debugf("→ repo %s: skipped (empty)", repoName)
-		}
-		if !isEmpty {
+		// Emptiness uses repo size (already in the listing response) as a zero-cost
+		// fast path, confirming the size-0 candidates with a single ListCommits so
+		// a size-not-yet-computed repo is not silently dropped. See repoIsEmpty.
+		if repoIsEmpty(ctx, client, repo, parms.Organization) {
+			loggers.Infof("\t   ✅ Skipping repository '%s' — detected as empty", repoName)
+			emptyRepo++
+		} else {
 			loggers.Debugf("→ repo %s: analyzing", repoName)
 			largestRepoBranch, repoBranches := analyzeRepoBranches(parms, ctx, client, repo, cpt, spin1)
 			importantBranches = append(importantBranches, ProjectBranch{
@@ -309,8 +379,6 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 				LargestSize: int64(len(repoBranches)),
 			})
 			TotalBranches += len(repoBranches)
-		} else {
-			emptyRepo++
 		}
 		cpt++
 	}
@@ -391,16 +459,21 @@ func analyzeRepoBranches(parms ParamsReposGithub, ctx context.Context, client *g
 
 func getAllBranches(ctx context.Context, client *github.Client, repoName, organization string, opt *github.BranchListOptions) ([]*github.Branch, error) {
 	var branches []*github.Branch
+	secondaryRetries := 0
 	for {
 		branchPage, resp, err := client.Repositories.ListBranches(ctx, organization, repoName, opt)
 		if err != nil {
-			if rateLimitErr, ok := err.(*github.AbuseRateLimitError); ok {
+			// Primary rate limits are waited out transparently by the client
+			// (see withRateLimitSleep); only secondary limits surface here.
+			if wait, ok := secondaryRateLimitPause(err); ok && secondaryRetries < maxSecondaryRateLimitRetries {
 				fmt.Println(MessageApiRate)
-				time.Sleep(rateLimitErr.GetRetryAfter())
+				secondaryRetries++
+				time.Sleep(wait)
 				continue
 			}
 			return nil, err
 		}
+		secondaryRetries = 0
 		branches = append(branches, branchPage...)
 		if resp.NextPage == 0 {
 			break
@@ -419,7 +492,7 @@ func GetAllBranchesForRepositories(platformConfig map[string]interface{}, reposi
 	loggers := utils.SharedLogger()
 
 	client := github.NewClient(nil).WithAuthToken(platformConfig["AccessToken"].(string))
-	ctx := context.Background()
+	ctx := withRateLimitSleep(context.Background())
 
 	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin1.Color("green", "bold")
@@ -511,8 +584,9 @@ func processRepositoryBranches(client *github.Client, ctx context.Context, repo 
 		}
 	}
 
-	// Check if repo is empty
-	if repo.GetSize() == 0 {
+	// Check if repo is empty (size 0 is only a candidate — confirm it so a repo
+	// whose size has not yet been computed is not dropped; see repoIsEmpty).
+	if repoIsEmpty(ctx, client, repo, orgName) {
 		stats.EmptyRepo++
 		return branches, nil
 	}
@@ -567,7 +641,7 @@ func GetRepoGithubListAllBranches(platformConfig map[string]interface{}, exclusi
 	stats := &RepoProcessingStats{}
 
 	client := github.NewClient(nil).WithAuthToken(platformConfig["AccessToken"].(string))
-	ctx := context.Background()
+	ctx := withRateLimitSleep(context.Background())
 	orgName := platformConfig["Organization"].(string)
 
 	// Get all repositories first
@@ -772,7 +846,7 @@ func loadExclusionFile(exclusionfile string, spin *spinner.Spinner) (ExclusionRe
 }
 
 func initializeGithubClient(platformConfig map[string]interface{}) (context.Context, *github.Client) {
-	ctx := context.Background()
+	ctx := withRateLimitSleep(context.Background())
 	accessToken := platformConfig["AccessToken"].(string)
 	url := platformConfig["Url"].(string)
 
@@ -1056,7 +1130,6 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 	cptarchiv := 0        // Counter archiv repos
 	notAnalyzedCount := 0 // Counter Number of repositories excluded
 	emptyRepo := 0        // Counter Number of repositories empty
-	loggers := utils.SharedLogger()
 	parms.Spin.Stop()
 	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
 	spin1.Color("green", "bold")
@@ -1082,14 +1155,10 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 				continue
 			}
 		}
-		// Next Step : Test is Repository is empty
-		isEmpty, err := reposIfEmpty(ctx, client, repoName, parms.Organization)
-		if err != nil {
-			loggers.Errorf("❌ repo %s: skipped — empty-check failed: %v", repoName, err)
-			notAnalyzedCount++
-			continue
-
-		}
+		// Next Step : Test is Repository is empty — size fast path with a confirming
+		// ListCommits for size-0 candidates (see repoIsEmpty), so a repo whose size
+		// is not yet computed is analyzed rather than silently skipped.
+		isEmpty := repoIsEmpty(ctx, client, repo, parms.Organization)
 		if !isEmpty {
 			// Create a temporary platform config map for client initialization
 			tempConfig := map[string]interface{}{
@@ -1162,43 +1231,12 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 			fmt.Println("\t  ✅  JSON data written to :", Resultfile)
 
 		} else {
+			utils.SharedLogger().Infof("\t   ✅ Skipping repository '%s' — detected as empty", repoName)
 			emptyRepo++
 		}
 	}
 
 	return parms.NBRepos, emptyRepo, notAnalyzedCount, cptarchiv, nil
-}
-
-func reposIfEmpty(ctx context.Context, client *github.Client, repoName, org string) (bool, error) {
-	// Get the number of commits in the repository
-	commits, _, err := client.Repositories.ListCommits(ctx, org, repoName, nil)
-	if rateLimitErr, ok := err.(*github.AbuseRateLimitError); ok {
-		fmt.Println(MessageApiRate)
-		waitTime := rateLimitErr.GetRetryAfter()
-		// Sleep until the rate limit resets
-		time.Sleep(waitTime)
-	}
-	if err != nil {
-		// If an error occurred, inspect the response body
-		var githubError *github.ErrorResponse
-		if errors.As(err, &githubError) {
-			if githubError.Message == "Git Repository is empty." {
-				return true, nil
-			} else {
-				return true, fmt.Errorf("\n❌ Failed to check repository <%s> is empty - : %v", repoName, err)
-			}
-		} else {
-			return true, fmt.Errorf("\n❌ Failed to check repository <%s> is empty - : %v", repoName, err)
-		}
-	}
-
-	// Test if the repository is empty
-	isEmpty := len(commits) == 0
-	if isEmpty {
-		return true, nil
-	} else {
-		return false, nil
-	}
 }
 
 func sortRepositoriesByUpdatedAt(repos []*github.Repository) {
