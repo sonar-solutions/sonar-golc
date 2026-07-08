@@ -1083,20 +1083,207 @@ func TestGetAllRepositoriesFunction(t *testing.T) {
 	})
 }
 
-// TestRepoEmptyCheck tests the size-based repository empty check that replaced the
-// per-repo ListCommits call: a repository whose reported size is 0 is treated as
-// empty, using data already present in the listing response (no extra API call).
-func TestRepoEmptyCheck(t *testing.T) {
-	t.Run("empty when size is zero", func(t *testing.T) {
-		repo := &github.Repository{Size: github.Int(0)}
-		if repo.GetSize() != 0 {
-			t.Errorf("expected reported size 0, got %d", repo.GetSize())
+// TestSecondaryRateLimitPause covers the secondary ("abuse") rate-limit classifier.
+func TestSecondaryRateLimitPause(t *testing.T) {
+	t.Run("nil error is not a secondary limit", func(t *testing.T) {
+		if _, ok := secondaryRateLimitPause(nil); ok {
+			t.Error("nil error should not be treated as a secondary rate limit")
 		}
 	})
-	t.Run("not empty when size is positive", func(t *testing.T) {
-		repo := &github.Repository{Size: github.Int(42)}
-		if repo.GetSize() == 0 {
-			t.Error("repository with positive size should not be considered empty")
+	t.Run("unrelated error is not a secondary limit", func(t *testing.T) {
+		if _, ok := secondaryRateLimitPause(errors.New("boom")); ok {
+			t.Error("generic error should not be treated as a secondary rate limit")
+		}
+	})
+	t.Run("abuse error with Retry-After uses that duration", func(t *testing.T) {
+		d := 42 * time.Second
+		wait, ok := secondaryRateLimitPause(&github.AbuseRateLimitError{RetryAfter: &d})
+		if !ok {
+			t.Fatal("expected abuse error to be recognized")
+		}
+		if wait != d {
+			t.Errorf("expected wait %v, got %v", d, wait)
+		}
+	})
+	t.Run("abuse error without Retry-After falls back to default", func(t *testing.T) {
+		wait, ok := secondaryRateLimitPause(&github.AbuseRateLimitError{})
+		if !ok {
+			t.Fatal("expected abuse error to be recognized")
+		}
+		if wait != defaultSecondaryRateLimitWait {
+			t.Errorf("expected default wait %v, got %v", defaultSecondaryRateLimitWait, wait)
+		}
+	})
+	t.Run("wrapped abuse error is detected via errors.As", func(t *testing.T) {
+		d := 5 * time.Second
+		wrapped := fmt.Errorf("outer: %w", &github.AbuseRateLimitError{RetryAfter: &d})
+		if _, ok := secondaryRateLimitPause(wrapped); !ok {
+			t.Error("expected wrapped abuse error to be detected")
+		}
+	})
+}
+
+// TestWithRateLimitSleep verifies the primary rate-limit sleep flag is set on ctx.
+func TestWithRateLimitSleep(t *testing.T) {
+	ctx := withRateLimitSleep(context.Background())
+	if ctx.Value(github.SleepUntilPrimaryRateLimitResetWhenRateLimited) == nil {
+		t.Error("expected context to carry the primary rate-limit sleep flag")
+	}
+}
+
+// TestRepoIsEmpty covers the size fast path plus the confirming ListCommits used
+// for size-0 candidates (so a repo whose size is not yet computed is not dropped).
+func TestRepoIsEmpty(t *testing.T) {
+	const org = testOrgName
+	commitsPath := "/api/v3/repos/" + org + "/r/commits"
+
+	// serveCommits builds a GHES client whose commits endpoint runs handler.
+	serveCommits := func(t *testing.T, handler http.HandlerFunc) (context.Context, *github.Client, func()) {
+		mux := http.NewServeMux()
+		if handler != nil {
+			mux.HandleFunc(commitsPath, handler)
+		}
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("unexpected API call: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		server := httptest.NewServer(mux)
+		ctx, client := initializeGithubClient(map[string]interface{}{
+			"Url": server.URL + "/", "AccessToken": testToken,
+		})
+		return ctx, client, server.Close
+	}
+	zeroSizeRepo := &github.Repository{Name: github.Ptr("r"), Size: github.Int(0)}
+
+	t.Run("size>0 is never empty and makes no API call", func(t *testing.T) {
+		ctx, client, closeFn := serveCommits(t, nil) // any call fails the test
+		defer closeFn()
+		repo := &github.Repository{Name: github.Ptr("big"), Size: github.Int(100)}
+		if repoIsEmpty(ctx, client, repo, org) {
+			t.Error("repo with size>0 should not be classified empty")
+		}
+	})
+
+	t.Run("size 0 with commits is not empty", func(t *testing.T) {
+		ctx, client, closeFn := serveCommits(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"sha":"abc"}]`))
+		})
+		defer closeFn()
+		if repoIsEmpty(ctx, client, zeroSizeRepo, org) {
+			t.Error("size-0 repo that has commits must not be classified empty")
+		}
+	})
+
+	t.Run("size 0 with no commits is empty", func(t *testing.T) {
+		ctx, client, closeFn := serveCommits(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		})
+		defer closeFn()
+		if !repoIsEmpty(ctx, client, zeroSizeRepo, org) {
+			t.Error("size-0 repo with no commits should be classified empty")
+		}
+	})
+
+	t.Run("git-empty error means empty", func(t *testing.T) {
+		ctx, client, closeFn := serveCommits(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"message":"Git Repository is empty."}`))
+		})
+		defer closeFn()
+		if !repoIsEmpty(ctx, client, zeroSizeRepo, org) {
+			t.Error(`"Git Repository is empty." should be classified empty`)
+		}
+	})
+
+	t.Run("inconclusive error is treated as non-empty", func(t *testing.T) {
+		ctx, client, closeFn := serveCommits(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"boom"}`))
+		})
+		defer closeFn()
+		if repoIsEmpty(ctx, client, zeroSizeRepo, org) {
+			t.Error("inconclusive error should be treated as non-empty (analyze, not drop)")
+		}
+	})
+}
+
+// TestGetAllBranches covers branch listing, the secondary rate-limit retry, and
+// propagation of non-rate-limit errors.
+func TestGetAllBranches(t *testing.T) {
+	const org, repo = testOrgName, "r"
+	branchesPath := "/api/v3/repos/" + org + "/" + repo + "/branches"
+	newClient := func(server *httptest.Server) (context.Context, *github.Client) {
+		return initializeGithubClient(map[string]interface{}{
+			"Url": server.URL + "/", "AccessToken": testToken,
+		})
+	}
+	opt := func() *github.BranchListOptions {
+		return &github.BranchListOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	}
+
+	t.Run("returns branches on success", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc(branchesPath, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"name":"main"},{"name":"dev"}]`))
+		})
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		ctx, client := newClient(server)
+		branches, err := getAllBranches(ctx, client, repo, org, opt())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(branches) != 2 {
+			t.Errorf("expected 2 branches, got %d", len(branches))
+		}
+	})
+
+	t.Run("retries after a secondary rate-limit error then succeeds", func(t *testing.T) {
+		var calls int
+		mux := http.NewServeMux()
+		mux.HandleFunc(branchesPath, func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			if calls == 1 {
+				// 403 + a secondary-rate-limit documentation_url makes go-github
+				// return *AbuseRateLimitError; Retry-After bounds the wait.
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"secondary rate limit","documentation_url":"https://docs.github.com/rest#secondary-rate-limits"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"name":"main"}]`))
+		})
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		ctx, client := newClient(server)
+		branches, err := getAllBranches(ctx, client, repo, org, opt())
+		if err != nil {
+			t.Fatalf("unexpected error after retry: %v", err)
+		}
+		if len(branches) != 1 {
+			t.Errorf("expected 1 branch after retry, got %d", len(branches))
+		}
+		if calls < 2 {
+			t.Errorf("expected the call to be retried (>=2 server hits), got %d", calls)
+		}
+	})
+
+	t.Run("propagates non-rate-limit errors", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc(branchesPath, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"boom"}`))
+		})
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		ctx, client := newClient(server)
+		if _, err := getAllBranches(ctx, client, repo, org, opt()); err == nil {
+			t.Error("expected an error to propagate on HTTP 500")
 		}
 	})
 }
