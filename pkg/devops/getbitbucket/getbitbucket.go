@@ -229,6 +229,19 @@ func GetProjectBitbucketListCloud(platformConfig map[string]interface{}, exclusi
 		TotalBranches:     TotalBranches,
 	}
 
+	// Persist the per-run repository breakdown for the ResultsAll page and the
+	// global PDF report. Analyzed is the remainder after removing empty/excluded/
+	// archived (matches the printed summary line); Scanned is derived from the sum.
+	if err := utils.SaveScanSummary("Results", utils.ScanSummary{
+		Platform: "bitbucket",
+		Analyzed: nbRepos - emptyRepo - totalExclude - totalArchiv,
+		Archived: totalArchiv,
+		Empty:    emptyRepo,
+		Excluded: totalExclude,
+	}); err != nil {
+		loggers.Errorf("❌ Error saving scan summary: %v", err)
+	}
+
 	printSummary(params.Organization, stats)
 
 	return importantBranches, nil

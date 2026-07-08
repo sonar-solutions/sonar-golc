@@ -346,12 +346,15 @@ func TestFetchAllRepos_Pagination(t *testing.T) {
 	defer ts.Close()
 
 	el := &utils.ExclusionList{Projects: map[string]bool{}, Repos: map[string]bool{}}
-	repos, err := fetchAllRepos(ts.URL+"/repos", "token", el)
+	repos, archived, excluded, err := fetchAllRepos(ts.URL+"/repos", "token", el)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repos) != 2 {
 		t.Errorf("expected 2 repos across 2 pages, got %d", len(repos))
+	}
+	if archived != 0 || excluded != 0 {
+		t.Errorf("expected no archived/excluded repos, got archived=%d excluded=%d", archived, excluded)
 	}
 }
 

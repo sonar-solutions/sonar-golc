@@ -97,8 +97,12 @@ func CreateGlobalReport(directory string) error {
 	// repos does not silently undercount. Missing file => empty list.
 	skippedRepos := LoadSkippedRepos(directory)
 
+	// Per-run repository breakdown (scanned/analyzed/archived/empty). Missing file
+	// (older result sets) => nil, and the summary section renders nothing.
+	scanSummary := LoadScanSummary(directory)
+
 	// Create a PDF
-	if err := renderGlobalPDF(languages, ginfo, skippedRepos); err != nil {
+	if err := renderGlobalPDF(languages, ginfo, skippedRepos, scanSummary); err != nil {
 		return err
 	}
 
@@ -318,6 +322,57 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 	pdf.SetXY(marginL, rowY+rowH)
 }
 
+// renderScanSummarySection appends a "Scan Summary" section to the global PDF,
+// showing how many repositories were scanned versus analyzed and how many were
+// filtered out (archived/disabled, empty) or could not be completed (skipped).
+// When no summary was persisted (older result sets) it renders nothing.
+func renderScanSummarySection(pdf *gofpdf.Fpdf, summary *ScanSummary, skippedCount int, marginL, contentW float64) {
+	if summary == nil {
+		return
+	}
+
+	// Repos that failed during the analysis phase were part of the projected
+	// analyzed set, so subtract them for the displayed analyzed count.
+	analyzed := summary.Analyzed - skippedCount
+	if analyzed < 0 {
+		analyzed = 0
+	}
+
+	pdf.Ln(8)
+
+	// Section header bar (blue, matching the language-breakdown style).
+	pdf.SetFillColor(0, 115, 186)
+	pdf.Rect(marginL, pdf.GetY(), contentW, 8, "F")
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetX(marginL + 2)
+	pdf.CellFormat(contentW-2, 8, "Scan Summary", "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+
+	labels := []string{"Scanned", "Analyzed", "Archived", "Empty", "Excluded", "Skipped"}
+	values := []int{summary.Scanned, analyzed, summary.Archived, summary.Empty, summary.Excluded, skippedCount}
+	colW := contentW / float64(len(labels))
+
+	// Value row
+	pdf.SetFont("Helvetica", "B", 12)
+	pdf.SetTextColor(30, 30, 40)
+	pdf.SetX(marginL)
+	for _, v := range values {
+		pdf.CellFormat(colW, 8, fmt.Sprintf("%d", v), "1", 0, "C", false, 0, "")
+	}
+	pdf.Ln(-1)
+
+	// Label row
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetTextColor(110, 110, 120)
+	pdf.SetX(marginL)
+	for _, l := range labels {
+		pdf.CellFormat(colW, 6, l, "1", 0, "C", false, 0, "")
+	}
+	pdf.Ln(-1)
+	pdf.SetTextColor(0, 0, 0)
+}
+
 // renderSkippedReposSection appends a "Skipped Repositories" section to the global
 // PDF. When no repositories were skipped it renders a short confirmation line; when
 // some were, it lists each with its branch and the reason it was skipped (clone
@@ -399,7 +454,7 @@ func renderSkippedReposSection(pdf *gofpdf.Fpdf, skippedRepos []SkippedRepo, mar
 }
 
 // renderGlobalPDF generates the GlobalReport.pdf from languages and global info.
-func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []SkippedRepo) error {
+func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []SkippedRepo, summary *ScanSummary) error {
 	loggers := NewLogger()
 
 	languages, maxLOC := prepareLanguagesForPDF(languages)
@@ -547,6 +602,9 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []
 
 	rowH := 7.0
 	renderLanguageRows(pdf, languages, maxLOC, drawColHeaders, marginL, pageH, marginB, colNum, colLang, colLOC, colPct, colBar, rowH, barColors)
+
+	// ── Scan summary section ─────────────────────────────────────────
+	renderScanSummarySection(pdf, summary, len(skippedRepos), marginL, contentW)
 
 	// ── Skipped repositories section ─────────────────────────────────
 	renderSkippedReposSection(pdf, skippedRepos, marginL, contentW)
