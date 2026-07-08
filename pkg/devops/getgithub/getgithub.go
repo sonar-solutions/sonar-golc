@@ -159,7 +159,45 @@ func secondaryRateLimitPause(err error) (time.Duration, bool) {
 	return wait, true
 }
 
-//var loggers = utils.SharedLogger()
+// repoIsEmpty reports whether a repository has no content to analyze.
+//
+// repo.GetSize() (kilobytes, from the listing response) is a zero-cost fast path:
+// any repo with size > 0 definitely has content. GitHub computes size
+// asynchronously, though, so a repository that *does* contain commits can
+// transiently report size 0 — right after creation/import, or on GitHub
+// Enterprise Server where size recalculation lags. Treating size 0 as
+// unconditionally empty would therefore silently drop such repos (the same
+// symptom this change set out to remove). So size 0 is only a *candidate*: it is
+// confirmed with a single lightweight ListCommits call, which is guarded by the
+// client's primary rate-limit sleep and a secondary-limit retry. If the check
+// cannot be completed, we err on the side of "not empty" so the repo is analyzed
+// rather than dropped.
+func repoIsEmpty(ctx context.Context, client *github.Client, repo *github.Repository, org string) bool {
+	if repo.GetSize() > 0 {
+		return false
+	}
+	repoName := repo.GetName()
+	opt := &github.CommitsListOptions{ListOptions: github.ListOptions{PerPage: 1}}
+	for attempt := 0; ; attempt++ {
+		commits, _, err := client.Repositories.ListCommits(ctx, org, repoName, opt)
+		if err == nil {
+			return len(commits) == 0
+		}
+		if wait, ok := secondaryRateLimitPause(err); ok && attempt < maxSecondaryRateLimitRetries {
+			time.Sleep(wait)
+			continue
+		}
+		// "Git Repository is empty." is GitHub's explicit signal for a repo with no
+		// commits. Any other error is inconclusive, so treat the repo as non-empty
+		// and let normal analysis proceed rather than dropping it as empty.
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Message == "Git Repository is empty." {
+			return true
+		}
+		utils.SharedLogger().Debugf("→ repo %s: size-0 empty-check inconclusive (%v); treating as non-empty", repoName, err)
+		return false
+	}
+}
 
 // Load repository ignore map from file
 func loadExclusionRepos1(filename string) (ExclusionRepos, error) {
@@ -325,12 +363,11 @@ func GetReposGithub(parms ParamsReposGithub, ctx context.Context, client *github
 			notAnalyzedCount++
 			continue
 		}
-		// Emptiness is read from the repository size already returned by the
-		// listing API, so we avoid an extra ListCommits call per repo. This both
-		// halves API-quota usage and removes the previous failure mode where a
-		// transient error on that call caused the repo to be skipped entirely.
-		if repo.GetSize() == 0 {
-			loggers.Debugf("→ repo %s: skipped (empty)", repoName)
+		// Emptiness uses repo size (already in the listing response) as a zero-cost
+		// fast path, confirming the size-0 candidates with a single ListCommits so
+		// a size-not-yet-computed repo is not silently dropped. See repoIsEmpty.
+		if repoIsEmpty(ctx, client, repo, parms.Organization) {
+			loggers.Infof("\t   ✅ Skipping repository '%s' — detected as empty", repoName)
 			emptyRepo++
 		} else {
 			loggers.Debugf("→ repo %s: analyzing", repoName)
@@ -547,8 +584,9 @@ func processRepositoryBranches(client *github.Client, ctx context.Context, repo 
 		}
 	}
 
-	// Check if repo is empty
-	if repo.GetSize() == 0 {
+	// Check if repo is empty (size 0 is only a candidate — confirm it so a repo
+	// whose size has not yet been computed is not dropped; see repoIsEmpty).
+	if repoIsEmpty(ctx, client, repo, orgName) {
 		stats.EmptyRepo++
 		return branches, nil
 	}
@@ -1117,10 +1155,10 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 				continue
 			}
 		}
-		// Next Step : Test is Repository is empty — read from the repository size
-		// already returned by the listing API, avoiding an extra ListCommits call
-		// (and the transient-error skip it used to cause).
-		isEmpty := repo.GetSize() == 0
+		// Next Step : Test is Repository is empty — size fast path with a confirming
+		// ListCommits for size-0 candidates (see repoIsEmpty), so a repo whose size
+		// is not yet computed is analyzed rather than silently skipped.
+		isEmpty := repoIsEmpty(ctx, client, repo, parms.Organization)
 		if !isEmpty {
 			// Create a temporary platform config map for client initialization
 			tempConfig := map[string]interface{}{
@@ -1193,6 +1231,7 @@ func GetGithubLanguages(parms ParamsReposGithub, ctx context.Context, client *gi
 			fmt.Println("\t  ✅  JSON data written to :", Resultfile)
 
 		} else {
+			utils.SharedLogger().Infof("\t   ✅ Skipping repository '%s' — detected as empty", repoName)
 			emptyRepo++
 		}
 	}
