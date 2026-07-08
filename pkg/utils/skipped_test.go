@@ -1,12 +1,57 @@
 package utils
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/jung-kurt/gofpdf"
 )
+
+// TestRenderSkippedReposSection_NoMojibake guards against the gofpdf latin1 bug:
+// UTF-8 text (the em dash in the "None" line, or an accented repo/branch/reason)
+// must be translated to the font encoding, so no raw multi-byte UTF-8 sequence
+// should survive into the PDF content stream (compression disabled so the stream
+// is inspectable).
+func TestRenderSkippedReposSection_NoMojibake(t *testing.T) {
+	// Raw UTF-8 byte sequences that must NOT appear once translated:
+	//   em dash U+2014 -> E2 80 94, é U+00E9 -> C3 A9, ï U+00EF -> C3 AF.
+	badSeqs := map[string][]byte{
+		"em-dash": {0xE2, 0x80, 0x94},
+		"é":       {0xC3, 0xA9},
+		"ï":       {0xC3, 0xAF},
+	}
+
+	render := func(repos []SkippedRepo) []byte {
+		pdf := gofpdf.New("P", "mm", "A4", "")
+		pdf.SetCompression(false)
+		pdf.SetFont("Helvetica", "", 8)
+		pdf.AddPage()
+		tr := pdf.UnicodeTranslatorFromDescriptor("")
+		renderSkippedReposSection(pdf, tr, repos, 15.0, 180.0)
+		var buf bytes.Buffer
+		if err := pdf.Output(&buf); err != nil {
+			t.Fatalf("pdf output: %v", err)
+		}
+		return buf.Bytes()
+	}
+
+	cases := map[string][]SkippedRepo{
+		"empty-none-line": nil,
+		"nonascii-cells":  {{ProjectKey: "café", RepoSlug: "naïve-service", Branch: "main", Reason: "clone — timed out"}},
+	}
+	for name, repos := range cases {
+		t.Run(name, func(t *testing.T) {
+			raw := render(repos)
+			for label, seq := range badSeqs {
+				if bytes.Contains(raw, seq) {
+					t.Errorf("untranslated UTF-8 %s leaked into the PDF content stream", label)
+				}
+			}
+		})
+	}
+}
 
 // TestRenderSkippedReposSection exercises the PDF section renderer for both the
 // empty and populated cases, including a list long enough to trigger a page break
@@ -32,7 +77,8 @@ func TestRenderSkippedReposSection(t *testing.T) {
 			pdf := gofpdf.New("P", "mm", "A4", "")
 			pdf.SetFont("Helvetica", "", 8)
 			pdf.AddPage()
-			renderSkippedReposSection(pdf, repos, 15.0, 180.0)
+			tr := pdf.UnicodeTranslatorFromDescriptor("")
+			renderSkippedReposSection(pdf, tr, repos, 15.0, 180.0)
 			if err := pdf.OutputFileAndClose(filepath.Join(t.TempDir(), "out.pdf")); err != nil {
 				t.Fatalf("render/output failed: %v", err)
 			}
