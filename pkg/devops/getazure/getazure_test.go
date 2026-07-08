@@ -4,7 +4,33 @@ import (
 	"testing"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
+	"github.com/microsoft/azure-devops-go-api/azuredevops/git"
 )
+
+func strPtr(s string) *string { return &s }
+
+func TestDefaultBranchName(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     *git.GitRepository
+		wantName string
+		wantOK   bool
+	}{
+		{"nil repo", nil, "", false},
+		{"nil default branch", &git.GitRepository{DefaultBranch: nil}, "", false},
+		{"empty default branch", &git.GitRepository{DefaultBranch: strPtr("")}, "", false},
+		{"prefixed", &git.GitRepository{DefaultBranch: strPtr("refs/heads/main")}, "main", true},
+		{"already trimmed", &git.GitRepository{DefaultBranch: strPtr("develop")}, "develop", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotName, gotOK := defaultBranchName(tt.repo)
+			if gotName != tt.wantName || gotOK != tt.wantOK {
+				t.Errorf("defaultBranchName() = (%q, %v), want (%q, %v)", gotName, gotOK, tt.wantName, tt.wantOK)
+			}
+		})
+	}
+}
 
 func TestIsRepoExcluded(t *testing.T) {
 	el := utils.NewExclusionList(nil, []string{"PROJ/my-repo", "OTHER/other-repo"})
