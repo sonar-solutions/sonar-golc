@@ -1,11 +1,61 @@
 package utils
 
 import (
+	"bytes"
+	"compress/zlib"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
+
+// TestRenderGlobalPDF_NoMojibakeStatCard renders the global PDF with an accented
+// largest-repository name and asserts the stat card text is translated to the font
+// encoding — no raw multi-byte UTF-8 sequence should survive into the (decompressed)
+// PDF content stream. Guards the gofpdf latin1 mojibake bug for the stat cards.
+func TestRenderGlobalPDF_NoMojibakeStatCard(t *testing.T) {
+	_, cleanup := setupGlobalReportEnv(t)
+	defer cleanup()
+	if err := os.MkdirAll("Results", 0755); err != nil {
+		t.Fatalf("mkdir Results: %v", err)
+	}
+
+	ginfo := Globalinfo{
+		Organization:           "verify-org", // ASCII, so any leak is from the stat card
+		TotalLinesOfCode:       "29",
+		LargestRepository:      "café-service", // accented, user-controlled
+		LinesOfCodeLargestRepo: "18",
+		DevOpsPlatform:         "azure",
+		NumberRepos:            2,
+	}
+	langs := []LanguageData{{Language: "Golang", CodeLines: 29, Percentage: 100, CodeLinesF: "29"}}
+	if err := renderGlobalPDF(langs, ginfo, nil, nil); err != nil {
+		t.Fatalf("renderGlobalPDF: %v", err)
+	}
+
+	raw, err := os.ReadFile("Results/GlobalReport.pdf")
+	if err != nil {
+		t.Fatalf("read pdf: %v", err)
+	}
+	var text bytes.Buffer
+	for _, m := range regexp.MustCompile(`(?s)stream\r?\n(.*?)\r?\nendstream`).FindAllSubmatch(raw, -1) {
+		if zr, err := zlib.NewReader(bytes.NewReader(m[1])); err == nil {
+			_, _ = io.Copy(&text, zr)
+			_ = zr.Close()
+		}
+	}
+	// Guard against a false pass: the stat-card text must actually be in the
+	// extracted stream, otherwise the assertion below is meaningless.
+	if !bytes.Contains(text.Bytes(), []byte("Largest Repo")) {
+		t.Fatal("could not find stat-card text in decompressed PDF; extraction likely failed")
+	}
+	// é -> C3 A9 in UTF-8; after translation it becomes single-byte cp1252 0xE9.
+	if bytes.Contains(text.Bytes(), []byte{0xC3, 0xA9}) {
+		t.Error("untranslated UTF-8 (é) leaked into GlobalReport.pdf stat card")
+	}
+}
 
 const resultMainJSON = "Result_org__repo__main.json"
 

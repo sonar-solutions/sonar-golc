@@ -548,11 +548,15 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []
 		}
 		return s
 	}
+	// Translate before valOrNA so its byte-based truncation operates on the
+	// single-byte Windows-1252 encoding (byte slice == rune slice) — this both
+	// prevents mojibake for an accented largest-repo name and avoids splitting a
+	// multi-byte UTF-8 sequence.
 	cards := []statCard{
-		{"Total LOC", valOrNA(ginfo.TotalLinesOfCode), 0, 115, 186},
+		{"Total LOC", valOrNA(tr(ginfo.TotalLinesOfCode)), 0, 115, 186},
 		{"Repositories", fmt.Sprintf("%d", ginfo.NumberRepos), 0, 168, 110},
-		{"Largest Repo", valOrNA(ginfo.LargestRepository), 241, 146, 49},
-		{"Largest Repo LOC", valOrNA(ginfo.LinesOfCodeLargestRepo), 167, 86, 180},
+		{"Largest Repo", valOrNA(tr(ginfo.LargestRepository)), 241, 146, 49},
+		{"Largest Repo LOC", valOrNA(tr(ginfo.LinesOfCodeLargestRepo)), 167, 86, 180},
 	}
 	for i, c := range cards {
 		x := marginL + float64(i)*(cardW+4)
