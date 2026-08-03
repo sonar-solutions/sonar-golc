@@ -111,6 +111,18 @@ type RepositoryData struct {
 	BlankLinesF string `json:"BlankLinesF"`
 	CommentsF   string `json:"CommentsF"`
 	CodeLinesF  string `json:"CodeLinesF"`
+	// TopLanguages are the repository's largest languages, biggest first, excluding the
+	// language held out of the totals. Empty when no by-language result file was found.
+	TopLanguages []utils.LanguageShare `json:"TopLanguages,omitempty"`
+}
+
+// PrimaryLanguage returns the repository's largest language, or "" when unknown. Used as
+// the sort key for the Top Languages column.
+func (r RepositoryData) PrimaryLanguage() string {
+	if len(r.TopLanguages) == 0 {
+		return ""
+	}
+	return r.TopLanguages[0].Language
 }
 
 type ProjectBranch struct {
@@ -207,6 +219,7 @@ type PageData struct {
 	DeselectedCodeLines string // formatted LOC removed from the totals
 	RawTotalLinesOfCode string // total across every analyzed repository, for comparison
 	ScannedRepositories int    // counted + deselected, i.e. every repository with results
+	TopLanguagesShown   int    // how many languages the Top Languages column lists
 }
 
 // ScanSummaryView is the template-facing view of utils.ScanSummary. Analyzed is
@@ -389,14 +402,14 @@ func getRepositoryData() ([]RepositoryData, error) {
 			continue
 		}
 
-		// Code lines for report total: exclude JSON to match SonarQube behavior
+		// Code lines for report total: exclude JSON to match SonarQube behavior. The same
+		// parse yields the repository's largest languages — the per-language list is
+		// already in hand here, so surfacing the top few costs no extra read.
 		codeLinesForReport := reportData.TotalCodeLines
+		var topLanguages []utils.LanguageShare
 		if langData, err := os.ReadFile(byLanguagePath); err == nil {
 			var byLang struct {
-				Results []struct {
-					Language  string `json:"Language"`
-					CodeLines int    `json:"CodeLines"`
-				} `json:"Results"`
+				Results []utils.LanguageShare `json:"Results"`
 			}
 			if json.Unmarshal(langData, &byLang) == nil {
 				for _, r := range byLang.Results {
@@ -405,6 +418,7 @@ func getRepositoryData() ([]RepositoryData, error) {
 						break
 					}
 				}
+				topLanguages = utils.RankTopLanguages(byLang.Results, utils.TopLanguagesShown)
 			}
 		}
 
@@ -418,19 +432,20 @@ func getRepositoryData() ([]RepositoryData, error) {
 
 		// Create repository data entry (CodeLines excludes JSON for report total)
 		repo := RepositoryData{
-			Number:      i,
-			Key:         key,
-			Repository:  branch.RepoSlug,
-			Org:         branch.Org,
-			Branch:      branch.MainBranch,
-			Lines:       reportData.TotalLines,
-			BlankLines:  reportData.TotalBlankLines,
-			Comments:    reportData.TotalComments,
-			CodeLines:   codeLinesForReport,
-			LinesF:      utils.FormatCodeLines(float64(reportData.TotalLines)),
-			BlankLinesF: utils.FormatCodeLines(float64(reportData.TotalBlankLines)),
-			CommentsF:   utils.FormatCodeLines(float64(reportData.TotalComments)),
-			CodeLinesF:  utils.FormatCodeLines(float64(codeLinesForReport)),
+			Number:       i,
+			Key:          key,
+			Repository:   branch.RepoSlug,
+			Org:          branch.Org,
+			Branch:       branch.MainBranch,
+			Lines:        reportData.TotalLines,
+			BlankLines:   reportData.TotalBlankLines,
+			Comments:     reportData.TotalComments,
+			CodeLines:    codeLinesForReport,
+			LinesF:       utils.FormatCodeLines(float64(reportData.TotalLines)),
+			BlankLinesF:  utils.FormatCodeLines(float64(reportData.TotalBlankLines)),
+			CommentsF:    utils.FormatCodeLines(float64(reportData.TotalComments)),
+			CodeLinesF:   utils.FormatCodeLines(float64(codeLinesForReport)),
+			TopLanguages: topLanguages,
 		}
 
 		repositories = append(repositories, repo)
@@ -1065,6 +1080,7 @@ func loadApplicationData() (PageData, error) {
 		DeselectedKeys:      deselectedKeys,
 		DeselectedCount:     len(deselected),
 		ScannedRepositories: len(repositoryData) + len(deselected),
+		TopLanguagesShown:   utils.TopLanguagesShown,
 		DeselectedCodeLines: utils.FormatCodeLines(float64(deselectedCodeLines)),
 		RawTotalLinesOfCode: rawTotalLOC,
 	}
@@ -1165,7 +1181,7 @@ var (
 // customizedReportsDir holds the reports that reflect the user's current selection.
 // They live in their own directory rather than beside the originals with a suffix, so
 // that browsing or zipping Results/ cannot mix the two sets up.
-const customizedReportsDir = "Results/customized"
+var customizedReportsDir = utils.CustomizedReportsDir(resultsBaseDir)
 
 // reportVariant is one of the two report sets that can be served.
 type reportVariant struct {
@@ -1434,6 +1450,17 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 
 	if err := utils.SaveDeselectedRepos(resultsBaseDir, records); err != nil {
 		return nil, fmt.Errorf("cannot save selection: %w", err)
+	}
+
+	// With no selection left, the customized reports describe nothing. They are
+	// filtered, understated reports under ordinary file names, and the ZIP archives the
+	// whole tree — so leaving them behind means a reset user can still hand over an
+	// understated report believing it is current. Delete them rather than rely on the
+	// download links no longer being offered.
+	if len(records) == 0 {
+		if err := utils.ClearCustomizedReports(resultsBaseDir); err != nil {
+			return nil, fmt.Errorf("cannot remove stale customized reports: %w", err)
+		}
 	}
 
 	// The page is rebuilt from the result files in memory, so it is correct as soon as
@@ -2052,6 +2079,10 @@ const htmlTemplate = `
                           <th scope="col" class="sortable" data-column="branch">
                             Branch <i class="fas fa-sort sort-icon"></i>
                           </th>
+                          <th scope="col" class="sortable" data-column="language"
+                              title="The {{.TopLanguagesShown}} largest languages by code lines. JSON is excluded, matching the Code Lines column.">
+                            Top Languages <i class="fas fa-sort sort-icon"></i>
+                          </th>
                           <th scope="col" class="sortable" data-column="lines">
                             Lines <i class="fas fa-sort sort-icon"></i>
                           </th>
@@ -2069,11 +2100,12 @@ const htmlTemplate = `
                       <tbody id="repositoryTableBody">
                         {{$platform := .Platform}}
                         {{range .Repositories}}
-                        <tr data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
+                        <tr data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-language="{{.PrimaryLanguage}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
                           <td><input type="checkbox" class="form-check-input repo-select" checked value="{{.Key}}" aria-label="Count {{.Repository}} in the totals"></td>
                           <td class="row-num">{{.Number}}</td>
                           <td><a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{if and (eq $platform "gitlab") .Org}}<span class="text-muted" style="font-size:0.85em;">{{.Org}}&thinsp;/&thinsp;</span>{{end}}{{.Repository}}</a></td>
                           <td>{{.Branch}}</td>
+                          <td class="top-languages">{{template "topLanguages" .TopLanguages}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>
                           <td>{{.CommentsF}}</td>
@@ -2083,7 +2115,7 @@ const htmlTemplate = `
                         {{/* Deselected repositories stay in the table, unchecked and muted,
                              so the change can be undone here rather than only by a full reset. */}}
                         {{range .Deselected}}
-                        <tr class="deselected-row" style="opacity:0.55;" data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
+                        <tr class="deselected-row" style="opacity:0.55;" data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-language="{{.PrimaryLanguage}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
                           <td><input type="checkbox" class="form-check-input repo-select" value="{{.Key}}" aria-label="Count {{.Repository}} in the totals"></td>
                           <td class="row-num">&mdash;</td>
                           <td>
@@ -2091,6 +2123,7 @@ const htmlTemplate = `
                             <span class="badge bg-secondary ms-1" style="font-size:0.65em;">deselected</span>
                           </td>
                           <td>{{.Branch}}</td>
+                          <td class="top-languages">{{template "topLanguages" .TopLanguages}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>
                           <td>{{.CommentsF}}</td>
@@ -2102,7 +2135,7 @@ const htmlTemplate = `
                         <tr id="totalsRow">
                           <td></td>
                           <td><strong>Total</strong></td>
-                          <td colspan="2"><strong id="totalRepoCount">{{len .Repositories}} repositories</strong></td>
+                          <td colspan="3"><strong id="totalRepoCount">{{len .Repositories}} repositories</strong></td>
                           <td id="totalLines"><strong>-</strong></td>
                           <td id="totalBlankLines"><strong>-</strong></td>
                           <td id="totalComments"><strong>-</strong></td>
@@ -2566,10 +2599,12 @@ const htmlTemplate = `
             rows.sort((a, b) => {
                 let aVal, bVal;
                 
-                if (column === 'repository' || column === 'branch') {
-                    aVal = a.dataset[column].toLowerCase();
-                    bVal = b.dataset[column].toLowerCase();
-                    return currentSort.direction === 'asc' ? 
+                if (column === 'repository' || column === 'branch' || column === 'language') {
+                    // Sorts on the primary language; repositories with no language data
+                    // carry an empty value and sort together.
+                    aVal = (a.dataset[column] || '').toLowerCase();
+                    bVal = (b.dataset[column] || '').toLowerCase();
+                    return currentSort.direction === 'asc' ?
                         aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
                 } else {
                     aVal = parseInt(a.dataset[column]);
@@ -2604,6 +2639,11 @@ const htmlTemplate = `
     </script>
   </body>
 </html>
+
+{{/* Renders a repository's largest languages as "Go 12.3K · Java 4.1K · XML 900".
+     An em dash when the by-language result file was missing, so "unknown" is visibly
+     unknown rather than an empty-looking cell. */}}
+{{define "topLanguages"}}{{if .}}{{range $i, $lang := .}}{{if $i}} <span class="text-muted">·</span> {{end}}<span style="font-weight:500;">{{$lang.Language}}</span>&nbsp;<span class="text-muted" style="font-size:0.85em;">{{$lang.CodeLinesF}}</span>{{end}}{{else}}<span class="text-muted">&mdash;</span>{{end}}{{end}}
 `
 
 // Repository Detail HTML template

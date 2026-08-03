@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -332,6 +333,104 @@ func TestAdjustGlobalInfoRecomputesWhenDeselected(t *testing.T) {
 	}
 	if got.NumberRepos != 7 {
 		t.Errorf("NumberRepos = %d, want 7", got.NumberRepos)
+	}
+}
+
+func TestRankTopLanguagesExcludesHeldOutLanguage(t *testing.T) {
+	// JSON is held out of the headline LOC figure, so it must not appear as a repository's
+	// top language either — it would sit next to a code-line count that deliberately does
+	// not include those lines.
+	got := RankTopLanguages([]LanguageShare{
+		{Language: LanguageExcludedFromTotalLOC, CodeLines: 900_000},
+		{Language: "Go", CodeLines: 300},
+		{Language: "Java", CodeLines: 200},
+		{Language: "XML", CodeLines: 100},
+		{Language: "Shell", CodeLines: 50},
+		{Language: "  ", CodeLines: 999}, // blank name, ignored
+		{Language: "Empty", CodeLines: 0},
+	}, 3)
+
+	if len(got) != 3 {
+		t.Fatalf("got %d languages, want 3", len(got))
+	}
+	want := []string{"Go", "Java", "XML"}
+	for i, w := range want {
+		if got[i].Language != w {
+			t.Errorf("position %d = %q, want %q", i, got[i].Language, w)
+		}
+	}
+	if got[0].CodeLinesF != FormatCodeLines(300) {
+		t.Errorf("CodeLinesF = %q, want %q", got[0].CodeLinesF, FormatCodeLines(300))
+	}
+}
+
+func TestRankTopLanguagesTiesAreStable(t *testing.T) {
+	// Equal line counts must order deterministically, or the page and the reports could
+	// list the same repository's languages differently.
+	for i := 0; i < 5; i++ {
+		got := RankTopLanguages([]LanguageShare{
+			{Language: "Zig", CodeLines: 100},
+			{Language: "Ada", CodeLines: 100},
+			{Language: "Perl", CodeLines: 100},
+		}, 3)
+		if got[0].Language != "Ada" || got[1].Language != "Perl" || got[2].Language != "Zig" {
+			t.Fatalf("unstable tie order: %+v", got)
+		}
+	}
+}
+
+func TestRankTopLanguagesHandlesFewerThanLimit(t *testing.T) {
+	got := RankTopLanguages([]LanguageShare{{Language: "Go", CodeLines: 5}}, 3)
+	if len(got) != 1 {
+		t.Errorf("got %d, want 1 — a repository with one language must not be padded", len(got))
+	}
+	if empty := RankTopLanguages(nil, 3); len(empty) != 0 {
+		t.Errorf("got %d, want 0 for no language data", len(empty))
+	}
+}
+
+func TestRankTopRepositories(t *testing.T) {
+	repos := make([]RepoTotal, 0, 40)
+	for i := 1; i <= 40; i++ {
+		repos = append(repos, RepoTotal{Repo: fmt.Sprintf("repo%02d", i), CodeLines: i * 10})
+	}
+	repos = append(repos, RepoTotal{Repo: "empty", CodeLines: 0})
+
+	got := RankTopRepositories(repos, TopRepositoriesShown)
+
+	if len(got) != TopRepositoriesShown {
+		t.Fatalf("got %d repositories, want %d", len(got), TopRepositoriesShown)
+	}
+	if got[0].Repo != "repo40" {
+		t.Errorf("first = %q, want repo40 (largest)", got[0].Repo)
+	}
+	// Descending, and the zero-LOC repository must be dropped rather than padding the list.
+	for i := 1; i < len(got); i++ {
+		if got[i].CodeLines > got[i-1].CodeLines {
+			t.Fatalf("not sorted descending at %d: %+v", i, got)
+		}
+		if got[i].CodeLines == 0 {
+			t.Errorf("zero-LOC repository should not be listed")
+		}
+	}
+}
+
+func TestRankTopRepositoriesTiesAreStable(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		got := RankTopRepositories([]RepoTotal{
+			{Repo: "zulu", CodeLines: 7},
+			{Repo: "alpha", CodeLines: 7},
+		}, 30)
+		if got[0].Repo != "alpha" || got[1].Repo != "zulu" {
+			t.Fatalf("unstable tie order: %+v", got)
+		}
+	}
+}
+
+func TestRankTopRepositoriesFewerThanLimit(t *testing.T) {
+	got := RankTopRepositories([]RepoTotal{{Repo: "only", CodeLines: 1}}, 30)
+	if len(got) != 1 {
+		t.Errorf("got %d, want 1", len(got))
 	}
 }
 

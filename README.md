@@ -22,6 +22,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 - [Configuration](#configuration)
   - [Optional Parameters](#optional-parameters)
 - [Reports](#reports)
+  - [Languages per repository](#languages-per-repository)
   - [Excluding repositories from the totals](#excluding-repositories-from-the-totals)
 - [Supported Languages](#supported-languages)
 - [Execution Log](#execution-log)
@@ -135,10 +136,28 @@ The same data is available as exportable files in the `Results/` folder next to 
 
 | Report | Contents |
 |--------|----------|
-| `GlobalReport.pdf / .json` | Organisation-wide totals: lines of code per language, largest repository, total repository and branch counts |
-| `byfile-report/repository_summary.*` | Cross-repository file summary — lists every analysed repository with its total lines, blank lines, comments, and code lines |
+| `GlobalReport.pdf / .json` | Organisation-wide totals: lines of code per language, largest repository, total repository and branch counts, and a **Top 30 Repositories** table (branch, main language, LOC, share of total) |
+| `byfile-report/repository_summary.*` | Cross-repository file summary — lists every analysed repository with its total lines, blank lines, comments, and code lines, plus its largest languages |
 | `byfile-report/*_byfile.*` | Per-repository file tree — one row per source file with individual line counts |
 | `bylanguage-report/*.json` | Per-repository language breakdown — one row per detected language with line counts |
+
+### Languages per repository
+
+The **Lines of Code by Repository** table shows each repository's three largest
+languages with their code lines (`Python 54.9K · C# 50.0K · YAML 32.0K`), sortable by
+the primary language. The full breakdown for a repository is one click away on its
+detail page.
+
+The same information reaches the reports:
+
+| Report | Languages shown |
+|--------|-----------------|
+| `repository_summary.csv` / `.json` | all three, in fixed columns so a spreadsheet can sort or pivot on them |
+| `repository_summary.pdf` | the main language (the table has no room for three) |
+| `GlobalReport.pdf` | the main language of each of the Top 30 repositories |
+
+> JSON is excluded from these rankings, exactly as it is excluded from the code-line
+> totals they sit beside. A repository whose by-language results are missing shows `—`.
 
 ### Excluding repositories from the totals
 

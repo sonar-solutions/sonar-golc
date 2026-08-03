@@ -4,9 +4,11 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/zlib"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -496,6 +498,166 @@ func TestCustomizedReportFallsBackWhenNothingDeselected(t *testing.T) {
 	}
 }
 
+func TestResetRemovesStaleCustomizedReports(t *testing.T) {
+	setupResultsFixture(t)
+
+	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
+		t.Fatalf("applyDeselection: %v", err)
+	}
+	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("customized request failed: %d", rec.Code)
+	}
+	if _, err := os.Stat(customizedVariant.globalPDFPath()); err != nil {
+		t.Fatalf("customized report should exist before the reset: %v", err)
+	}
+
+	if _, err := applyDeselection(nil); err != nil {
+		t.Fatalf("applyDeselection(nil): %v", err)
+	}
+
+	// The customized reports are filtered and understated, sit under ordinary file
+	// names, and the ZIP archives the whole tree — leaving them behind means a reset
+	// user can still hand one over believing it is current.
+	if _, err := os.Stat(customizedReportsDir); !os.IsNotExist(err) {
+		t.Errorf("%s should be removed when the selection is reset (err=%v)", customizedReportsDir, err)
+	}
+}
+
+func TestZipExcludesStaleCustomizedReportsAfterReset(t *testing.T) {
+	setupResultsFixture(t)
+
+	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
+		t.Fatalf("applyDeselection: %v", err)
+	}
+	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("customized request failed: %d", rec.Code)
+	}
+	if _, err := applyDeselection(nil); err != nil {
+		t.Fatalf("applyDeselection(nil): %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	zipResults(rec, httptest.NewRequest(http.MethodGet, "/download", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("zipResults status = %d, want 200", rec.Code)
+	}
+
+	archive, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("reading archive: %v", err)
+	}
+	for _, f := range archive.File {
+		if strings.Contains(filepath.ToSlash(f.Name), "/"+utils.CustomizedReportsDirName+"/") {
+			t.Errorf("archive still contains a stale customized report: %s", f.Name)
+		}
+	}
+}
+
+func TestNewScanClearsCustomizedReports(t *testing.T) {
+	setupResultsFixture(t)
+
+	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
+		t.Fatalf("applyDeselection: %v", err)
+	}
+	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("customized request failed: %d", rec.Code)
+	}
+
+	// What an analysis run does at the end of a scan. Reports describing the previous
+	// scan's selection must not survive it.
+	if err := utils.ClearDeselectedRepos(resultsBaseDir); err != nil {
+		t.Fatalf("ClearDeselectedRepos: %v", err)
+	}
+	if _, err := os.Stat(customizedReportsDir); !os.IsNotExist(err) {
+		t.Errorf("a new scan should remove %s (err=%v)", customizedReportsDir, err)
+	}
+}
+
+func TestGlobalPDFListsTopRepositories(t *testing.T) {
+	setupResultsFixture(t)
+
+	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("request failed: %d", rec.Code)
+	}
+	text := pdfText(t, fullScanVariant.globalPDFPath())
+
+	if !strings.Contains(text, "Repositories by Lines of Code") {
+		t.Fatal("global report should list the largest repositories")
+	}
+	for _, want := range []string{"keep", "drop", "MAIN LANGUAGE", "SHARE %"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("top-repositories table missing %q", want)
+		}
+	}
+	// The section header states how many are shown, and both fixture repos qualify.
+	if !strings.Contains(text, "Top 2 Repositories") {
+		t.Error("heading should state how many repositories are listed")
+	}
+	// Primary languages come from the per-repository files.
+	if !strings.Contains(text, "Go") || !strings.Contains(text, "Java") {
+		t.Error("each listed repository should show its main language")
+	}
+}
+
+func TestGlobalPDFTopRepositoriesRespectSelection(t *testing.T) {
+	setupResultsFixture(t)
+
+	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
+		t.Fatalf("applyDeselection: %v", err)
+	}
+	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("customized request failed: %d", rec.Code)
+	}
+
+	custom := pdfText(t, customizedVariant.globalPDFPath())
+	// A report that excludes a repository from its totals must not then rank it among
+	// the largest — that would contradict the very figures on its first page.
+	if !strings.Contains(custom, "Top 1 Repositories") {
+		t.Error("customized report should rank only the repositories it counts")
+	}
+	if strings.Contains(custom, "Java") {
+		t.Error("the deselected repository's language should not appear in the ranking")
+	}
+
+	// The full scan still ranks both.
+	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("full-scan request failed: %d", rec.Code)
+	}
+	if full := pdfText(t, fullScanVariant.globalPDFPath()); !strings.Contains(full, "Top 2 Repositories") {
+		t.Error("the full-scan report should still rank every repository")
+	}
+}
+
+func TestSummaryPDFAndCSVCarryLanguages(t *testing.T) {
+	setupResultsFixture(t)
+
+	if rec := serveReport(t, "repository-summary.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("pdf request failed: %d", rec.Code)
+	}
+	pdf := pdfText(t, fullScanVariant.summaryPDFPath())
+	if !strings.Contains(pdf, "Main Language") {
+		t.Error("summary PDF should have a Main Language column")
+	}
+	if !strings.Contains(pdf, "Go") {
+		t.Error("summary PDF should show each repository's main language")
+	}
+
+	if rec := serveReport(t, "repository-summary.csv"); rec.Code != http.StatusOK {
+		t.Fatalf("csv request failed: %d", rec.Code)
+	}
+	csv, err := os.ReadFile(fullScanVariant.summaryCSVPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The CSV carries all three languages in fixed columns so a spreadsheet can pivot
+	// on them, where the PDF has room for only the primary one.
+	for _, want := range []string{"Language 1", "Language 3 Code Lines", ",Go,1000"} {
+		if !strings.Contains(string(csv), want) {
+			t.Errorf("summary CSV missing %q", want)
+		}
+	}
+}
+
 func TestUnknownReportIs404(t *testing.T) {
 	setupResultsFixture(t)
 	if rec := serveReport(t, "not-a-report.pdf"); rec.Code != http.StatusNotFound {
@@ -564,6 +726,89 @@ func TestReportsDropdownOffersOnlyOriginalWhenUnfiltered(t *testing.T) {
 	}
 	if !strings.Contains(out, "/reports/global-report.pdf") {
 		t.Error("the full-scan report must always be offered")
+	}
+}
+
+func TestRepositoryTableShowsTopLanguages(t *testing.T) {
+	setupResultsFixture(t)
+
+	pd, err := loadApplicationData()
+	if err != nil {
+		t.Fatalf("loadApplicationData: %v", err)
+	}
+
+	var keep *RepositoryData
+	for i := range pd.Repositories {
+		if pd.Repositories[i].Repository == "keep" {
+			keep = &pd.Repositories[i]
+		}
+	}
+	if keep == nil {
+		t.Fatal("fixture repository 'keep' missing")
+	}
+	if len(keep.TopLanguages) != 1 || keep.TopLanguages[0].Language != "Go" {
+		t.Errorf("TopLanguages = %+v, want one entry for Go", keep.TopLanguages)
+	}
+	if keep.PrimaryLanguage() != "Go" {
+		t.Errorf("PrimaryLanguage() = %q, want Go", keep.PrimaryLanguage())
+	}
+
+	out := renderTemplate(t, pd)
+	if !strings.Contains(out, "Top Languages") {
+		t.Error("repository table should have a Top Languages column")
+	}
+	if !strings.Contains(out, `data-column="language"`) {
+		t.Error("the Top Languages column should be sortable")
+	}
+	if !strings.Contains(out, `data-language="Go"`) {
+		t.Error("rows should carry the primary language as a sort key")
+	}
+	if !strings.Contains(out, "Go") || !strings.Contains(out, keep.TopLanguages[0].CodeLinesF) {
+		t.Error("the cell should show the language and its code lines")
+	}
+}
+
+func TestRepositoryTableShowsDashWhenLanguagesUnknown(t *testing.T) {
+	// A repository whose by-language result file is missing must read as unknown rather
+	// than as an empty cell that looks like a rendering bug.
+	out := renderTemplate(t, PageData{
+		Platform: "github",
+		Repositories: []RepositoryData{
+			{Number: 1, Key: "acme__nolang__main", Repository: "nolang", Branch: "main"},
+		},
+	})
+	if !strings.Contains(out, `class="top-languages"><span class="text-muted">&mdash;</span>`) {
+		t.Error("a repository with no language data should render an em dash")
+	}
+}
+
+func TestRepositoryTableColumnCountsLineUp(t *testing.T) {
+	// The totals row spans the table with a colspan, so adding a column without
+	// adjusting it would silently misalign every figure in the footer.
+	out := renderTemplate(t, PageData{
+		Platform: "github",
+		Repositories: []RepositoryData{
+			{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main"},
+		},
+	})
+
+	section := out[strings.Index(out, `<tbody id="repositoryTableBody">`):]
+	header := out[strings.Index(out, `<thead class="table-dark">`):strings.Index(out, `<tbody id="repositoryTableBody">`)]
+
+	headerCells := strings.Count(header, "<th ")
+	footer := section[strings.Index(section, `<tr id="totalsRow">`):]
+	footer = footer[:strings.Index(footer, "</tr>")]
+
+	footerCells := strings.Count(footer, "<td")
+	spanned := 0
+	for _, m := range regexp.MustCompile(`colspan="(\d+)"`).FindAllStringSubmatch(footer, -1) {
+		n := 0
+		fmt.Sscanf(m[1], "%d", &n)
+		spanned += n - 1 // the cell itself is already counted
+	}
+
+	if headerCells != footerCells+spanned {
+		t.Errorf("footer spans %d columns but the header has %d", footerCells+spanned, headerCells)
 	}
 }
 

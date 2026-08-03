@@ -348,12 +348,16 @@ func TestGenerateRepositoryCSVReport(t *testing.T) {
 		t.Fatalf("Failed to read generated CSV file: %v", err)
 	}
 
-	// Check that the file contains expected data
+	// Check that the file contains expected data. The top-language columns are appended
+	// after the original ones, so existing column positions are unchanged and the rows
+	// simply gain empty trailing fields when no language data is available.
 	contentStr := string(content)
+	languagePadding := strings.Repeat(",", TopLanguagesShown*2)
 	expectedStrings := []string{
-		"#,Repository,Branch,Lines,Blank Lines,Comments,Code Lines",
-		"1,repo1,main,100,10,20,70",
-		"2,repo2,master,200,15,25,160",
+		"#,Repository,Branch,Lines,Blank Lines,Comments,Code Lines,Language 1,Language 1 Code Lines," +
+			"Language 2,Language 2 Code Lines,Language 3,Language 3 Code Lines",
+		"1,repo1,main,100,10,20,70" + languagePadding,
+		"2,repo2,master,200,15,25,160" + languagePadding,
 		"TOTAL,2 repositories,,300,25,45,230",
 	}
 

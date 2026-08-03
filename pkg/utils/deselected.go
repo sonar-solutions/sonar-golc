@@ -196,10 +196,37 @@ func LoadDeselectionSet(baseResultsDir string) DeselectionSet {
 // from the full scan. A fresh analysis run calls this: the previous run's selection
 // refers to a repository set that no longer necessarily exists, and silently
 // carrying it over would understate the new scan.
+//
+// It also removes the customized reports, which described that selection — see
+// ClearCustomizedReports for why leaving them behind is dangerous.
 func ClearDeselectedRepos(baseResultsDir string) error {
+	if err := ClearCustomizedReports(baseResultsDir); err != nil {
+		return err
+	}
 	err := os.Remove(DeselectedReposPath(baseResultsDir))
 	if os.IsNotExist(err) {
 		return nil
 	}
 	return err
+}
+
+// CustomizedReportsDirName is the subdirectory of the results tree holding reports that
+// reflect a user's repository selection, kept apart from the full-scan reports so that
+// browsing or archiving the tree cannot confuse the two.
+const CustomizedReportsDirName = "customized"
+
+// CustomizedReportsDir returns the directory holding the selection-specific reports.
+func CustomizedReportsDir(baseResultsDir string) string {
+	return filepath.Join(baseResultsDir, CustomizedReportsDirName)
+}
+
+// ClearCustomizedReports deletes the selection-specific reports.
+//
+// This must happen whenever the selection they describe stops applying — when it is
+// reset, and when a new analysis run supersedes it. They are filtered, understated
+// reports sitting under ordinary file names, and nothing inside them says they are
+// obsolete: the archive built by the results page includes the whole tree, so a stale
+// copy would be handed over as if it were current.
+func ClearCustomizedReports(baseResultsDir string) error {
+	return os.RemoveAll(CustomizedReportsDir(baseResultsDir))
 }
