@@ -178,14 +178,16 @@ type RepoTotal struct {
 	PrimaryLanguageCodeLines int
 }
 
-// PrimaryLanguageLabel renders the main language with its own code lines, e.g.
-// "C++ 761.37K". A dash when no language was recorded, so an unknown reads as unknown
-// rather than as an empty cell.
-func (r RepoTotal) PrimaryLanguageLabel() string {
+// primaryLanguageCell renders the main language with its own code lines, e.g.
+// "C++ 761.37K", fitted to the given column width so the line count survives truncation.
+// A dash when no language was recorded, so an unknown reads as unknown rather than as an
+// empty cell.
+func (r RepoTotal) primaryLanguageCell(pdf *gofpdf.Fpdf, tr func(string) string, w float64) string {
 	if r.PrimaryLanguage == "" {
 		return "-"
 	}
-	return fmt.Sprintf("%s %s", r.PrimaryLanguage, FormatCodeLines(float64(r.PrimaryLanguageCodeLines)))
+	return fitLabelWithValue(pdf, tr(r.PrimaryLanguage),
+		tr(FormatCodeLines(float64(r.PrimaryLanguageCodeLines))), w)
 }
 
 // collectLanguageTotals walks result files and aggregates language totals.
@@ -529,6 +531,30 @@ func fitToWidth(pdf *gofpdf.Fpdf, s string, w float64) string {
 	return s + "..."
 }
 
+// fitLabelWithValue renders "name value" within w, shortening only name when the pair does
+// not fit. Returns the value alone (trimmed if it must be) when even that will not fit.
+//
+// Shortening the name rather than the whole string matters because the value is the figure
+// the cell exists to report. Trimming from the end takes the number first, and can leave a
+// half-trimmed one: "Objective-C++ 123.45K" becomes "Objective-C++ 123...", which reads as
+// 123 lines rather than 123 thousand. A shortened language name is still recognisable; a
+// mangled number is simply wrong.
+//
+// Both parts must already be translated to the font's encoding, as fitToWidth also
+// requires — the byte-wise trimming assumes single-byte characters.
+func fitLabelWithValue(pdf *gofpdf.Fpdf, name, value string, w float64) string {
+	if full := name + " " + value; pdf.GetStringWidth(full) <= w-2 {
+		return full
+	}
+	for len(name) > 1 {
+		name = name[:len(name)-1]
+		if candidate := name + "... " + value; pdf.GetStringWidth(candidate) <= w-2 {
+			return candidate
+		}
+	}
+	return fitToWidth(pdf, value, w)
+}
+
 // renderScanSummarySection appends a "Scan Summary" section to the global PDF,
 // showing how many repositories were scanned versus analyzed and how many were
 // filtered out (archived/disabled, empty) or could not be completed (skipped).
@@ -777,7 +803,7 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		pdf.SetFont("Helvetica", "", 8)
 		pdf.SetTextColor(60, 60, 70)
 		pdf.CellFormat(colBranch, rowH, fitToWidth(pdf, tr(rt.Branch), colBranch), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colLang, rowH, fitToWidth(pdf, tr(rt.PrimaryLanguageLabel()), colLang), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colLang, rowH, rt.primaryLanguageCell(pdf, tr, colLang), "0", 0, "L", false, 0, "")
 		pdf.CellFormat(colLOC, rowH, FormatCodeLines(float64(rt.CodeLines)), "0", 0, "R", false, 0, "")
 		pdf.CellFormat(colShare, rowH, share, "0", 1, "R", false, 0, "")
 

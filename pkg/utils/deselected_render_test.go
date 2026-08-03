@@ -236,6 +236,42 @@ func TestRenderTopRepositoriesSectionPaginates(t *testing.T) {
 	}
 }
 
+func TestFitLabelWithValueKeepsTheNumber(t *testing.T) {
+	// The cell exists to report a figure, so the figure must survive truncation. Trimming
+	// the whole "name value" string from the end removes the number first — and worse,
+	// half-trims it: "Objective-C++ 123.45K" became "Objective-C++ 123...", which reads as
+	// 123 lines rather than 123 thousand. A shortened language name is still recognisable;
+	// a mangled number is a wrong figure in a customer-facing report.
+	pdf := newSectionPDF(t)
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
+
+	cases := []struct{ name, value string }{
+		{"Python", "67.14K"},                          // fits as-is
+		{"JavaScript", "2.87K"},                       // fits as-is
+		{"Objective-C++", "123.45K"},                  // needs truncation at 28mm
+		{"Visual Basic .NET", "1.23M"},                // needs more truncation
+		{"An Absurdly Long Language Name", "999.99M"}, // extreme
+	}
+	for _, tc := range cases {
+		got := fitLabelWithValue(pdf, tr(tc.name), tr(tc.value), colPDFLanguage)
+		if !strings.HasSuffix(got, tc.value) {
+			t.Errorf("fitLabelWithValue(%q, %q) = %q: the value must survive intact",
+				tc.name, tc.value, got)
+		}
+		if w := pdf.GetStringWidth(got); w > colPDFLanguage-2 {
+			t.Errorf("fitLabelWithValue(%q, %q) = %q: %.1fmm exceeds the %.0fmm column",
+				tc.name, tc.value, got, w, colPDFLanguage-2)
+		}
+	}
+}
+
+func TestFitLabelWithValueLeavesShortLabelsAlone(t *testing.T) {
+	pdf := newSectionPDF(t)
+	if got := fitLabelWithValue(pdf, "Go", "12", colPDFLanguage); got != "Go 12" {
+		t.Errorf("got %q, want %q — a label that fits must not be altered", got, "Go 12")
+	}
+}
+
 func TestCollectResultTotalsExported(t *testing.T) {
 	// The exported wrapper is what the results page uses to compute its language
 	// breakdown in memory, so it must behave identically to the internal walk.
