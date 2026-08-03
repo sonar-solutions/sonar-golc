@@ -796,7 +796,7 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 			},
 		}
 		analysisJSON, _ := json.Marshal(analysisData)
-		err = os.WriteFile("Results/config/analysis_repos_bitbucketdc.json", analysisJSON, 0644)
+		err = os.WriteFile("Results/config/analysis_result_bitbucket_dc.json", analysisJSON, 0644)
 		if err != nil {
 			t.Fatalf("Failed to create BitBucket DC file: %v", err)
 		}
@@ -813,7 +813,7 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 		}
 
 		// Clean up
-		os.Remove("Results/config/analysis_repos_bitbucketdc.json")
+		os.Remove("Results/config/analysis_result_bitbucket_dc.json")
 	})
 
 	t.Run("All supported platforms", func(t *testing.T) {
@@ -823,7 +823,7 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 			"azure":       "analysis_result_azure.json",
 			"bitbucket":   "analysis_result_bitbucket.json",
 			"gitlab":      "analysis_result_gitlab.json",
-			"bitbucketdc": "analysis_repos_bitbucketdc.json",
+			"bitbucketdc": "analysis_result_bitbucket_dc.json",
 		}
 
 		for platform, filename := range platforms {

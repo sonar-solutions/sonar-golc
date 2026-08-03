@@ -22,6 +22,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 - [Configuration](#configuration)
   - [Optional Parameters](#optional-parameters)
 - [Reports](#reports)
+  - [Excluding repositories from the totals](#excluding-repositories-from-the-totals)
 - [Supported Languages](#supported-languages)
 - [Execution Log](#execution-log)
 - [Troubleshooting](#troubleshooting)
@@ -138,6 +139,39 @@ The same data is available as exportable files in the `Results/` folder next to 
 | `byfile-report/repository_summary.*` | Cross-repository file summary — lists every analysed repository with its total lines, blank lines, comments, and code lines |
 | `byfile-report/*_byfile.*` | Per-repository file tree — one row per source file with individual line counts |
 | `bylanguage-report/*.json` | Per-repository language breakdown — one row per detected language with line counts |
+
+### Excluding repositories from the totals
+
+Some repositories should not count towards a sizing exercise — a repository that was
+archived after the scan, a mirror, a vendored dependency dump. On the Results
+dashboard, the **Lines of Code by Repository** table has a checkbox per repository.
+Uncheck the ones to leave out and click **Apply & rebuild reports**.
+
+This works on every platform (GitHub, GitHub Enterprise, GitLab, Bitbucket
+Cloud/Data Center, Azure DevOps, and local directories), because it operates on the
+analysis results rather than on any platform API. **No re-scan is needed** — the
+repositories were already counted, and only the totals are rebuilt.
+
+Applying a selection updates, in one pass:
+
+- the dashboard totals, language breakdown, and pie chart;
+- `GlobalReport.pdf` and `code_lines_by_language.json`;
+- `byfile-report/repository_summary.{pdf,csv,json}`.
+
+Both PDFs and the CSV state what was excluded and what the unfiltered total was, so a
+filtered report can be handed to a customer without misleading them. The dashboard
+shows the same note above the table.
+
+**It is always reversible.** The per-repository result files are never modified and
+`GlobalReport.json` keeps the figures as scanned, so **Reset to full scan** rebuilds
+the original reports exactly. The selection is stored in
+`Results/config/deselected_repos.json` and survives a dashboard restart. At least one
+repository must remain selected.
+
+> A new analysis run clears the selection: it rediscovers repositories from scratch,
+> so a selection made against the previous run could silently drop repositories from
+> the new totals. To exclude repositories *before* a scan instead, so they are never
+> cloned, use the platform's `FileExclusion` file in `config.json`.
 
 ---
 

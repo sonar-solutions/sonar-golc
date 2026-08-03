@@ -1618,6 +1618,15 @@ func runGolcInProcess(platform string) {
 	// Determine base Results directory (parent of current DestinationResult)
 	baseResultsDir := filepath.Dir(filepath.Clean(DestinationResult))
 
+	// A repository selection made on the results page belongs to the run it was made
+	// against. This run rediscovered the repositories from scratch, so carrying the
+	// old selection over would silently drop repositories from the new totals — and
+	// possibly name repositories this scan never saw. Clear it before the reports are
+	// built so a fresh analysis always reports the whole scan.
+	if err := utils.ClearDeselectedRepos(baseResultsDir); err != nil {
+		logger.Errorf("❌ Error clearing repository selection: %v", err)
+	}
+
 	// Generated Global Report (walks the directory for Result_* files)
 	// Pass the base Results directory for consistency across platforms.
 	err = utils.CreateGlobalReport(baseResultsDir)

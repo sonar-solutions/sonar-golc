@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
@@ -49,6 +50,7 @@ const (
 
 // Path constants for report directories
 const (
+	resultsBaseDir        = "Results"
 	byFileReportDir       = "Results/byfile-report"
 	byLanguageReportDir   = "Results/bylanguage-report"
 	configResultsDir      = "Results/config"
@@ -96,7 +98,10 @@ type LanguageData struct {
 }
 
 type RepositoryData struct {
-	Number      int    `json:"Number"`
+	Number int `json:"Number"`
+	// Key identifies the repository across page and reports — the stem of its
+	// result file — and is what the deselection checkboxes submit.
+	Key         string `json:"Key"`
 	Repository  string `json:"Repository"`
 	Org         string `json:"Org"`
 	Branch      string `json:"Branch"`
@@ -187,35 +192,81 @@ type RepositoryDetailData struct {
 
 type PageData struct {
 	Languages       []LanguageData
-	GlobalReport    Globalinfo
-	Repositories    []RepositoryData
+	RawLanguages    []LanguageData      // unsummarized per-language rows, as served by /api/languages
+	GlobalReport    Globalinfo          // adjusted for deselected repos; see utils.AdjustGlobalInfo
+	Repositories    []RepositoryData    // repositories counted in the totals above
 	SkippedRepos    []utils.SkippedRepo // repos the analysis phase could not complete (clone timeout/failure, analysis error)
 	ScanSummary     *ScanSummaryView    // per-run repository breakdown; nil on older result sets
 	NoteLOCExcluded string              // Note that JSON is excluded from total (SonarQube behavior)
 	Platform        string
+
+	// Deselection: repositories analyzed but removed from every total by the user.
+	// Deselected is empty and RawTotalLinesOfCode equals GlobalReport.TotalLinesOfCode
+	// on an untouched selection, so the page renders exactly as before.
+	Deselected          []RepositoryData
+	DeselectedKeys      []string // same set as Deselected, for the page's JavaScript
+	DeselectedCount     int
+	DeselectedCodeLines string // formatted LOC removed from the totals
+	RawTotalLinesOfCode string // total across every analyzed repository, for comparison
 }
 
 // ScanSummaryView is the template-facing view of utils.ScanSummary. Analyzed is
 // adjusted for repos that failed during the analysis phase, and Skipped is that
 // failure count, so the row reconciles: Scanned = Analyzed + Archived + Empty + Excluded + Skipped.
+//
+// Deselected is reported separately and is NOT subtracted from Analyzed: those
+// repositories were analyzed, and Excluded already means "filtered out before
+// analysis". Folding them together would break the reconciliation above.
 type ScanSummaryView struct {
-	Scanned  int
-	Analyzed int
-	Archived int
-	Empty    int
-	Excluded int
-	Skipped  int
+	Scanned    int
+	Analyzed   int
+	Archived   int
+	Empty      int
+	Excluded   int
+	Skipped    int
+	Deselected int
 }
 
 var globalInfo Globalinfo       // Variable pour stocker les infos globales
 var languageData []LanguageData // Variable pour stocker les données des langages
 
+// dataMu guards globalInfo, languageData and currentPage. The deselection endpoint
+// rebuilds all three while other requests are being served, so unlike the original
+// load-once-at-startup design they can no longer be read unsynchronized.
+var dataMu sync.RWMutex
+
+// currentPage is the view every handler renders from. Held here rather than captured
+// by the handler closures so a rebuild is visible to requests already registered.
+var currentPage PageData
+
 func getGlobalInfo() Globalinfo {
+	dataMu.RLock()
+	defer dataMu.RUnlock()
 	return globalInfo
 }
 
 func getLanguageData() []LanguageData {
+	dataMu.RLock()
+	defer dataMu.RUnlock()
 	return languageData
+}
+
+// snapshot returns the current view. Callers get a copy of the struct, so the slices
+// inside must be treated as read-only — a rebuild replaces them rather than mutating
+// them in place, which keeps concurrent readers consistent without deep copying.
+func snapshot() PageData {
+	dataMu.RLock()
+	defer dataMu.RUnlock()
+	return currentPage
+}
+
+// publish installs a freshly loaded view.
+func publish(pd PageData) {
+	dataMu.Lock()
+	defer dataMu.Unlock()
+	currentPage = pd
+	globalInfo = pd.GlobalReport
+	languageData = pd.RawLanguages
 }
 
 // commonPathPrefix returns the longest common slash-separated directory prefix
@@ -358,9 +409,15 @@ func getRepositoryData() ([]RepositoryData, error) {
 			}
 		}
 
+		// Derived from the result file the numbers come from, not rebuilt from the
+		// inventory, so this page and the generated reports cannot key the same
+		// repository differently. See utils.DeselectionKeyFromResultFileName.
+		key, _ := utils.DeselectionKeyFromResultFileName(filepath.Base(byLanguagePath))
+
 		// Create repository data entry (CodeLines excludes JSON for report total)
 		repo := RepositoryData{
 			Number:      i,
+			Key:         key,
 			Repository:  branch.RepoSlug,
 			Org:         branch.Org,
 			Branch:      branch.MainBranch,
@@ -900,28 +957,50 @@ func loadApplicationData() (PageData, error) {
 		return pageData, fmt.Errorf("error reading code_lines_by_language.json file: %v", err)
 	}
 
-	err = json.Unmarshal(inputFileData, &languageData)
+	// Locals, not the package vars: publish is the only writer of those, so a failed
+	// load cannot leave the served view half-updated.
+	var rawLanguages []LanguageData
+	err = json.Unmarshal(inputFileData, &rawLanguages)
 	if err != nil {
 		return pageData, fmt.Errorf("error decoding JSON code_lines_by_language.json file: %v", err)
 	}
 
-	languages := buildLanguageSummary(languageData)
+	// code_lines_by_language.json is regenerated with the deselected repositories
+	// left out (see regenerateReports), so the breakdown and chart already describe
+	// the same repository set as the table below.
+	languages := buildLanguageSummary(rawLanguages)
 
 	data0, err := os.ReadFile(globalReportFile)
 	if err != nil {
 		return pageData, fmt.Errorf("error reading GlobalReport.json file: %v", err)
 	}
 
-	err = json.Unmarshal(data0, &globalInfo)
+	var info Globalinfo
+	err = json.Unmarshal(data0, &info)
 	if err != nil {
 		return pageData, fmt.Errorf("error decoding JSON GlobalReport.json file: %v", err)
 	}
+	rawTotalLOC := info.TotalLinesOfCode
 
 	repositoryData, err := getRepositoryData()
 	if err != nil {
 		fmt.Println("❌ Error loading repository data:", err)
 		repositoryData = []RepositoryData{}
 	}
+
+	// Split off the repositories the user removed from the totals. With no
+	// deselection this returns everything in Repositories and nothing in deselected.
+	repositoryData, deselected := partitionDeselected(repositoryData, utils.LoadDeselectionSet(resultsBaseDir))
+
+	// GlobalReport.json holds the figures as scanned and is never rewritten, so the
+	// headline numbers are re-derived here for the deselected set.
+	deselectedCodeLines := 0
+	deselectedKeys := make([]string, 0, len(deselected))
+	for _, repo := range deselected {
+		deselectedCodeLines += repo.CodeLines
+		deselectedKeys = append(deselectedKeys, repo.Key)
+	}
+	info = adjustGlobalInfo(info, languages, repositoryData, len(deselected))
 
 	detectedPlatform, _, _ := detectPlatformAndReadAnalysis()
 
@@ -931,19 +1010,79 @@ func loadApplicationData() (PageData, error) {
 
 	// Per-run repository breakdown for the Scan Summary card. Missing file (older
 	// result sets) => nil, so the card is omitted and the page still renders.
-	scanSummary := buildScanSummaryView(utils.LoadScanSummary("Results"), len(skippedRepos))
+	scanSummary := buildScanSummaryView(utils.LoadScanSummary("Results"), len(skippedRepos), len(deselected))
 
 	pageData = PageData{
 		Languages:       languages,
-		GlobalReport:    globalInfo,
+		RawLanguages:    rawLanguages,
+		GlobalReport:    info,
 		Repositories:    repositoryData,
 		SkippedRepos:    skippedRepos,
 		ScanSummary:     scanSummary,
 		NoteLOCExcluded: utils.NoteExcludedFromTotal,
 		Platform:        detectedPlatform,
+
+		Deselected:          deselected,
+		DeselectedKeys:      deselectedKeys,
+		DeselectedCount:     len(deselected),
+		DeselectedCodeLines: utils.FormatCodeLines(float64(deselectedCodeLines)),
+		RawTotalLinesOfCode: rawTotalLOC,
 	}
 
 	return pageData, nil
+}
+
+// partitionDeselected splits repositories into those still counted and those the
+// user removed from the totals, renumbering each group from 1.
+func partitionDeselected(repositories []RepositoryData, deselected utils.DeselectionSet) (kept, removed []RepositoryData) {
+	for _, repo := range repositories {
+		if deselected.Contains(repo.Key) {
+			removed = append(removed, repo)
+		} else {
+			kept = append(kept, repo)
+		}
+	}
+	for i := range kept {
+		kept[i].Number = i + 1
+	}
+	for i := range removed {
+		removed[i].Number = i + 1
+	}
+	return kept, removed
+}
+
+// adjustGlobalInfo mirrors utils.AdjustGlobalInfo for this page's own types: it
+// re-derives the headline figures from the repositories that survived a deselection,
+// and returns ginfo untouched when the selection is untouched so an unfiltered page
+// shows exactly the numbers the scan produced.
+func adjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, kept []RepositoryData, deselectedCount int) Globalinfo {
+	if deselectedCount == 0 {
+		return ginfo
+	}
+
+	total := 0
+	for _, lang := range languages {
+		if strings.TrimSpace(lang.Language) != utils.LanguageExcludedFromTotalLOC {
+			total += lang.CodeLines
+		}
+	}
+	ginfo.TotalLinesOfCode = utils.FormatCodeLines(float64(total))
+
+	maxLOC, largest := 0, ""
+	for _, repo := range kept {
+		if repo.CodeLines > maxLOC {
+			maxLOC = repo.CodeLines
+			largest = repo.Repository
+		}
+	}
+	ginfo.LargestRepository = largest
+	ginfo.LinesOfCodeLargestRepo = utils.FormatCodeLines(float64(maxLOC))
+
+	ginfo.NumberRepos -= deselectedCount
+	if ginfo.NumberRepos < 0 {
+		ginfo.NumberRepos = 0
+	}
+	return ginfo
 }
 
 // buildScanSummaryView adapts a persisted utils.ScanSummary into the template view.
@@ -952,7 +1091,7 @@ func loadApplicationData() (PageData, error) {
 // Skipped total, so the displayed row reconciles:
 // Scanned = Analyzed + Archived + Empty + Excluded + Skipped. Returns nil when no
 // summary was persisted.
-func buildScanSummaryView(summary *utils.ScanSummary, skippedCount int) *ScanSummaryView {
+func buildScanSummaryView(summary *utils.ScanSummary, skippedCount, deselectedCount int) *ScanSummaryView {
 	if summary == nil {
 		return nil
 	}
@@ -961,17 +1100,166 @@ func buildScanSummaryView(summary *utils.ScanSummary, skippedCount int) *ScanSum
 		analyzed = 0
 	}
 	return &ScanSummaryView{
-		Scanned:  summary.Scanned,
-		Analyzed: analyzed,
-		Archived: summary.Archived,
-		Empty:    summary.Empty,
-		Excluded: summary.Excluded,
-		Skipped:  summary.Skipped + skippedCount,
+		Scanned:    summary.Scanned,
+		Analyzed:   analyzed,
+		Archived:   summary.Archived,
+		Empty:      summary.Empty,
+		Excluded:   summary.Excluded,
+		Skipped:    summary.Skipped + skippedCount,
+		Deselected: deselectedCount,
 	}
 }
 
-// setupHTTPHandlers configures all HTTP route handlers
+// regenerateMu serializes deselection changes. Regenerating overwrites shared report
+// files, so two concurrent requests could interleave writes and leave the PDF, the
+// CSV and the page describing different repository sets.
+var regenerateMu sync.Mutex
+
+// DeselectionRequest is the payload of POST /api/deselected: the keys of the
+// repositories to leave out of every total. An empty list restores the full scan.
+type DeselectionRequest struct {
+	Keys []string `json:"Keys"`
+}
+
+// DeselectionResponse reports the state after the change so the caller does not have
+// to re-fetch it.
+type DeselectionResponse struct {
+	DeselectedCount     int    `json:"DeselectedCount"`
+	CountedRepositories int    `json:"CountedRepositories"`
+	TotalLinesOfCode    string `json:"TotalLinesOfCode"`
+	RawTotalLinesOfCode string `json:"RawTotalLinesOfCode"`
+	Ignored             int    `json:"Ignored"` // submitted keys that match no analyzed repository
+}
+
+// handleDeselected persists a new selection, regenerates every report from it, and
+// republishes the page data.
+//
+// GET returns the repositories currently deselected. POST replaces the selection
+// wholesale — the client always sends the complete list, so there is no partial
+// state to reconcile and a reset is just an empty list.
+func handleDeselected(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set(contentTypeHeader, applicationJSONType)
+		deselected := snapshot().Deselected
+		if deselected == nil {
+			deselected = []RepositoryData{}
+		}
+		json.NewEncoder(w).Encode(deselected)
+
+	case http.MethodPost:
+		var req DeselectionRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		regenerateMu.Lock()
+		defer regenerateMu.Unlock()
+
+		resp, err := applyDeselection(req.Keys)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(contentTypeHeader, applicationJSONType)
+		json.NewEncoder(w).Encode(resp)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// applyDeselection validates the requested keys, persists them, regenerates the
+// reports and republishes the page data. Callers must hold regenerateMu.
+func applyDeselection(keys []string) (*DeselectionResponse, error) {
+	// Every repository known to this result set, keyed as the checkboxes key it.
+	// Reloading rather than trusting the snapshot means a key that was deselected a
+	// moment ago is still recognised.
+	all, err := getRepositoryData()
+	if err != nil {
+		return nil, fmt.Errorf("cannot read repository data: %w", err)
+	}
+	byKey := make(map[string]RepositoryData, len(all))
+	for _, repo := range all {
+		byKey[repo.Key] = repo
+	}
+
+	// Keys arrive from the browser, so only those matching an analyzed repository are
+	// persisted. Dropping unknown keys keeps a stale tab or a hand-edited request from
+	// writing entries that silently match nothing.
+	records := make([]utils.DeselectedRepo, 0, len(keys))
+	seen := make(map[string]bool, len(keys))
+	ignored := 0
+	for _, key := range keys {
+		repo, ok := byKey[key]
+		if !ok || seen[key] {
+			if !ok {
+				ignored++
+			}
+			continue
+		}
+		seen[key] = true
+		records = append(records, utils.DeselectedRepo{
+			Key:    repo.Key,
+			Org:    repo.Org,
+			Repo:   repo.Repository,
+			Branch: repo.Branch,
+		})
+	}
+
+	// Refuse to deselect everything: the aggregation would produce a zero-LOC report
+	// that looks like a failed scan, and there is no way back from the page once the
+	// table it is driven from is empty.
+	if len(all) > 0 && len(records) == len(all) {
+		return nil, fmt.Errorf("cannot deselect every repository — at least one must remain counted")
+	}
+
+	if err := utils.SaveDeselectedRepos(resultsBaseDir, records); err != nil {
+		return nil, fmt.Errorf("cannot save selection: %w", err)
+	}
+
+	if err := regenerateReports(); err != nil {
+		return nil, err
+	}
+
+	pd, err := loadApplicationData()
+	if err != nil {
+		return nil, fmt.Errorf("cannot reload results: %w", err)
+	}
+	publish(pd)
+
+	return &DeselectionResponse{
+		DeselectedCount:     pd.DeselectedCount,
+		CountedRepositories: len(pd.Repositories),
+		TotalLinesOfCode:    pd.GlobalReport.TotalLinesOfCode,
+		RawTotalLinesOfCode: pd.RawTotalLinesOfCode,
+		Ignored:             ignored,
+	}, nil
+}
+
+// regenerateReports rebuilds every derived artifact from the per-repository result
+// files and the persisted selection: the language totals, the global PDF, and the
+// repository summary CSV/JSON/PDF.
+//
+// Nothing is lost by doing this. The per-repository result files are never modified
+// and GlobalReport.json keeps the figures as scanned, so clearing the selection and
+// regenerating restores the original reports exactly.
+func regenerateReports() error {
+	if err := utils.CreateGlobalReport(resultsBaseDir); err != nil {
+		return fmt.Errorf("cannot regenerate global report: %w", err)
+	}
+	if err := utils.GenerateRepositorySummaryReports(resultsBaseDir); err != nil {
+		return fmt.Errorf("cannot regenerate repository summary reports: %w", err)
+	}
+	return nil
+}
+
+// setupHTTPHandlers configures all HTTP route handlers. pageData seeds the view;
+// handlers then read it through snapshot() so a deselection rebuild is picked up.
 func setupHTTPHandlers(pageData PageData) {
+	publish(pageData)
+
 	// Load HTML template. The "add" helper renders 1-based row numbers in the
 	// skipped-repositories table (Go templates have no built-in increment).
 	tmpl := template.Must(template.New("index").Funcs(template.FuncMap{
@@ -979,12 +1267,14 @@ func setupHTTPHandlers(pageData PageData) {
 	}).Parse(htmlTemplate))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		err := tmpl.Execute(w, pageData)
+		err := tmpl.Execute(w, snapshot())
 		if err != nil {
 			http.Error(w, "❌ Error executing HTML template", http.StatusInternalServerError)
 			return
 		}
 	})
+
+	http.HandleFunc("/api/deselected", handleDeselected)
 
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -1018,26 +1308,27 @@ func setupHTTPHandlers(pageData PageData) {
 	// API Endpoint for Language Data
 	http.HandleFunc("/api/languages", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeHeader, applicationJSONType)
-		json.NewEncoder(w).Encode(languageData)
+		json.NewEncoder(w).Encode(snapshot().RawLanguages)
 	})
 
 	// API Endpoint for Global Info
 	http.HandleFunc("/api/global-info", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeHeader, applicationJSONType)
-		json.NewEncoder(w).Encode(globalInfo)
+		json.NewEncoder(w).Encode(snapshot().GlobalReport)
 	})
 
-	// API Endpoint for Repository Data
+	// API Endpoint for Repository Data. Returns the repositories counted in the
+	// totals; deselected ones are served by /api/deselected.
 	http.HandleFunc("/api/repositories", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeHeader, applicationJSONType)
-		json.NewEncoder(w).Encode(pageData.Repositories)
+		json.NewEncoder(w).Encode(snapshot().Repositories)
 	})
 
 	// API Endpoint for repositories that could not be analyzed (clone timeout/failure,
 	// analysis error). Always returns a JSON array (empty when nothing was skipped).
 	http.HandleFunc("/api/skipped-repositories", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeHeader, applicationJSONType)
-		skipped := pageData.SkippedRepos
+		skipped := snapshot().SkippedRepos
 		if skipped == nil {
 			skipped = []utils.SkippedRepo{}
 		}
@@ -1048,7 +1339,7 @@ func setupHTTPHandlers(pageData PageData) {
 	// empty/excluded/skipped). Returns null when no summary was persisted.
 	http.HandleFunc("/api/scan-summary", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeHeader, applicationJSONType)
-		json.NewEncoder(w).Encode(pageData.ScanSummary)
+		json.NewEncoder(w).Encode(snapshot().ScanSummary)
 	})
 
 	// Repository Detail Page Handler
@@ -1140,6 +1431,17 @@ func handlePortConflict(port int) {
 
 func main() {
 	utils.ChdirToBinaryDir()
+
+	// A selection carried over from an earlier session applies to reports on disk
+	// that may predate it — for instance the analysis was re-run, rewriting them
+	// unfiltered. Regenerating once here means the page and the downloadable reports
+	// always start out describing the same repository set.
+	if deselected := utils.LoadDeselectedRepos(resultsBaseDir); len(deselected) > 0 {
+		fmt.Printf("ℹ️  %d repositories are deselected — regenerating reports\n", len(deselected))
+		if err := regenerateReports(); err != nil {
+			fmt.Println("⚠️ ", err)
+		}
+	}
 
 	pageData, err := loadApplicationData()
 	if err != nil {
@@ -1427,13 +1729,43 @@ const htmlTemplate = `
               </h2>
               <div class="card shadow-lg repository-table-container">
                 <h5 class="card-header bg-primary text-white">
-                  <i class="fas fa-code-branch"></i> Lines of Code by Repository ({{len .Repositories}} repositories analyzed)
+                  <i class="fas fa-code-branch"></i> Lines of Code by Repository ({{len .Repositories}} repositories counted{{if .DeselectedCount}}, {{.DeselectedCount}} deselected{{end}})
                 </h5>
                 <div class="card-body">
+
+                  <!-- Deselection controls: uncheck a repository to remove it from every
+                       total on this page and from the generated reports. -->
+                  <div id="selectionBar" class="d-flex flex-wrap align-items-center gap-2 mb-3 p-2 rounded" style="background-color:#eef2f7;">
+                    <span class="fw-bold" style="color:#333;"><i class="fas fa-filter"></i> Selection</span>
+                    <span id="selectionSummary" class="text-muted small"></span>
+                    <div class="ms-auto d-flex flex-wrap gap-2">
+                      <button type="button" id="btnSelectAll" class="btn btn-sm btn-outline-secondary">Select all</button>
+                      <button type="button" id="btnApplySelection" class="btn btn-sm btn-primary" disabled>
+                        <i class="fas fa-sync-alt"></i> Apply &amp; rebuild reports
+                      </button>
+                      <button type="button" id="btnResetSelection" class="btn btn-sm btn-outline-danger"{{if not .DeselectedCount}} disabled{{end}}>
+                        Reset to full scan
+                      </button>
+                    </div>
+                  </div>
+                  <div id="selectionStatus" class="alert d-none py-2 small" role="status"></div>
+                  {{if .DeselectedCount}}
+                  <div class="alert alert-secondary py-2 small" role="note">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>{{.DeselectedCount}}</strong> repositories ({{.DeselectedCodeLines}} code lines) are excluded from every
+                    total on this page and in the PDF/CSV reports. Total across all analyzed
+                    repositories was <strong>{{.RawTotalLinesOfCode}}</strong>.
+                  </div>
+                  {{end}}
+
                   <div class="table-responsive">
                     <table class="table table-striped table-hover">
                       <thead class="table-dark">
                         <tr>
+                          <th scope="col" style="width:2.5rem;">
+                            <input type="checkbox" id="selectAllCheckbox" class="form-check-input" checked
+                                   title="Select or deselect every repository" aria-label="Select all repositories">
+                          </th>
                           <th scope="col">#</th>
                           <th scope="col" class="sortable" data-column="repository">
                             Repository <i class="fas fa-sort sort-icon"></i>
@@ -1458,9 +1790,27 @@ const htmlTemplate = `
                       <tbody id="repositoryTableBody">
                         {{$platform := .Platform}}
                         {{range .Repositories}}
-                        <tr data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
-                          <td>{{.Number}}</td>
+                        <tr data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
+                          <td><input type="checkbox" class="form-check-input repo-select" checked value="{{.Key}}" aria-label="Count {{.Repository}} in the totals"></td>
+                          <td class="row-num">{{.Number}}</td>
                           <td><a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{if and (eq $platform "gitlab") .Org}}<span class="text-muted" style="font-size:0.85em;">{{.Org}}&thinsp;/&thinsp;</span>{{end}}{{.Repository}}</a></td>
+                          <td>{{.Branch}}</td>
+                          <td>{{.LinesF}}</td>
+                          <td>{{.BlankLinesF}}</td>
+                          <td>{{.CommentsF}}</td>
+                          <td><strong>{{.CodeLinesF}}</strong></td>
+                        </tr>
+                        {{end}}
+                        {{/* Deselected repositories stay in the table, unchecked and muted,
+                             so the change can be undone here rather than only by a full reset. */}}
+                        {{range .Deselected}}
+                        <tr class="deselected-row" style="opacity:0.55;" data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
+                          <td><input type="checkbox" class="form-check-input repo-select" value="{{.Key}}" aria-label="Count {{.Repository}} in the totals"></td>
+                          <td class="row-num">&mdash;</td>
+                          <td>
+                            <a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{if and (eq $platform "gitlab") .Org}}<span class="text-muted" style="font-size:0.85em;">{{.Org}}&thinsp;/&thinsp;</span>{{end}}{{.Repository}}</a>
+                            <span class="badge bg-secondary ms-1" style="font-size:0.65em;">deselected</span>
+                          </td>
                           <td>{{.Branch}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>
@@ -1471,8 +1821,9 @@ const htmlTemplate = `
                       </tbody>
                       <tfoot class="table-secondary">
                         <tr id="totalsRow">
+                          <td></td>
                           <td><strong>Total</strong></td>
-                          <td colspan="2"><strong>{{len .Repositories}} repositories</strong></td>
+                          <td colspan="2"><strong id="totalRepoCount">{{len .Repositories}} repositories</strong></td>
                           <td id="totalLines"><strong>-</strong></td>
                           <td id="totalBlankLines"><strong>-</strong></td>
                           <td id="totalComments"><strong>-</strong></td>
@@ -1500,7 +1851,7 @@ const htmlTemplate = `
                 </h5>
                 <div class="card-body">
                   <p class="text-muted mb-3" style="font-size:0.9rem;">
-                    Repository breakdown for this run. <strong>Scanned</strong> is the total discovered; it splits into <strong>Analyzed</strong> plus the repositories filtered out (<strong>Archived</strong>/disabled, <strong>Empty</strong>, <strong>Excluded</strong>) and those that could not be completed (<strong>Skipped</strong>).
+                    Repository breakdown for this run. <strong>Scanned</strong> is the total discovered; it splits into <strong>Analyzed</strong> plus the repositories filtered out (<strong>Archived</strong>/disabled, <strong>Empty</strong>, <strong>Excluded</strong>) and those that could not be completed (<strong>Skipped</strong>).{{if .ScanSummary.Deselected}} <strong>Deselected</strong> counts repositories that were analyzed but removed from the totals by selection — they are part of <strong>Analyzed</strong>, not a separate slice of <strong>Scanned</strong>.{{end}}
                   </p>
                   <div class="row text-center">
                     <div class="col">
@@ -1527,6 +1878,12 @@ const htmlTemplate = `
                       <div class="h3 mb-0" style="color:#d68910;">{{.ScanSummary.Skipped}}</div>
                       <div class="text-muted small">Skipped</div>
                     </div>
+                    {{if .ScanSummary.Deselected}}
+                    <div class="col">
+                      <div class="h3 mb-0" style="color:#485468;">{{.ScanSummary.Deselected}}</div>
+                      <div class="text-muted small">Deselected</div>
+                    </div>
+                    {{end}}
                   </div>
                 </div>
               </div>
@@ -1720,35 +2077,136 @@ const htmlTemplate = `
             }
         }
 
-        // Calculate and display totals for repository table
+        function formatNumber(num) {
+            return num.toLocaleString();
+        }
+
+        // Totals are summed from the checked rows rather than from server-rendered
+        // constants, so unchecking a repository updates them immediately — before
+        // Apply rebuilds the reports server-side.
         function calculateRepositoryTotals() {
-            let totalLines = 0;
-            let totalBlankLines = 0;
-            let totalComments = 0;
-            let totalCodeLines = 0;
+            let totalLines = 0, totalBlankLines = 0, totalComments = 0, totalCodeLines = 0, counted = 0;
 
-            {{range .Repositories}}
-            totalLines += {{.Lines}};
-            totalBlankLines += {{.BlankLines}};
-            totalComments += {{.Comments}};
-            totalCodeLines += {{.CodeLines}};
-            {{end}}
+            document.querySelectorAll('#repositoryTableBody tr').forEach(row => {
+                const box = row.querySelector('.repo-select');
+                if (!box || !box.checked) return;
+                counted++;
+                totalLines      += parseInt(row.dataset.lines) || 0;
+                totalBlankLines += parseInt(row.dataset.blanklines) || 0;
+                totalComments   += parseInt(row.dataset.comments) || 0;
+                totalCodeLines  += parseInt(row.dataset.codelines) || 0;
+            });
 
-            // Format numbers with commas
-            function formatNumber(num) {
-                return num.toLocaleString();
-            }
-
-            // Update totals in the table
             document.getElementById('totalLines').innerHTML = '<strong>' + formatNumber(totalLines) + '</strong>';
             document.getElementById('totalBlankLines').innerHTML = '<strong>' + formatNumber(totalBlankLines) + '</strong>';
             document.getElementById('totalComments').innerHTML = '<strong>' + formatNumber(totalComments) + '</strong>';
             document.getElementById('totalCodeLines').innerHTML = '<strong>' + formatNumber(totalCodeLines) + '</strong>';
+            const repoCount = document.getElementById('totalRepoCount');
+            if (repoCount) repoCount.textContent = counted + ' repositories';
         }
 
-        // Calculate totals when page loads
-        calculateRepositoryTotals();
-        
+        // ─── Repository deselection ──────────────────────────────────────────
+        // The set persisted server-side when the page was rendered. Comparing against
+        // it tells us whether the current checkboxes are a real change, so Apply is
+        // only enabled when there is something to apply.
+        const persistedDeselected = new Set({{.DeselectedKeys}});
+
+        function currentDeselectedKeys() {
+            const keys = [];
+            document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => {
+                if (!box.checked) keys.push(box.value);
+            });
+            return keys;
+        }
+
+        function sameAsPersisted(keys) {
+            if (keys.length !== persistedDeselected.size) return false;
+            return keys.every(k => persistedDeselected.has(k));
+        }
+
+        function showSelectionStatus(message, variant) {
+            const el = document.getElementById('selectionStatus');
+            el.className = 'alert alert-' + variant + ' py-2 small';
+            el.innerHTML = message;
+        }
+
+        function refreshSelectionUI() {
+            const keys = currentDeselectedKeys();
+            const total = document.querySelectorAll('#repositoryTableBody .repo-select').length;
+            const counted = total - keys.length;
+
+            document.getElementById('selectionSummary').textContent =
+                counted + ' of ' + total + ' repositories counted' +
+                (keys.length ? ' · ' + keys.length + ' deselected' : '');
+
+            // Deselecting everything would leave a zero-LOC report with no way back
+            // from this page, so it is blocked here as well as server-side.
+            const apply = document.getElementById('btnApplySelection');
+            apply.disabled = sameAsPersisted(keys) || counted === 0;
+            apply.title = counted === 0 ? 'At least one repository must remain counted' : '';
+
+            const box = document.getElementById('selectAllCheckbox');
+            box.checked = keys.length === 0;
+            box.indeterminate = keys.length > 0 && counted > 0;
+
+            calculateRepositoryTotals();
+        }
+
+        async function submitSelection(keys) {
+            const apply = document.getElementById('btnApplySelection');
+            const reset = document.getElementById('btnResetSelection');
+            apply.disabled = true;
+            reset.disabled = true;
+            showSelectionStatus('<i class="fas fa-spinner fa-spin"></i> Rebuilding reports…', 'info');
+
+            try {
+                const res = await fetch('/api/deselected', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({Keys: keys})
+                });
+                if (!res.ok) {
+                    showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> ' +
+                        (await res.text() || 'Could not apply the selection.'), 'danger');
+                    refreshSelectionUI();
+                    reset.disabled = false;
+                    return;
+                }
+                // Reload so the page, the chart, the language breakdown and the
+                // download links all come from the freshly regenerated reports.
+                window.location.reload();
+            } catch (err) {
+                showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> ' + err, 'danger');
+                refreshSelectionUI();
+                reset.disabled = false;
+            }
+        }
+
+        document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => {
+            box.addEventListener('change', refreshSelectionUI);
+        });
+
+        document.getElementById('selectAllCheckbox').addEventListener('change', function() {
+            const checked = this.checked;
+            document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => { box.checked = checked; });
+            refreshSelectionUI();
+        });
+
+        document.getElementById('btnSelectAll').addEventListener('click', function() {
+            document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => { box.checked = true; });
+            refreshSelectionUI();
+        });
+
+        document.getElementById('btnApplySelection').addEventListener('click', function() {
+            submitSelection(currentDeselectedKeys());
+        });
+
+        document.getElementById('btnResetSelection').addEventListener('click', function() {
+            submitSelection([]);
+        });
+
+        refreshSelectionUI();
+
         // Repository table sorting functionality
         let currentSort = { column: 'codelines', direction: 'desc' };
         
@@ -1802,9 +2260,15 @@ const htmlTemplate = `
                 }
             });
             
-            // Update row numbers and re-append rows
-            rows.forEach((row, index) => {
-                row.querySelector('td:first-child').textContent = index + 1;
+            // Re-append rows and renumber the counted ones. Deselected rows keep their
+            // dash: they are not part of the numbered sequence.
+            let counted = 0;
+            rows.forEach(row => {
+                const numCell = row.querySelector('.row-num');
+                const box = row.querySelector('.repo-select');
+                if (numCell) {
+                    numCell.textContent = (box && !box.checked) ? '—' : ++counted;
+                }
                 tbody.appendChild(row);
             });
             

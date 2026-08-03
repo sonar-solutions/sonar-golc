@@ -31,7 +31,7 @@ func TestRenderGlobalPDF_NoMojibakeStatCard(t *testing.T) {
 		NumberRepos:            2,
 	}
 	langs := []LanguageData{{Language: "Golang", CodeLines: 29, Percentage: 100, CodeLinesF: "29"}}
-	if err := renderGlobalPDF(langs, ginfo, nil, nil); err != nil {
+	if err := renderGlobalPDF(langs, ginfo, nil, nil, nil, ginfo.TotalLinesOfCode); err != nil {
 		t.Fatalf("renderGlobalPDF: %v", err)
 	}
 
@@ -123,11 +123,15 @@ func TestAccumulateLanguageTotalsFromFile(t *testing.T) {
 		},
 	})
 	totals := map[string]int{}
-	if err := accumulateLanguageTotalsFromFile(path, totals); err != nil {
+	fileLOC, err := accumulateLanguageTotalsFromFile(path, totals)
+	if err != nil {
 		t.Fatalf("accumulateLanguageTotalsFromFile error: %v", err)
 	}
 	if totals["Go"] != 100 || totals["Java"] != 50 {
 		t.Errorf("unexpected totals: %+v", totals)
+	}
+	if fileLOC != 150 {
+		t.Errorf("accumulateLanguageTotalsFromFile fileLOC = %d, want 150", fileLOC)
 	}
 	if _, ok := totals[""]; ok {
 		t.Errorf("blank language should be ignored")

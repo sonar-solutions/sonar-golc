@@ -15,8 +15,12 @@ import (
 
 // RepositoryData represents a single repository's data for summary reports
 type RepositoryData struct {
-	Number      int    `json:"Number"`
+	Number int `json:"Number"`
+	// Key is the repository's identity across the reports — the stem of its result
+	// file — and is what a deselection matches on.
+	Key         string `json:"Key"`
 	Repository  string `json:"Repository"`
+	Org         string `json:"Org,omitempty"`
 	Branch      string `json:"Branch"`
 	Lines       int    `json:"Lines"`
 	BlankLines  int    `json:"BlankLines"`
@@ -44,7 +48,10 @@ type ProjectBranch struct {
 	TotalCommits int    `json:"TotalCommits"`
 }
 
-// RepositorySummaryReport contains summary data and repositories
+// RepositorySummaryReport contains summary data and repositories. Every Total
+// covers Repositories only; repositories the user deselected on the results page are
+// listed separately in Deselected, with their own totals, so a filtered report still
+// shows what was left out and what the unfiltered figures were.
 type RepositorySummaryReport struct {
 	TotalRepositories int              `json:"TotalRepositories"`
 	TotalLines        int              `json:"TotalLines"`
@@ -56,6 +63,11 @@ type RepositorySummaryReport struct {
 	TotalCommentsF    string           `json:"TotalCommentsF"`
 	TotalCodeLinesF   string           `json:"TotalCodeLinesF"`
 	Repositories      []RepositoryData `json:"Repositories"`
+
+	DeselectedRepositories int              `json:"DeselectedRepositories,omitempty"`
+	DeselectedCodeLines    int              `json:"DeselectedCodeLines,omitempty"`
+	DeselectedCodeLinesF   string           `json:"DeselectedCodeLinesF,omitempty"`
+	Deselected             []RepositoryData `json:"Deselected,omitempty"`
 }
 
 // isMainBranch checks if a branch name is a main/default branch
@@ -69,21 +81,28 @@ func isMainBranch(branchName string) bool {
 	return false
 }
 
-// detectPlatformAndReadAnalysis detects the platform and reads the analysis file
+// detectPlatformAndReadAnalysis detects the platform and reads the analysis file.
+//
+// The candidates are an ordered slice, not a map: when a Results directory holds
+// inventories from more than one platform (a re-scan against a different platform
+// without clearing Results), map iteration order would make the pick random and the
+// summary reports could describe a different platform than the results page, which
+// resolves the same ambiguity in this same order.
 func detectPlatformAndReadAnalysis() (string, []byte, error) {
-	// Define platform-specific filename patterns
-	platformFiles := map[string]string{
-		"github":      "Results/config/analysis_result_github.json",
-		"azure":       "Results/config/analysis_result_azure.json",
-		"bitbucket":   "Results/config/analysis_result_bitbucket.json",
-		"gitlab":      "Results/config/analysis_result_gitlab.json",
-		"bitbucketdc": "Results/config/analysis_repos_bitbucketdc.json",
-		"file":        "Results/config/analysis_result_file.json",
+	// Platform keys must match the cases in getFirstPartForPlatform, since the
+	// returned platform selects the result-file naming convention.
+	platformFiles := []struct{ platform, fileName string }{
+		{"github", "Results/config/analysis_result_github.json"},
+		{"gitlab", "Results/config/analysis_result_gitlab.json"},
+		{"bitbucket", "Results/config/analysis_result_bitbucket.json"},
+		{"bitbucketdc", "Results/config/analysis_result_bitbucket_dc.json"},
+		{"azure", "Results/config/analysis_result_azure.json"},
+		{"file", "Results/config/analysis_result_file.json"},
 	}
 
-	for platform, fileName := range platformFiles {
-		if data, err := os.ReadFile(fileName); err == nil {
-			return platform, data, nil
+	for _, candidate := range platformFiles {
+		if data, err := os.ReadFile(candidate.fileName); err == nil {
+			return candidate.platform, data, nil
 		}
 	}
 
@@ -147,7 +166,7 @@ func getRepositoryData() ([]RepositoryData, error) {
 		// Construct file paths using platform-specific naming.
 		// File mode uses a shorter pattern (no project key or branch suffix)
 		// because goloc names files as Result_<dirname>_byfile.json in that mode.
-		var byfilePath, byLanguagePath string
+		var byfilePath, byLanguagePath, org string
 		if platform == "file" {
 			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s_byfile.json", branch.RepoSlug)
 			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s.json", branch.RepoSlug)
@@ -157,7 +176,14 @@ func getRepositoryData() ([]RepositoryData, error) {
 				firstPart, branch.RepoSlug, branch.MainBranch)
 			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s__%s__%s.json",
 				firstPart, branch.RepoSlug, branch.MainBranch)
+			org = firstPart
 		}
+
+		// The deselection key is derived from the result file this repository's
+		// numbers come from, not rebuilt from the inventory fields. That makes it
+		// impossible for the results page and these reports to key the same
+		// repository differently while reading the same file.
+		key, _ := DeselectionKeyFromResultFileName(filepath.Base(byLanguagePath))
 
 		// Read the byfile report
 		fileData, err := os.ReadFile(byfilePath)
@@ -202,7 +228,9 @@ func getRepositoryData() ([]RepositoryData, error) {
 		// Create repository data entry (CodeLines excludes JSON for report total)
 		repo := RepositoryData{
 			Number:      i,
+			Key:         key,
 			Repository:  branch.RepoSlug,
+			Org:         org,
 			Branch:      branch.MainBranch,
 			Lines:       reportData.TotalLines,
 			BlankLines:  reportData.TotalBlankLines,
@@ -228,6 +256,41 @@ func getRepositoryData() ([]RepositoryData, error) {
 	}
 
 	return repositories, nil
+}
+
+// PartitionDeselected splits repositories into those still counted and those the
+// user deselected on the results page, renumbering each group from 1 so both render
+// as standalone tables. Order within each group is preserved.
+func PartitionDeselected(repositories []RepositoryData, deselected DeselectionSet) (kept, removed []RepositoryData) {
+	for _, repo := range repositories {
+		if deselected.Contains(repo.Key) {
+			removed = append(removed, repo)
+		} else {
+			kept = append(kept, repo)
+		}
+	}
+	for i := range kept {
+		kept[i].Number = i + 1
+	}
+	for i := range removed {
+		removed[i].Number = i + 1
+	}
+	return kept, removed
+}
+
+// DeselectedRecords converts repositories into the persisted deselection records
+// used by the reports to describe what was removed.
+func DeselectedRecords(repositories []RepositoryData) []DeselectedRepo {
+	records := make([]DeselectedRepo, 0, len(repositories))
+	for _, repo := range repositories {
+		records = append(records, DeselectedRepo{
+			Key:    repo.Key,
+			Org:    repo.Org,
+			Repo:   repo.Repository,
+			Branch: repo.Branch,
+		})
+	}
+	return records
 }
 
 // truncateText truncates text to maxLength and adds "..." if needed
@@ -343,6 +406,21 @@ func generateRepositoryCSVReport(summary *RepositorySummaryReport, outputPath st
 	}
 	writer.Write(totalRow)
 
+	// Deselected repositories follow the totals, flagged in the first column so a
+	// spreadsheet filter separates them and they can never be mistaken for counted
+	// rows. Omitted entirely when the selection is untouched.
+	for _, repo := range summary.Deselected {
+		writer.Write([]string{
+			"DESELECTED",
+			repo.Repository,
+			repo.Branch,
+			strconv.Itoa(repo.Lines),
+			strconv.Itoa(repo.BlankLines),
+			strconv.Itoa(repo.Comments),
+			strconv.Itoa(repo.CodeLines),
+		})
+	}
+
 	return nil
 }
 
@@ -408,8 +486,16 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 		NoteExcludedFromTotal,
 	}
 
+	// Stated up front, next to the totals it changes, so a reader cannot take the
+	// figures above for the whole scan.
+	if summary.DeselectedRepositories > 0 {
+		summaryData = append(summaryData, fmt.Sprintf(
+			"Deselected by user: %d repositories (%s code lines) — excluded from the totals above",
+			summary.DeselectedRepositories, summary.DeselectedCodeLinesF))
+	}
+
 	for _, data := range summaryData {
-		pdf.CellFormat(190, 6, data, "1", 1, "L", true, 0, "")
+		pdf.CellFormat(190, 6, tr(data), "1", 1, "L", true, 0, "")
 	}
 
 	pdf.Ln(5)
@@ -437,9 +523,52 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 		rowCount++
 	}
 
+	renderDeselectedTable(pdf, tr, summary, codeLinesHeader, rowH, pageH, bottomMargin)
+
 	// Save PDF
 	filePath := filepath.Join(outputPath, "repository_summary.pdf")
 	return pdf.OutputFileAndClose(filePath)
+}
+
+// renderDeselectedTable appends the repositories the user removed from the totals as
+// a separate table after the counted ones, on its own page so the two can never be
+// read as one list. It renders nothing when the selection is untouched.
+func renderDeselectedTable(pdf *gofpdf.Fpdf, tr func(string) string, summary *RepositorySummaryReport,
+	codeLinesHeader string, rowH, pageH, bottomMargin float64) {
+	if len(summary.Deselected) == 0 {
+		return
+	}
+
+	pdf.AddPage()
+
+	pdf.SetFont("Arial", "B", 13)
+	pdf.Cell(0, 10, tr(fmt.Sprintf("Deselected Repositories (%d)", len(summary.Deselected))))
+	pdf.Ln(10)
+
+	pdf.SetFont("Arial", "", 9)
+	pdf.SetFillColor(235, 238, 243)
+	pdf.MultiCell(190, 5, tr(fmt.Sprintf(
+		"Analyzed but excluded from every total in this report by user selection on the results page. "+
+			"Their combined %s code lines are not included in the figures on page 1.",
+		summary.DeselectedCodeLinesF)), "1", "L", true)
+	pdf.Ln(4)
+
+	createPDFTableHeader(pdf, codeLinesHeader)
+	pdf.SetFont("Arial", "", 8)
+	pdf.SetFillColor(240, 240, 240)
+
+	rowCount := 0
+	for _, repo := range summary.Deselected {
+		if pdf.GetY()+rowH > pageH-bottomMargin {
+			pdf.AddPage()
+			createPDFTableHeader(pdf, codeLinesHeader)
+			pdf.SetFont("Arial", "", 8)
+			pdf.SetFillColor(240, 240, 240)
+			rowCount = 0
+		}
+		createRepositoryPDFRow(pdf, tr, repo, rowCount%2 == 0)
+		rowCount++
+	}
 }
 
 // GenerateRepositorySummaryReports generates CSV, JSON, and PDF reports for all repositories
@@ -460,6 +589,10 @@ func GenerateRepositorySummaryReports(directory string) error {
 		return nil
 	}
 
+	// Repositories the user removed from the totals on the results page. An absent
+	// file means nothing was deselected and every repository below is counted.
+	repositories, deselectedRepos := PartitionDeselected(repositories, LoadDeselectionSet(directory))
+
 	// Calculate totals using helper function
 	totalLines, totalBlankLines, totalComments, totalCodeLines := calculateTotals(repositories)
 
@@ -475,6 +608,16 @@ func GenerateRepositorySummaryReports(directory string) error {
 		TotalCommentsF:    FormatCodeLines(float64(totalComments)),
 		TotalCodeLinesF:   FormatCodeLines(float64(totalCodeLines)),
 		Repositories:      repositories,
+	}
+
+	// Left entirely absent when the selection is untouched, so an unfiltered report
+	// is byte-identical to one produced before this feature existed.
+	if len(deselectedRepos) > 0 {
+		_, _, _, deselectedCodeLines := calculateTotals(deselectedRepos)
+		summary.DeselectedRepositories = len(deselectedRepos)
+		summary.DeselectedCodeLines = deselectedCodeLines
+		summary.DeselectedCodeLinesF = FormatCodeLines(float64(deselectedCodeLines))
+		summary.Deselected = deselectedRepos
 	}
 
 	// Get output paths using helper function
