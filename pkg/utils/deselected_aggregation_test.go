@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -198,6 +199,106 @@ func TestGenerateRepositorySummaryReportsSplitsDeselected(t *testing.T) {
 		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
 			t.Errorf("expected non-empty %s (err=%v)", path, err)
 		}
+	}
+}
+
+func TestGenerateRepositorySummaryReportsHonoursDeselectionForSubgroupOrg(t *testing.T) {
+	// Regression test for the key-divergence bug: a GitLab subgroup org ("group/subgroup")
+	// and a slashed branch ("release/1.0") both put a path separator in a key component.
+	// The results page and this generator built their file paths separately, so the key
+	// they derived diverged and a repository deselected on the page stayed counted here.
+	dir := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	for _, sub := range []string{
+		"Results/config", "Results/byfile-report/csv-report", "Results/byfile-report/pdf-report",
+	} {
+		if err := os.MkdirAll(sub, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const (
+		org    = "group/subgroup"
+		branch = "release/1.0"
+	)
+	invJSON, _ := json.Marshal(AnalysisResult{
+		NumRepositories: 2,
+		ProjectBranches: []ProjectBranch{
+			{Org: org, RepoSlug: "keep", MainBranch: branch},
+			{Org: org, RepoSlug: "drop", MainBranch: branch},
+		},
+	})
+	if err := os.WriteFile("Results/config/analysis_result_gitlab.json", invJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// File names are spelled out as the reporters actually write them —
+	// strings.Replace(OutputName, "/", "_", -1) — and deliberately NOT built by calling
+	// SanitizeResultComponent. Deriving the fixture from the function under test would
+	// make this pass for any substitution rule, including one that never finds the file.
+	const (
+		onDiskOrg    = "group_subgroup"
+		onDiskBranch = "release_1.0"
+	)
+	writeByFile := func(repo string, code int) {
+		name := fmt.Sprintf("Result_%s__%s__%s_byfile.json", onDiskOrg, repo, onDiskBranch)
+		body, _ := json.Marshal(map[string]int{
+			"TotalLines": code * 2, "TotalBlankLines": 1, "TotalComments": 2, "TotalCodeLines": code,
+		})
+		if err := os.WriteFile(filepath.Join("Results/byfile-report", name), body, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeByFile("keep", 100)
+	writeByFile("drop", 40)
+
+	// The key the results page would submit for the deselected repository.
+	pageKey := DeselectionKeyForRepo("gitlab", org, "drop", branch)
+	if err := SaveDeselectedRepos("Results", []DeselectedRepo{
+		{Key: pageKey, Org: org, Repo: "drop", Branch: branch},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := GenerateRepositorySummaryReports("Results"); err != nil {
+		t.Fatalf("GenerateRepositorySummaryReports: %v", err)
+	}
+
+	data, err := os.ReadFile("Results/byfile-report/repository_summary.json")
+	if err != nil {
+		t.Fatalf("reading generated summary: %v", err)
+	}
+	var summary RepositorySummaryReport
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both repositories must be found at all — separators mapped to "_" is what makes
+	// the file names resolve.
+	if summary.TotalRepositories+summary.DeselectedRepositories != 2 {
+		t.Fatalf("found %d repositories in total, want 2 (subgroup file names must resolve)",
+			summary.TotalRepositories+summary.DeselectedRepositories)
+	}
+	if summary.TotalCodeLines != 100 {
+		t.Errorf("TotalCodeLines = %d, want 100: the deselected repo is still counted", summary.TotalCodeLines)
+	}
+	if summary.DeselectedRepositories != 1 || len(summary.Deselected) != 1 {
+		t.Fatalf("Deselected = %d/%+v, want exactly one", summary.DeselectedRepositories, summary.Deselected)
+	}
+	if summary.Deselected[0].Repository != "drop" {
+		t.Errorf("deselected %q, want drop", summary.Deselected[0].Repository)
+	}
+	// The key this generator derives must equal the one the page submitted.
+	if summary.Deselected[0].Key != pageKey {
+		t.Errorf("key mismatch: report derived %q, page submitted %q", summary.Deselected[0].Key, pageKey)
 	}
 }
 

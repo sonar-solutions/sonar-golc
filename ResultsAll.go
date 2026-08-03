@@ -58,17 +58,13 @@ const (
 	codeLinesLanguageFile = "Results/code_lines_by_language.json"
 )
 
-// sanitizePathComponent sanitizes a path component to prevent path traversal attacks
+// sanitizePathComponent sanitizes a path component to prevent path traversal attacks.
+//
+// Delegates to the shared implementation: the deselection key is built from the same
+// normalization, and a second copy of these rules here is exactly how the page and the
+// generated reports came to key the same repository differently.
 func sanitizePathComponent(component string) string {
-	// Remove any path traversal sequences
-	component = strings.ReplaceAll(component, "..", "")
-	component = strings.ReplaceAll(component, "/", "")
-	component = strings.ReplaceAll(component, "\\", "")
-	// Remove any null bytes
-	component = strings.ReplaceAll(component, "\x00", "")
-	// Trim whitespace
-	component = strings.TrimSpace(component)
-	return component
+	return utils.SanitizeResultComponent(component)
 }
 
 // buildSecurePath safely constructs a file path with validation
@@ -409,10 +405,13 @@ func getRepositoryData() ([]RepositoryData, error) {
 			}
 		}
 
-		// Derived from the result file the numbers come from, not rebuilt from the
-		// inventory, so this page and the generated reports cannot key the same
-		// repository differently. See utils.DeselectionKeyFromResultFileName.
-		key, _ := utils.DeselectionKeyFromResultFileName(filepath.Base(byLanguagePath))
+		// Built from the inventory fields through the shared key function rather than
+		// read back out of byLanguagePath. This page and the report generators
+		// construct their paths separately, so a key recovered from a path inherits
+		// every difference between them — which is how a repository could be
+		// deselected here and still counted in the generated reports.
+		key := utils.DeselectionKeyForRepo(platform, getFirstPartForPlatform(platform, branch, branch.RepoSlug),
+			branch.RepoSlug, branch.MainBranch)
 
 		// Create repository data entry (CodeLines excludes JSON for report total)
 		repo := RepositoryData{

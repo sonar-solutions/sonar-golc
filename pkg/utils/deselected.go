@@ -27,6 +27,32 @@ import (
 // branches that contain a single `_`.
 const keySeparator = "__"
 
+// SanitizeResultComponent normalizes one component of a result file name.
+//
+// Result file names embed the organization, repository and branch verbatim, so a
+// component containing a path separator — a GitLab subgroup like `group/subgroup`, or
+// a branch like `release/1.0` — would otherwise turn the file name into a nested path.
+//
+// Separators become `_`, deliberately matching what the reporters do when they write
+// the file (see the `strings.Replace(OutputName, "/", "_", -1)` in
+// pkg/reporter/{json,csv,pdf}). Deleting them instead would be equally safe against
+// traversal but would name a file that is not the one on disk, so every repository
+// with a subgroup or a slashed branch would silently go missing from the reports.
+//
+// A single `_` is unambiguous here because the fields are joined by `__`.
+//
+// Traversal is impossible once no separator remains, so `..` needs no special case:
+// `../..` normalizes to `.._..`, an ordinary file name fragment.
+//
+// This is the one definition used for both path building and key building. While the
+// results page and the report generators had separate rules, they derived different
+// keys for the same repository and a deselection applied to one but not the other.
+func SanitizeResultComponent(component string) string {
+	component = strings.ReplaceAll(component, "/", "_")
+	component = strings.ReplaceAll(component, "\\", "_")
+	return strings.ReplaceAll(component, "\x00", "")
+}
+
 // DeselectedRepo identifies one repository (branch) removed from report totals.
 // Key is authoritative for matching; Org, Repo and Branch exist so the reports can
 // list what was removed without re-deriving it.
@@ -50,14 +76,19 @@ type DeselectionSet map[string]bool
 // carry all three components (GitHub, GitLab, Azure, Bitbucket Cloud/DC). firstPart
 // is the organization for GitHub/GitLab and the project key for Azure/Bitbucket —
 // i.e. whatever getFirstPartForPlatform returns for that platform.
+//
+// Takes the raw inventory fields and normalizes them itself, so every caller gets the
+// same key whether or not it sanitized beforehand.
 func DeselectionKey(firstPart, repo, branch string) string {
-	return firstPart + keySeparator + repo + keySeparator + branch
+	return SanitizeResultComponent(firstPart) + keySeparator +
+		SanitizeResultComponent(repo) + keySeparator +
+		SanitizeResultComponent(branch)
 }
 
 // FileDeselectionKey builds the key for the `file` platform, whose result files are
 // named Result_<Repo>.json and therefore have no organization or branch component.
 func FileDeselectionKey(repo string) string {
-	return repo
+	return SanitizeResultComponent(repo)
 }
 
 // DeselectionKeyFromResultFileName derives the key from a result file name so a
@@ -81,6 +112,19 @@ func DeselectionKeyFromResultFileName(name string) (string, bool) {
 		return "", false
 	}
 	return FileDeselectionKey(base), true
+}
+
+// DeselectionKeyForRepo builds the key for a repository from its inventory fields,
+// choosing the right form for the platform. The `file` platform writes single-component
+// result file names, every other platform writes all three.
+//
+// Both the results page and the report generators call this, so the key cannot depend
+// on how either of them happens to build file paths.
+func DeselectionKeyForRepo(platform, firstPart, repo, branch string) string {
+	if platform == "file" {
+		return FileDeselectionKey(repo)
+	}
+	return DeselectionKey(firstPart, repo, branch)
 }
 
 // Contains reports whether a key is deselected. It is nil-safe so callers can pass

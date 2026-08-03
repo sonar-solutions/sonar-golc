@@ -166,24 +166,33 @@ func getRepositoryData() ([]RepositoryData, error) {
 		// Construct file paths using platform-specific naming.
 		// File mode uses a shorter pattern (no project key or branch suffix)
 		// because goloc names files as Result_<dirname>_byfile.json in that mode.
+		// Components are sanitized before being interpolated, matching the results
+		// page. Without it, a GitLab subgroup or a `release/1.0` branch turns the file
+		// name into a nested path and this lookup misses a file the page finds.
+		firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
 		var byfilePath, byLanguagePath, org string
 		if platform == "file" {
-			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s_byfile.json", branch.RepoSlug)
-			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s.json", branch.RepoSlug)
+			slug := SanitizeResultComponent(branch.RepoSlug)
+			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s_byfile.json", slug)
+			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s.json", slug)
 		} else {
-			firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
-			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s__%s__%s_byfile.json",
-				firstPart, branch.RepoSlug, branch.MainBranch)
-			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s__%s__%s.json",
-				firstPart, branch.RepoSlug, branch.MainBranch)
 			org = firstPart
+			byfilePath = fmt.Sprintf("Results/byfile-report/Result_%s__%s__%s_byfile.json",
+				SanitizeResultComponent(firstPart),
+				SanitizeResultComponent(branch.RepoSlug),
+				SanitizeResultComponent(branch.MainBranch))
+			byLanguagePath = fmt.Sprintf("Results/bylanguage-report/Result_%s__%s__%s.json",
+				SanitizeResultComponent(firstPart),
+				SanitizeResultComponent(branch.RepoSlug),
+				SanitizeResultComponent(branch.MainBranch))
 		}
 
-		// The deselection key is derived from the result file this repository's
-		// numbers come from, not rebuilt from the inventory fields. That makes it
-		// impossible for the results page and these reports to key the same
-		// repository differently while reading the same file.
-		key, _ := DeselectionKeyFromResultFileName(filepath.Base(byLanguagePath))
+		// Built from the inventory fields through the shared key function rather than
+		// read back out of the file path. The page and these reports construct their
+		// paths separately, so a key recovered from a path inherits every difference
+		// between them — which is how a repository could be deselected on the page and
+		// still counted here.
+		key := DeselectionKeyForRepo(platform, firstPart, branch.RepoSlug, branch.MainBranch)
 
 		// Read the byfile report
 		fileData, err := os.ReadFile(byfilePath)

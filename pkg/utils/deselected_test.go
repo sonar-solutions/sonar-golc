@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +37,98 @@ func TestDeselectionKeyRoundTripsThroughResultFileName(t *testing.T) {
 				t.Errorf("key mismatch for %q: from file %q, from fields %q", tc.resultFileName, got, want)
 			}
 		})
+	}
+}
+
+func TestDeselectionKeyNormalizesPathSeparators(t *testing.T) {
+	// A GitLab subgroup ("group/subgroup") and a branch like "release/1.0" both put a
+	// path separator inside a key component. The results page sanitizes components
+	// before building a file path while the report generators historically did not, so
+	// an unnormalized key let the page and the reports disagree about the same
+	// repository — the deselection applied on the page but not in the PDF.
+	//
+	// The key must therefore be separator-free, whatever it is built from.
+	cases := []struct{ org, repo, branch string }{
+		{"group/subgroup", "svc", "main"},
+		{"acme", "svc", "release/1.0"},
+		{"back\\slash", "svc", "main"},
+		{"../escape", "svc", "main"},
+	}
+	for _, tc := range cases {
+		key := DeselectionKey(tc.org, tc.repo, tc.branch)
+		// No separator means the key can never be read as a nested path, which is also
+		// what makes traversal impossible without a special case for "..".
+		if strings.ContainsAny(key, `/\`) {
+			t.Errorf("DeselectionKey(%q,%q,%q) = %q: must not contain a path separator",
+				tc.org, tc.repo, tc.branch, key)
+		}
+		// Exactly three fields must remain, so the key stays parseable.
+		if got := strings.Count(key, keySeparator); got != 2 {
+			t.Errorf("DeselectionKey(%q,%q,%q) = %q: want 2 field separators, got %d",
+				tc.org, tc.repo, tc.branch, key, got)
+		}
+	}
+}
+
+func TestSanitizeResultComponentMatchesWhatReportersWrite(t *testing.T) {
+	// The reporters write result files after replacing "/" with "_" (see
+	// strings.Replace(OutputName, "/", "_", -1) in pkg/reporter/{json,csv,pdf}). The
+	// readers must apply the same substitution: deleting the separator instead would
+	// be equally traversal-safe but would look for a file that does not exist, so a
+	// GitLab subgroup or a slashed branch would vanish from the reports.
+	const writerRule = "_"
+	if got := SanitizeResultComponent("group/subgroup"); got != "group"+writerRule+"subgroup" {
+		t.Errorf("SanitizeResultComponent(\"group/subgroup\") = %q, want %q — must match the reporters' substitution",
+			got, "group"+writerRule+"subgroup")
+	}
+	if got := SanitizeResultComponent("release/1.0"); got != "release_1.0" {
+		t.Errorf("SanitizeResultComponent(\"release/1.0\") = %q, want %q", got, "release_1.0")
+	}
+}
+
+func TestDeselectionKeyAgreesWithSanitizedFileName(t *testing.T) {
+	// The results page builds its file path from sanitized components; the reports
+	// build the key from the raw inventory fields. Both must land on the same key, or
+	// a repository deselected on the page stays counted in the generated reports.
+	cases := []struct{ org, repo, branch string }{
+		{"acme", "svc", "main"},
+		{"group/subgroup", "svc", "main"},
+		{"acme", "svc", "release/1.0"},
+		{"my_group", "my_repo", "feat_x"},
+	}
+	for _, tc := range cases {
+		fromFields := DeselectionKey(tc.org, tc.repo, tc.branch)
+
+		// What the page ends up with: components sanitized for the path, then the key
+		// recovered from that file name.
+		sanitizedName := "Result_" + SanitizeResultComponent(tc.org) +
+			"__" + SanitizeResultComponent(tc.repo) +
+			"__" + SanitizeResultComponent(tc.branch) + ".json"
+		fromFileName, ok := DeselectionKeyFromResultFileName(sanitizedName)
+		if !ok {
+			t.Errorf("%q not recognised as a result file", sanitizedName)
+			continue
+		}
+		if fromFields != fromFileName {
+			t.Errorf("key mismatch for %q/%q/%q: from fields %q, from file name %q",
+				tc.org, tc.repo, tc.branch, fromFields, fromFileName)
+		}
+	}
+}
+
+func TestSanitizeResultComponent(t *testing.T) {
+	cases := map[string]string{
+		"plain":          "plain",
+		"group/subgroup": "group_subgroup",
+		"back\\slash":    "back_slash",
+		"../escape":      ".._escape",
+		"keeps_under":    "keeps_under",
+		"keeps-dash.1":   "keeps-dash.1",
+	}
+	for in, want := range cases {
+		if got := SanitizeResultComponent(in); got != want {
+			t.Errorf("SanitizeResultComponent(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
