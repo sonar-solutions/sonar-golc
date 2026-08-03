@@ -580,9 +580,35 @@ func renderDeselectedTable(pdf *gofpdf.Fpdf, tr func(string) string, summary *Re
 	}
 }
 
-// GenerateRepositorySummaryReports generates CSV, JSON, and PDF reports for all repositories
+// SummaryReportOptions selects which repositories the summary reports cover and where
+// they are written, so the same generator can produce both the full-scan reports and
+// reports reflecting the user's current selection without either overwriting the other.
+type SummaryReportOptions struct {
+	// Deselected repositories to leave out of the totals. Empty means the full scan.
+	Deselected DeselectionSet
+	// OutputDir is the base directory the byfile-report tree is written under. Empty
+	// means the directory passed to the generator.
+	OutputDir string
+}
+
+// GenerateRepositorySummaryReports generates CSV, JSON, and PDF reports for all
+// repositories, applying any selection persisted under directory. Kept for existing
+// callers (an analysis run); use GenerateRepositorySummaryReportsWith to control the
+// selection and output location explicitly.
 func GenerateRepositorySummaryReports(directory string) error {
+	return GenerateRepositorySummaryReportsWith(directory, SummaryReportOptions{
+		Deselected: LoadDeselectionSet(directory),
+	})
+}
+
+// GenerateRepositorySummaryReportsWith generates the summary reports for an explicit
+// selection and output location. An empty selection always reproduces the full scan.
+func GenerateRepositorySummaryReportsWith(directory string, opts SummaryReportOptions) error {
 	loggers := NewLogger()
+
+	if opts.OutputDir == "" {
+		opts.OutputDir = directory
+	}
 
 	// Get repository data
 	repositories, err := getRepositoryData()
@@ -598,9 +624,9 @@ func GenerateRepositorySummaryReports(directory string) error {
 		return nil
 	}
 
-	// Repositories the user removed from the totals on the results page. An absent
-	// file means nothing was deselected and every repository below is counted.
-	repositories, deselectedRepos := PartitionDeselected(repositories, LoadDeselectionSet(directory))
+	// Repositories the user removed from the totals on the results page. An empty
+	// selection means every repository below is counted.
+	repositories, deselectedRepos := PartitionDeselected(repositories, opts.Deselected)
 
 	// Calculate totals using helper function
 	totalLines, totalBlankLines, totalComments, totalCodeLines := calculateTotals(repositories)
@@ -630,7 +656,13 @@ func GenerateRepositorySummaryReports(directory string) error {
 	}
 
 	// Get output paths using helper function
-	csvOutputPath, jsonOutputPath, pdfOutputPath := createReportFilePaths(directory)
+	csvOutputPath, jsonOutputPath, pdfOutputPath := createReportFilePaths(opts.OutputDir)
+	for _, dir := range []string{csvOutputPath, jsonOutputPath, pdfOutputPath} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			loggers.Errorf("❌ Error creating report directory %s: %v", dir, err)
+			return err
+		}
+	}
 
 	// Generate reports with consistent error handling
 	csvFilePath := filepath.Join(csvOutputPath, "repository_summary.csv")

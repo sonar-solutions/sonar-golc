@@ -5,15 +5,57 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
+)
+
+// pdfText extracts the drawn text strings from a PDF so assertions can check what a
+// reader would actually see, rather than only that a file exists.
+func pdfText(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	var decoded strings.Builder
+	for _, m := range regexp.MustCompile(`(?s)stream\r?\n(.*?)endstream`).FindAllSubmatch(raw, -1) {
+		r, err := zlib.NewReader(bytes.NewReader(m[1]))
+		if err != nil {
+			continue
+		}
+		var buf bytes.Buffer
+		if _, err := buf.ReadFrom(r); err == nil {
+			decoded.Write(buf.Bytes())
+		}
+		_ = r.Close()
+	}
+	// PDF string literals escape parentheses, so "(filtered)" is stored as
+	// "\(filtered\)". The escape-aware alternation is required: a plain `\((.*?)\)`
+	// stops at the escaped closing paren and truncates the label, which silently
+	// breaks any assertion about parenthesized text.
+	var text strings.Builder
+	for _, m := range regexp.MustCompile(`\(((?:\\.|[^\\()])*)\)`).FindAllStringSubmatch(decoded.String(), -1) {
+		text.WriteString(m[1])
+	}
+	return strings.NewReplacer(`\(`, "(", `\)`, ")", `\\`, `\`).Replace(text.String())
+}
+
+// The fixture's arithmetic, named so assertions read as intent rather than magic
+// strings: "keep" contributes 1000 code lines and "drop" 250, so the full scan totals
+// 1250 and deselecting "drop" leaves 1000.
+var (
+	rawTotalLOC      = utils.FormatCodeLines(1250)
+	filteredTotalLOC = utils.FormatCodeLines(1000)
 )
 
 // setupResultsFixture builds a minimal but complete Results tree in a temp working
@@ -130,15 +172,11 @@ func TestApplyDeselectionFiltersEveryTotal(t *testing.T) {
 		}
 	}
 
-	// The regenerated artifacts must exist on disk for the download links.
-	for _, path := range []string{
-		"Results/GlobalReport.pdf",
-		"Results/byfile-report/pdf-report/repository_summary.pdf",
-		"Results/byfile-report/csv-report/repository_summary.csv",
-	} {
-		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
-			t.Errorf("expected non-empty %s (err=%v)", path, err)
-		}
+	// Applying a selection must NOT generate reports: that work now happens when a
+	// report is requested, so the user never waits for PDFs they may not download.
+	if _, err := os.Stat(customizedVariant.globalPDFPath()); !os.IsNotExist(err) {
+		t.Errorf("applying a selection should not generate reports, but %s exists (err=%v)",
+			customizedVariant.globalPDFPath(), err)
 	}
 }
 
@@ -293,6 +331,239 @@ func TestHandleDeselectedRoundTrip(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Repository != "drop" {
 		t.Errorf("GET returned %+v, want one entry for drop", got)
+	}
+}
+
+// serveReport drives the real download handler and returns the recorder.
+func serveReport(t *testing.T, name string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handleReport(rec, httptest.NewRequest(http.MethodGet, "/reports/"+name, nil))
+	return rec
+}
+
+func TestReportGeneratedOnFirstRequest(t *testing.T) {
+	setupResultsFixture(t)
+
+	// Nothing has generated reports yet.
+	if _, err := os.Stat(fullScanVariant.globalPDFPath()); !os.IsNotExist(err) {
+		t.Fatalf("fixture should start without a global PDF (err=%v)", err)
+	}
+
+	rec := serveReport(t, "global-report.pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.Len() == 0 {
+		t.Error("served an empty report")
+	}
+	// The download name must say which variant this is, since the file gets detached
+	// from the dashboard and shared.
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "full-scan") {
+		t.Errorf("Content-Disposition = %q, want it to identify the full-scan variant", cd)
+	}
+	if info, err := os.Stat(fullScanVariant.globalPDFPath()); err != nil || info.Size() == 0 {
+		t.Errorf("requesting the report should have generated it (err=%v)", err)
+	}
+}
+
+func TestReportNotRegeneratedWhenAlreadyCurrent(t *testing.T) {
+	setupResultsFixture(t)
+
+	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("first request failed: %d", rec.Code)
+	}
+	first, err := os.Stat(fullScanVariant.globalPDFPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a stale rebuild detectable: any regeneration rewrites the file.
+	if err := os.Chtimes(fullScanVariant.globalPDFPath(),
+		first.ModTime().Add(-time.Hour), first.ModTime().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := os.Stat(fullScanVariant.globalPDFPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("second request failed: %d", rec.Code)
+	}
+
+	after, err := os.Stat(fullScanVariant.globalPDFPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(marker.ModTime()) {
+		t.Error("an unchanged selection should not trigger a rebuild")
+	}
+}
+
+func TestSelectionChangeInvalidatesCachedReport(t *testing.T) {
+	setupResultsFixture(t)
+
+	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("first request failed: %d", rec.Code)
+	}
+
+	// The full-scan report must be rebuilt after a selection change too, because its
+	// freshness stamp is not only about the selection — but its *content* must not
+	// change, since it always covers every repository.
+	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
+		t.Fatalf("applyDeselection: %v", err)
+	}
+
+	rec := serveReport(t, "global-report.pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	fullScanText := pdfText(t, fullScanVariant.globalPDFPath())
+	if !strings.Contains(fullScanText, rawTotalLOC) {
+		t.Errorf("the full-scan report must still show %s, the total across all repositories", rawTotalLOC)
+	}
+	if strings.Contains(fullScanText, "Deselected Repositories") {
+		t.Error("the full-scan report must not mention deselections — it covers the whole scan")
+	}
+}
+
+func TestCustomizedReportIsSeparateFromOriginal(t *testing.T) {
+	setupResultsFixture(t)
+
+	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
+		t.Fatalf("applyDeselection: %v", err)
+	}
+
+	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+		t.Fatalf("full-scan request failed: %d", rec.Code)
+	}
+	rec := serveReport(t, "global-report-customized.pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("customized request failed: %d (%s)", rec.Code, rec.Body.String())
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "selection") {
+		t.Errorf("Content-Disposition = %q, want it to identify the customized variant", cd)
+	}
+
+	// Two distinct files, so handing over one never destroys the other.
+	if fullScanVariant.globalPDFPath() == customizedVariant.globalPDFPath() {
+		t.Fatal("variants must not share an output path")
+	}
+
+	full := pdfText(t, fullScanVariant.globalPDFPath())
+	custom := pdfText(t, customizedVariant.globalPDFPath())
+
+	if !strings.Contains(full, rawTotalLOC) {
+		t.Errorf("full-scan report should show the unfiltered total %s", rawTotalLOC)
+	}
+	if !strings.Contains(custom, filteredTotalLOC) {
+		t.Errorf("customized report should show the filtered total %s", filteredTotalLOC)
+	}
+	if !strings.Contains(custom, "Deselected") || !strings.Contains(custom, "drop") {
+		t.Error("customized report must disclose what was excluded")
+	}
+	// The headline stat card must say the number is filtered, so a reader glancing at
+	// the first page cannot mistake it for the whole scan.
+	if !strings.Contains(custom, "Total LOC (filtered)") {
+		t.Error("customized report's headline card must be labelled as filtered")
+	}
+	if strings.Contains(full, "Total LOC (filtered)") {
+		t.Error("full-scan report's headline card must not be labelled as filtered")
+	}
+	// The customized report must also state the unfiltered total for comparison.
+	if !strings.Contains(custom, rawTotalLOC) {
+		t.Errorf("customized report should state the unfiltered total %s", rawTotalLOC)
+	}
+
+	// The customized language totals must not clobber the full-scan ones.
+	if fullScanVariant.languageTotalsPath() == customizedVariant.languageTotalsPath() {
+		t.Error("variants must not share a language-totals path")
+	}
+}
+
+func TestCustomizedReportFallsBackWhenNothingDeselected(t *testing.T) {
+	setupResultsFixture(t)
+
+	// A link left over from a selection that has since been reset must still serve
+	// something sensible rather than 404.
+	rec := serveReport(t, "global-report-customized.pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "full-scan") {
+		t.Errorf("Content-Disposition = %q, want the full-scan name when nothing is deselected", cd)
+	}
+}
+
+func TestUnknownReportIs404(t *testing.T) {
+	setupResultsFixture(t)
+	if rec := serveReport(t, "not-a-report.pdf"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestPageLanguagesIgnoreStaleAggregateWhenFiltered(t *testing.T) {
+	setupResultsFixture(t)
+
+	// A deliberately wrong aggregate file, as would be left behind by an earlier
+	// unfiltered generation. The page must compute from the per-repository files instead.
+	stale := []map[string]any{{"Language": "Cobol", "CodeLines": 999999}}
+	data, _ := json.Marshal(stale)
+	if err := os.WriteFile(codeLinesLanguageFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
+		t.Fatalf("applyDeselection: %v", err)
+	}
+
+	for _, lang := range snapshot().RawLanguages {
+		if lang.Language == "Cobol" {
+			t.Fatal("page used the stale aggregate file instead of the per-repository results")
+		}
+	}
+	// Java came only from the deselected repository, so it must be gone.
+	for _, lang := range snapshot().RawLanguages {
+		if lang.Language == "Java" {
+			t.Errorf("Java should not appear: its only repository was deselected")
+		}
+	}
+}
+
+func TestReportsDropdownOffersBothVariantsWhenFiltered(t *testing.T) {
+	out := renderTemplate(t, PageData{
+		Platform:            "github",
+		Repositories:        []RepositoryData{{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main"}},
+		Deselected:          []RepositoryData{{Number: 1, Key: "acme__drop__main", Repository: "drop", Branch: "main"}},
+		DeselectedKeys:      []string{"acme__drop__main"},
+		DeselectedCount:     1,
+		ScannedRepositories: 2,
+	})
+	for _, want := range []string{
+		"/reports/global-report.pdf",
+		"/reports/global-report-customized.pdf",
+		"/reports/repository-summary-customized.pdf",
+		"/reports/repository-summary-customized.csv",
+		"Full scan",
+		"Current selection",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dropdown missing %q", want)
+		}
+	}
+}
+
+func TestReportsDropdownOffersOnlyOriginalWhenUnfiltered(t *testing.T) {
+	out := renderTemplate(t, PageData{
+		Platform:     "github",
+		Repositories: []RepositoryData{{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main"}},
+	})
+	if strings.Contains(out, "-customized.pdf") {
+		t.Error("customized report links should not be offered when nothing is deselected")
+	}
+	if !strings.Contains(out, "/reports/global-report.pdf") {
+		t.Error("the full-scan report must always be offered")
 	}
 }
 

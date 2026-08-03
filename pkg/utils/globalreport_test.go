@@ -31,7 +31,7 @@ func TestRenderGlobalPDF_NoMojibakeStatCard(t *testing.T) {
 		NumberRepos:            2,
 	}
 	langs := []LanguageData{{Language: "Golang", CodeLines: 29, Percentage: 100, CodeLinesF: "29"}}
-	if err := renderGlobalPDF(langs, ginfo, nil, nil, nil, ginfo.TotalLinesOfCode); err != nil {
+	if err := renderGlobalPDF(langs, ginfo, nil, nil, nil, ginfo.TotalLinesOfCode, "Results/GlobalReport.pdf"); err != nil {
 		t.Fatalf("renderGlobalPDF: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestWriteLanguageTotalsJSONAndReadGlobalInfoAndRenderPDF(t *testing.T) {
 	}
 
 	// write language totals
-	data, err := writeLanguageTotalsJSON(map[string]int{"Go": 100})
+	data, err := writeLanguageTotalsJSON(map[string]int{"Go": 100}, "Results/code_lines_by_language.json")
 	if err != nil {
 		t.Fatalf("writeLanguageTotalsJSON error: %v", err)
 	}

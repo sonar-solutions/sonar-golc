@@ -60,14 +60,45 @@ func getTotalCodeLinesExcludingJSON(languages []LanguageData) int {
 	return total
 }
 
+// GlobalReportOptions selects which repositories a global report covers and where it
+// is written, so the same generator can produce both the full-scan report and a report
+// reflecting the user's current selection without either overwriting the other.
+type GlobalReportOptions struct {
+	// Deselected repositories to leave out of every total. Empty means the full scan.
+	Deselected []DeselectedRepo
+	// PDFPath is where the PDF is written. Empty means Results/GlobalReport.pdf.
+	PDFPath string
+	// LanguageTotalsPath is where the per-language totals JSON is written. Empty means
+	// Results/code_lines_by_language.json. A variant report passes its own path so it
+	// does not clobber the full-scan totals the dashboard reads.
+	LanguageTotalsPath string
+}
+
+// CreateGlobalReport builds the full-scan global report, applying any selection
+// persisted under directory. Kept for existing callers (an analysis run); use
+// CreateGlobalReportWith to control the selection and output paths explicitly.
 func CreateGlobalReport(directory string) error {
+	return CreateGlobalReportWith(directory, GlobalReportOptions{
+		Deselected: LoadDeselectedRepos(directory),
+	})
+}
+
+// CreateGlobalReportWith builds a global report for an explicit selection and output
+// location. Every total, the language breakdown and the headline figures are derived
+// from opts.Deselected, so passing an empty selection always reproduces the full scan.
+func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 
 	//directory := "Results"
 	loggers := NewLogger()
 
-	// Repositories the user removed from the totals on the results page. An absent
-	// file means nothing was deselected, so the walk below covers the full scan.
-	deselected := LoadDeselectedRepos(directory)
+	if opts.PDFPath == "" {
+		opts.PDFPath = filepath.Join("Results", "GlobalReport.pdf")
+	}
+	if opts.LanguageTotalsPath == "" {
+		opts.LanguageTotalsPath = filepath.Join("Results", "code_lines_by_language.json")
+	}
+
+	deselected := opts.Deselected
 	deselectedSet := DeselectionKeys(deselected)
 
 	totals, repoTotals, err := collectResultTotals(directory, deselectedSet)
@@ -76,8 +107,8 @@ func CreateGlobalReport(directory string) error {
 		return err
 	}
 
-	// Persist code_lines_by_language.json and keep marshaled bytes for later
-	outputData, err := writeLanguageTotalsJSON(totals)
+	// Persist the language totals and keep marshaled bytes for later
+	outputData, err := writeLanguageTotalsJSON(totals, opts.LanguageTotalsPath)
 	if err != nil {
 		loggers.Errorf("❌ Error creating output JSON file : %v", err)
 		return err
@@ -113,11 +144,11 @@ func CreateGlobalReport(directory string) error {
 	scanSummary := LoadScanSummary(directory)
 
 	// Create a PDF
-	if err := renderGlobalPDF(languages, ginfo, skippedRepos, scanSummary, deselected, rawTotalLOC); err != nil {
+	if err := renderGlobalPDF(languages, ginfo, skippedRepos, scanSummary, deselected, rawTotalLOC, opts.PDFPath); err != nil {
 		return err
 	}
 
-	loggers.Infof("✅ Global PDF report exported to %s", "Results/GlobalReport.pdf")
+	loggers.Infof("✅ Global PDF report exported to %s", opts.PDFPath)
 	return nil
 }
 
@@ -136,6 +167,18 @@ type RepoTotal struct {
 func collectLanguageTotals(directory string) (map[string]int, error) {
 	totals, _, err := collectResultTotals(directory, nil)
 	return totals, err
+}
+
+// CollectResultTotals walks the per-repository result files under directory and returns
+// the per-language totals plus each repository's contribution, leaving out anything in
+// deselected. Pass nil to cover the full scan.
+//
+// Exported so the results page can compute its language breakdown in memory instead of
+// reading the generated code_lines_by_language.json. Since the reports are now written
+// on demand, that file is not necessarily current, and a page that read it could show a
+// language chart describing a different repository set than its own table.
+func CollectResultTotals(directory string, deselected DeselectionSet) (map[string]int, []RepoTotal, error) {
+	return collectResultTotals(directory, deselected)
 }
 
 // collectResultTotals walks result files once and returns both the per-language
@@ -285,8 +328,9 @@ func accumulateLanguageTotalsFromFile(path string, totals map[string]int) (int, 
 	return fileLOC, nil
 }
 
-// writeLanguageTotalsJSON writes Results/code_lines_by_language.json and returns the serialized bytes.
-func writeLanguageTotalsJSON(totals map[string]int) ([]byte, error) {
+// writeLanguageTotalsJSON writes the per-language totals to outputFile and returns the
+// serialized bytes.
+func writeLanguageTotalsJSON(totals map[string]int, outputFile string) ([]byte, error) {
 	loggers := NewLogger()
 	var resultats []LanguageData1
 	for lang, total := range totals {
@@ -309,7 +353,9 @@ func writeLanguageTotalsJSON(totals map[string]int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	const outputFile = "Results/code_lines_by_language.json"
+	if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
+		return nil, err
+	}
 	if err := os.WriteFile(outputFile, outputData, 0644); err != nil {
 		return nil, err
 	}
@@ -656,7 +702,7 @@ func renderDeselectedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, dese
 // deselected lists repositories the user removed from the totals on the results
 // page, and rawTotalLOC is the unfiltered total shown alongside them for comparison.
 func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []SkippedRepo, summary *ScanSummary,
-	deselected []DeselectedRepo, rawTotalLOC string) error {
+	deselected []DeselectedRepo, rawTotalLOC, outputPath string) error {
 	loggers := NewLogger()
 
 	languages, maxLOC := prepareLanguagesForPDF(languages)
@@ -830,7 +876,11 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []
 	// ── Deselected repositories section ──────────────────────────────
 	renderDeselectedReposSection(pdf, tr, deselected, rawTotalLOC, marginL, contentW)
 
-	if err := pdf.OutputFileAndClose("Results/GlobalReport.pdf"); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		loggers.Errorf("Error creating PDF output directory: %v", err)
+		return err
+	}
+	if err := pdf.OutputFileAndClose(outputPath); err != nil {
 		loggers.Errorf("Error saving PDF file: %v", err)
 		return err
 	}

@@ -6,7 +6,9 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -204,6 +206,7 @@ type PageData struct {
 	DeselectedCount     int
 	DeselectedCodeLines string // formatted LOC removed from the totals
 	RawTotalLinesOfCode string // total across every analyzed repository, for comparison
+	ScannedRepositories int    // counted + deselected, i.e. every repository with results
 }
 
 // ScanSummaryView is the template-facing view of utils.ScanSummary. Analyzed is
@@ -890,6 +893,21 @@ func zipResults(w http.ResponseWriter, r *http.Request) {
 	resultsDir := "./Results"
 	target := "Results.zip"
 
+	// Bring every offered report up to date first. Reports are generated on demand, so
+	// without this the archive could contain artifacts built from an earlier selection —
+	// and unlike a single download, nothing about a ZIP tells the recipient that.
+	// Results/customized is inside the tree, so both variants are picked up.
+	//
+	// A generation failure is logged rather than fatal: the archive still carries the
+	// per-repository results, which are what a user most needs from it.
+	regenerateMu.Lock()
+	for _, v := range variantsToBuild() {
+		if err := ensureReports(v); err != nil {
+			fmt.Println("⚠️  report generation failed while building the archive:", err)
+		}
+	}
+	regenerateMu.Unlock()
+
 	err := ZipDirectory(resultsDir, target)
 	if err != nil {
 		http.Error(w, "Error creating zip file", http.StatusInternalServerError)
@@ -951,22 +969,44 @@ func applyLanguagePercentages(languages []LanguageData, totalExcludingJSON int) 
 func loadApplicationData() (PageData, error) {
 	var pageData PageData
 
-	inputFileData, err := os.ReadFile(codeLinesLanguageFile)
+	// The persisted selection, applied to everything below.
+	deselectedSet := utils.LoadDeselectionSet(resultsBaseDir)
+
+	// Language totals are computed here from the per-repository result files rather than
+	// read from the generated code_lines_by_language.json. Reports are written on demand,
+	// so that file is not necessarily current — reading it could show a language chart
+	// describing a different repository set than this page's own table.
+	//
+	// Locals, not the package vars: publish is the only writer of those, so a failed load
+	// cannot leave the served view half-updated.
+	totals, _, err := utils.CollectResultTotals(resultsBaseDir, deselectedSet)
 	if err != nil {
-		return pageData, fmt.Errorf("error reading code_lines_by_language.json file: %v", err)
+		return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
+	}
+	rawLanguages := make([]LanguageData, 0, len(totals))
+	for language, codeLines := range totals {
+		rawLanguages = append(rawLanguages, LanguageData{Language: language, CodeLines: codeLines})
+	}
+	// Sorted so the page is stable across reloads (Go map order is randomized).
+	sort.Slice(rawLanguages, func(i, j int) bool {
+		if rawLanguages[i].CodeLines != rawLanguages[j].CodeLines {
+			return rawLanguages[i].CodeLines > rawLanguages[j].CodeLines
+		}
+		return rawLanguages[i].Language < rawLanguages[j].Language
+	})
+
+	// Fall back to the aggregate file when the per-repository files yield nothing — an
+	// older or partial result set may have only the aggregate. The fallback is skipped
+	// when a selection is active, because that file describes a repository set the
+	// selection has not been applied to and would contradict the table.
+	if len(rawLanguages) == 0 && len(deselectedSet) == 0 {
+		if aggregate, readErr := os.ReadFile(codeLinesLanguageFile); readErr == nil {
+			if json.Unmarshal(aggregate, &rawLanguages) != nil {
+				rawLanguages = nil
+			}
+		}
 	}
 
-	// Locals, not the package vars: publish is the only writer of those, so a failed
-	// load cannot leave the served view half-updated.
-	var rawLanguages []LanguageData
-	err = json.Unmarshal(inputFileData, &rawLanguages)
-	if err != nil {
-		return pageData, fmt.Errorf("error decoding JSON code_lines_by_language.json file: %v", err)
-	}
-
-	// code_lines_by_language.json is regenerated with the deselected repositories
-	// left out (see regenerateReports), so the breakdown and chart already describe
-	// the same repository set as the table below.
 	languages := buildLanguageSummary(rawLanguages)
 
 	data0, err := os.ReadFile(globalReportFile)
@@ -989,7 +1029,7 @@ func loadApplicationData() (PageData, error) {
 
 	// Split off the repositories the user removed from the totals. With no
 	// deselection this returns everything in Repositories and nothing in deselected.
-	repositoryData, deselected := partitionDeselected(repositoryData, utils.LoadDeselectionSet(resultsBaseDir))
+	repositoryData, deselected := partitionDeselected(repositoryData, deselectedSet)
 
 	// GlobalReport.json holds the figures as scanned and is never rewritten, so the
 	// headline numbers are re-derived here for the deselected set.
@@ -1024,6 +1064,7 @@ func loadApplicationData() (PageData, error) {
 		Deselected:          deselected,
 		DeselectedKeys:      deselectedKeys,
 		DeselectedCount:     len(deselected),
+		ScannedRepositories: len(repositoryData) + len(deselected),
 		DeselectedCodeLines: utils.FormatCodeLines(float64(deselectedCodeLines)),
 		RawTotalLinesOfCode: rawTotalLOC,
 	}
@@ -1109,10 +1150,177 @@ func buildScanSummaryView(summary *utils.ScanSummary, skippedCount, deselectedCo
 	}
 }
 
-// regenerateMu serializes deselection changes. Regenerating overwrites shared report
+// regenerateMu serializes report generation. Generating overwrites shared report
 // files, so two concurrent requests could interleave writes and leave the PDF, the
 // CSV and the page describing different repository sets.
-var regenerateMu sync.Mutex
+//
+// selectionMu separately serializes changes to the persisted selection. They are two
+// locks because a download that has to generate a report should not block on someone
+// changing the selection, nor the reverse.
+var (
+	regenerateMu sync.Mutex
+	selectionMu  sync.Mutex
+)
+
+// customizedReportsDir holds the reports that reflect the user's current selection.
+// They live in their own directory rather than beside the originals with a suffix, so
+// that browsing or zipping Results/ cannot mix the two sets up.
+const customizedReportsDir = "Results/customized"
+
+// reportVariant is one of the two report sets that can be served.
+type reportVariant struct {
+	// name identifies the variant in the state file.
+	name string
+	// customized reports whether the persisted selection applies. The full-scan variant
+	// ignores it, which is what keeps the original always available.
+	customized bool
+	// dir is the base directory this variant's artifacts are written under.
+	dir string
+}
+
+var (
+	fullScanVariant   = reportVariant{name: "full-scan", customized: false, dir: resultsBaseDir}
+	customizedVariant = reportVariant{name: "customized", customized: true, dir: customizedReportsDir}
+)
+
+// globalPDFPath and summary paths for a variant.
+func (v reportVariant) globalPDFPath() string { return filepath.Join(v.dir, "GlobalReport.pdf") }
+func (v reportVariant) languageTotalsPath() string {
+	return filepath.Join(v.dir, "code_lines_by_language.json")
+}
+func (v reportVariant) summaryPDFPath() string {
+	return filepath.Join(v.dir, "byfile-report", "pdf-report", "repository_summary.pdf")
+}
+func (v reportVariant) summaryCSVPath() string {
+	return filepath.Join(v.dir, "byfile-report", "csv-report", "repository_summary.csv")
+}
+
+// reportsState records which selection each variant's artifacts were built from, so a
+// download can tell whether they are current without regenerating every time.
+type reportsState struct {
+	// Stamps maps a variant name to the stamp its artifacts were built from.
+	Stamps map[string]string `json:"Stamps"`
+}
+
+func reportsStatePath() string {
+	return filepath.Join(configResultsDir, "reports_state.json")
+}
+
+// reportStamp fingerprints everything that would change a variant's content: the
+// selection it covers, and the identity of the scan itself. GlobalReport.json is
+// rewritten by every analysis run, so its modification time changes when a new scan
+// lands and invalidates artifacts built from the previous one.
+func reportStamp(v reportVariant, deselected []utils.DeselectedRepo) string {
+	keys := make([]string, 0, len(deselected))
+	if v.customized {
+		for _, repo := range deselected {
+			keys = append(keys, repo.Key)
+		}
+		sort.Strings(keys)
+	}
+
+	scanID := "unknown"
+	if info, err := os.Stat(globalReportFile); err == nil {
+		scanID = fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
+	}
+
+	sum := sha256.Sum256([]byte(v.name + "\x00" + scanID + "\x00" + strings.Join(keys, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+func loadReportsState() reportsState {
+	state := reportsState{Stamps: map[string]string{}}
+	data, err := os.ReadFile(reportsStatePath())
+	if err != nil {
+		return state
+	}
+	if err := json.Unmarshal(data, &state); err != nil || state.Stamps == nil {
+		return reportsState{Stamps: map[string]string{}}
+	}
+	return state
+}
+
+func saveReportsState(state reportsState) error {
+	if err := os.MkdirAll(configResultsDir, 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(reportsStatePath(), data, 0644)
+}
+
+// ensureReports generates a variant's artifacts if they are missing or were built from a
+// different selection, and does nothing when they are already current.
+//
+// Callers must hold regenerateMu: the check and the generation have to be atomic, or two
+// concurrent downloads both see "stale" and write over each other.
+func ensureReports(v reportVariant) error {
+	deselected := utils.LoadDeselectedRepos(resultsBaseDir)
+	if v.customized && len(deselected) == 0 {
+		// Nothing is deselected, so the customized variant would duplicate the full
+		// scan. Callers should not offer it; treat a request for it as the full scan.
+		v = fullScanVariant
+	}
+
+	want := reportStamp(v, deselected)
+	state := loadReportsState()
+
+	// A stamp match is only trustworthy if the files are actually still there.
+	if state.Stamps[v.name] == want && filesExist(
+		v.globalPDFPath(), v.summaryPDFPath(), v.summaryCSVPath(),
+	) {
+		return nil
+	}
+
+	if err := generateReports(v, deselected); err != nil {
+		return err
+	}
+
+	state.Stamps[v.name] = want
+	if err := saveReportsState(state); err != nil {
+		// The reports are on disk and correct; only the freshness record failed, which
+		// costs a needless regeneration next time rather than a wrong report.
+		fmt.Println("⚠️  could not record report freshness:", err)
+	}
+	return nil
+}
+
+func filesExist(paths ...string) bool {
+	for _, path := range paths {
+		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// generateReports writes one variant's artifacts. The full-scan variant passes an empty
+// selection, which is what makes the original always reproducible: the per-repository
+// result files are never modified, so it can be rebuilt at any time.
+func generateReports(v reportVariant, deselected []utils.DeselectedRepo) error {
+	applied := deselected
+	if !v.customized {
+		applied = nil
+	}
+
+	if err := utils.CreateGlobalReportWith(resultsBaseDir, utils.GlobalReportOptions{
+		Deselected:         applied,
+		PDFPath:            v.globalPDFPath(),
+		LanguageTotalsPath: v.languageTotalsPath(),
+	}); err != nil {
+		return fmt.Errorf("cannot generate global report: %w", err)
+	}
+
+	if err := utils.GenerateRepositorySummaryReportsWith(resultsBaseDir, utils.SummaryReportOptions{
+		Deselected: utils.DeselectionKeys(applied),
+		OutputDir:  v.dir,
+	}); err != nil {
+		return fmt.Errorf("cannot generate repository summary reports: %w", err)
+	}
+	return nil
+}
 
 // DeselectionRequest is the payload of POST /api/deselected: the keys of the
 // repositories to leave out of every total. An empty list restores the full scan.
@@ -1153,14 +1361,24 @@ func handleDeselected(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		regenerateMu.Lock()
-		defer regenerateMu.Unlock()
+		selectionMu.Lock()
+		defer selectionMu.Unlock()
 
 		resp, err := applyDeselection(req.Keys)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// Reports are rebuilt in the background rather than before responding. A download
+		// generates on demand anyway (see handleReport), so this exists only so that
+		// anyone reading Results/ directly — a script, a CI job, someone opening the
+		// folder — finds current files without having clicked a link first.
+		//
+		// Spawned here rather than inside applyDeselection so that the apply logic stays
+		// synchronous and testable.
+		go rebuildReportsInBackground()
+
 		w.Header().Set(contentTypeHeader, applicationJSONType)
 		json.NewEncoder(w).Encode(resp)
 
@@ -1218,10 +1436,8 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 		return nil, fmt.Errorf("cannot save selection: %w", err)
 	}
 
-	if err := regenerateReports(); err != nil {
-		return nil, err
-	}
-
+	// The page is rebuilt from the result files in memory, so it is correct as soon as
+	// the selection is saved — no PDF work is needed to answer this request.
 	pd, err := loadApplicationData()
 	if err != nil {
 		return nil, fmt.Errorf("cannot reload results: %w", err)
@@ -1237,21 +1453,96 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 	}, nil
 }
 
-// regenerateReports rebuilds every derived artifact from the per-repository result
-// files and the persisted selection: the language totals, the global PDF, and the
-// repository summary CSV/JSON/PDF.
+// requestedReport maps a URL name to the artifact it serves and the download file name
+// offered for it.
+type requestedReport struct {
+	variant  reportVariant
+	path     func(reportVariant) string
+	filename string
+}
+
+// reportRoutes is the set of downloadable reports. The full-scan entries keep their
+// original URLs so existing links and bookmarks still work, and they always describe
+// the whole scan regardless of any selection.
 //
-// Nothing is lost by doing this. The per-repository result files are never modified
-// and GlobalReport.json keeps the figures as scanned, so clearing the selection and
-// regenerating restores the original reports exactly.
-func regenerateReports() error {
-	if err := utils.CreateGlobalReport(resultsBaseDir); err != nil {
-		return fmt.Errorf("cannot regenerate global report: %w", err)
+// Download file names are explicit and self-describing because these files get detached
+// from the dashboard and emailed: two PDFs called GlobalReport.pdf that disagree about
+// the total would be genuinely dangerous.
+var reportRoutes = map[string]requestedReport{
+	"global-report.pdf": {fullScanVariant, reportVariant.globalPDFPath, "GlobalReport_full-scan.pdf"},
+	"repository-summary.pdf": {fullScanVariant, reportVariant.summaryPDFPath,
+		"RepositorySummary_full-scan.pdf"},
+	"repository-summary.csv": {fullScanVariant, reportVariant.summaryCSVPath,
+		"RepositorySummary_full-scan.csv"},
+
+	"global-report-customized.pdf": {customizedVariant, reportVariant.globalPDFPath,
+		"GlobalReport_selection.pdf"},
+	"repository-summary-customized.pdf": {customizedVariant, reportVariant.summaryPDFPath,
+		"RepositorySummary_selection.pdf"},
+	"repository-summary-customized.csv": {customizedVariant, reportVariant.summaryCSVPath,
+		"RepositorySummary_selection.csv"},
+}
+
+// handleReport serves a report, generating it first if it is missing or was built from a
+// different selection. Generating on access rather than when the selection changes means
+// the user never waits for PDF work they might not need, and a report is never served
+// stale.
+func handleReport(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/reports/")
+	route, ok := reportRoutes[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
 	}
-	if err := utils.GenerateRepositorySummaryReports(resultsBaseDir); err != nil {
-		return fmt.Errorf("cannot regenerate repository summary reports: %w", err)
+
+	variant := route.variant
+	filename := route.filename
+	if variant.customized && len(utils.LoadDeselectedRepos(resultsBaseDir)) == 0 {
+		// Nothing is deselected, so there is no distinct customized report to serve.
+		// Fall back to the full scan rather than 404 on a link left over from a
+		// selection that has since been reset.
+		variant = fullScanVariant
+		filename = reportRoutes[strings.Replace(name, "-customized", "", 1)].filename
 	}
-	return nil
+
+	regenerateMu.Lock()
+	err := ensureReports(variant)
+	regenerateMu.Unlock()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Could not generate the report: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	filePath := route.path(variant)
+	if _, statErr := os.Stat(filePath); statErr != nil {
+		http.Error(w, "Report not available", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	http.ServeFile(w, r, filePath)
+}
+
+// rebuildReportsInBackground brings every offered report up to date without blocking a
+// request. Failures are logged, not surfaced: the next download regenerates on demand and
+// reports the error to whoever is actually waiting for the file.
+func rebuildReportsInBackground() {
+	regenerateMu.Lock()
+	defer regenerateMu.Unlock()
+	for _, v := range variantsToBuild() {
+		if err := ensureReports(v); err != nil {
+			fmt.Println("⚠️  background report generation failed:", err)
+		}
+	}
+}
+
+// variantsToBuild returns the report variants worth having on disk right now: the full
+// scan always, plus the customized set only when a selection actually exists.
+func variantsToBuild() []reportVariant {
+	if len(utils.LoadDeselectedRepos(resultsBaseDir)) == 0 {
+		return []reportVariant{fullScanVariant}
+	}
+	return []reportVariant{fullScanVariant, customizedVariant}
 }
 
 // setupHTTPHandlers configures all HTTP route handlers. pageData seeds the view;
@@ -1283,26 +1574,7 @@ func setupHTTPHandlers(pageData PageData) {
 		http.Error(w, "❌ Method not allowed", http.StatusMethodNotAllowed)
 	})
 
-	http.HandleFunc("/reports/", func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(r.URL.Path, "/reports/")
-		var filePath string
-		switch name {
-		case "global-report.pdf":
-			filePath = "Results/GlobalReport.pdf"
-		case "repository-summary.pdf":
-			filePath = "Results/byfile-report/pdf-report/repository_summary.pdf"
-		case "repository-summary.csv":
-			filePath = "Results/byfile-report/csv-report/repository_summary.csv"
-		default:
-			http.NotFound(w, r)
-			return
-		}
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			http.Error(w, "Report not yet available", http.StatusNotFound)
-			return
-		}
-		http.ServeFile(w, r, filePath)
-	})
+	http.HandleFunc("/reports/", handleReport)
 
 	// API Endpoint for Language Data
 	http.HandleFunc("/api/languages", func(w http.ResponseWriter, r *http.Request) {
@@ -1431,15 +1703,11 @@ func handlePortConflict(port int) {
 func main() {
 	utils.ChdirToBinaryDir()
 
-	// A selection carried over from an earlier session applies to reports on disk
-	// that may predate it — for instance the analysis was re-run, rewriting them
-	// unfiltered. Regenerating once here means the page and the downloadable reports
-	// always start out describing the same repository set.
+	// No report generation at startup: reports are built when they are first requested,
+	// and a stale one cannot be served because the freshness stamp covers both the
+	// selection and the scan identity.
 	if deselected := utils.LoadDeselectedRepos(resultsBaseDir); len(deselected) > 0 {
-		fmt.Printf("ℹ️  %d repositories are deselected — regenerating reports\n", len(deselected))
-		if err := regenerateReports(); err != nil {
-			fmt.Println("⚠️ ", err)
-		}
+		fmt.Printf("ℹ️  %d repositories are deselected — totals exclude them\n", len(deselected))
 	}
 
 	pageData, err := loadApplicationData()
@@ -1642,9 +1910,21 @@ const htmlTemplate = `
                   <i class="fas fa-file-pdf me-1"></i>Reports
                 </a>
                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="reportsDropdown">
-                  <li><a class="dropdown-item" href="/reports/global-report.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF</a></li>
-                  <li><a class="dropdown-item" href="/reports/repository-summary.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF</a></li>
-                  <li><a class="dropdown-item" href="/reports/repository-summary.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV</a></li>
+                  {{/* Reports are generated when first requested, so a link may take a
+                       moment on its first click — the JS below shows a spinner. The
+                       full-scan entries always cover every analysed repository, whatever
+                       is currently selected. */}}
+                  {{if .DeselectedCount}}<li><h6 class="dropdown-header">Full scan &mdash; all {{.ScannedRepositories}} repositories</h6></li>{{end}}
+                  <li><a class="dropdown-item report-link" href="/reports/global-report.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF</a></li>
+                  <li><a class="dropdown-item report-link" href="/reports/repository-summary.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF</a></li>
+                  <li><a class="dropdown-item report-link" href="/reports/repository-summary.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV</a></li>
+                  {{if .DeselectedCount}}
+                  <li><hr class="dropdown-divider"></li>
+                  <li><h6 class="dropdown-header">Current selection &mdash; {{.DeselectedCount}} excluded</h6></li>
+                  <li><a class="dropdown-item report-link" href="/reports/global-report-customized.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
+                  <li><a class="dropdown-item report-link" href="/reports/repository-summary-customized.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
+                  <li><a class="dropdown-item report-link" href="/reports/repository-summary-customized.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
+                  {{end}}
                   <li><hr class="dropdown-divider"></li>
                   <li><a class="dropdown-item" href="/download"><i class="fas fa-file-archive me-2"></i>Download All ZIP</a></li>
                 </ul>
@@ -1740,7 +2020,7 @@ const htmlTemplate = `
                     <div class="ms-auto d-flex flex-wrap gap-2">
                       <button type="button" id="btnSelectAll" class="btn btn-sm btn-outline-secondary">Select all</button>
                       <button type="button" id="btnApplySelection" class="btn btn-sm btn-primary" disabled>
-                        <i class="fas fa-sync-alt"></i> Apply &amp; rebuild reports
+                        <i class="fas fa-check"></i> Apply selection
                       </button>
                       <button type="button" id="btnResetSelection" class="btn btn-sm btn-outline-danger"{{if not .DeselectedCount}} disabled{{end}}>
                         Reset to full scan
@@ -2156,7 +2436,7 @@ const htmlTemplate = `
             const reset = document.getElementById('btnResetSelection');
             apply.disabled = true;
             reset.disabled = true;
-            showSelectionStatus('<i class="fas fa-spinner fa-spin"></i> Rebuilding reports…', 'info');
+            showSelectionStatus('<i class="fas fa-spinner fa-spin"></i> Applying selection…', 'info');
 
             try {
                 const res = await fetch('/api/deselected', {
@@ -2205,6 +2485,45 @@ const htmlTemplate = `
         });
 
         refreshSelectionUI();
+
+        // ─── Report downloads ────────────────────────────────────────────────
+        // Reports are generated when first requested, which can take a moment on a large
+        // org. A plain download link would just appear to do nothing, so the click is
+        // intercepted to show progress and the file is handed to the browser afterwards.
+        document.querySelectorAll('.report-link').forEach(link => {
+            link.addEventListener('click', async function(event) {
+                event.preventDefault();
+                if (link.dataset.busy === '1') return;
+
+                const original = link.innerHTML;
+                link.dataset.busy = '1';
+                link.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Preparing…';
+
+                try {
+                    const res = await fetch(link.href);
+                    if (!res.ok) throw new Error((await res.text()) || res.statusText);
+
+                    // Honour the file name the server chose, so a customized report is
+                    // never saved under a name suggesting it covers the whole scan.
+                    const disposition = res.headers.get('Content-Disposition') || '';
+                    const match = /filename="?([^"]+)"?/.exec(disposition);
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = match ? match[1] : 'report';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                } catch (err) {
+                    showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> Could not prepare the report: ' + err, 'danger');
+                } finally {
+                    link.innerHTML = original;
+                    delete link.dataset.busy;
+                }
+            });
+        });
 
         // Repository table sorting functionality
         let currentSort = { column: 'codelines', direction: 'desc' };

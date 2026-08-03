@@ -145,26 +145,40 @@ The same data is available as exportable files in the `Results/` folder next to 
 Some repositories should not count towards a sizing exercise — a repository that was
 archived after the scan, a mirror, a vendored dependency dump. On the Results
 dashboard, the **Lines of Code by Repository** table has a checkbox per repository.
-Uncheck the ones to leave out and click **Apply & rebuild reports**.
+Uncheck the ones to leave out and click **Apply selection** — the totals, language
+breakdown, and chart update immediately.
 
 This works on every platform (GitHub, GitHub Enterprise, GitLab, Bitbucket
 Cloud/Data Center, Azure DevOps, and local directories), because it operates on the
 analysis results rather than on any platform API. **No re-scan is needed** — the
-repositories were already counted, and only the totals are rebuilt.
+repositories were already counted, and only the totals are recomputed.
 
-Applying a selection updates, in one pass:
+#### Original and customized reports
 
-- the dashboard totals, language breakdown, and pie chart;
-- `GlobalReport.pdf` and `code_lines_by_language.json`;
-- `byfile-report/repository_summary.{pdf,csv,json}`.
+Once a selection exists, the **Reports** menu offers two sets:
 
-Both PDFs and the CSV state what was excluded and what the unfiltered total was, so a
-filtered report can be handed to a customer without misleading them. The dashboard
-shows the same note above the table.
+| | Covers | Files |
+|---|---|---|
+| **Full scan** | every analysed repository, whatever is selected | `Results/GlobalReport.pdf`, `Results/byfile-report/repository_summary.*` |
+| **Current selection** | only the selected repositories | `Results/customized/…` (same layout) |
+
+The original is never overwritten, so it is always available for comparison. Downloads
+are named `..._full-scan.pdf` and `..._selection.pdf` so the two cannot be confused
+once detached from the dashboard.
+
+Reports are generated **when you click them**, not when you change the selection, so
+applying a selection is instant and no PDF is ever served stale. The first click after
+a change takes a moment while the report is built. (GoLC also rebuilds them in the
+background after a change, so anything reading `Results/` directly — a script, a CI
+job — finds current files too.)
+
+Both PDFs and the CSV state what was excluded and what the unfiltered total was, and
+the customized report's headline figures are explicitly labelled *(filtered)*, so a
+filtered report can be handed to a customer without misleading them.
 
 **It is always reversible.** The per-repository result files are never modified and
-`GlobalReport.json` keeps the figures as scanned, so **Reset to full scan** rebuilds
-the original reports exactly. The selection is stored in
+`GlobalReport.json` keeps the figures as scanned, so **Reset to full scan** restores
+the original figures exactly. The selection is stored in
 `Results/config/deselected_repos.json` and survives a dashboard restart. At least one
 repository must remain selected.
 
