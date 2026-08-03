@@ -10,6 +10,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -1349,6 +1350,12 @@ type DeselectionRequest struct {
 	Keys []string `json:"Keys"`
 }
 
+// errAllDeselected rejects a request that would leave nothing counted. It is a distinct
+// error so the handler can answer 422 rather than 500: the request is well-formed and the
+// server is fine, the instruction just cannot be carried out. A 500 would tell a
+// programmatic caller to retry something that will never succeed.
+var errAllDeselected = errors.New("cannot deselect every repository — at least one must remain counted")
+
 // DeselectionResponse reports the state after the change so the caller does not have
 // to re-fetch it.
 type DeselectionResponse struct {
@@ -1386,6 +1393,10 @@ func handleDeselected(w http.ResponseWriter, r *http.Request) {
 		defer selectionMu.Unlock()
 
 		resp, err := applyDeselection(req.Keys)
+		if errors.Is(err, errAllDeselected) {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1450,7 +1461,7 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 	// that looks like a failed scan, and there is no way back from the page once the
 	// table it is driven from is empty.
 	if len(all) > 0 && len(records) == len(all) {
-		return nil, fmt.Errorf("cannot deselect every repository — at least one must remain counted")
+		return nil, errAllDeselected
 	}
 
 	if err := utils.SaveDeselectedRepos(resultsBaseDir, records); err != nil {

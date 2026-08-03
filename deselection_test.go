@@ -318,8 +318,14 @@ func TestHandleDeselectedRejectsBadInput(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/deselected", bytes.NewReader(body))
 		rec := httptest.NewRecorder()
 		handleDeselected(rec, req)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+		// 422, not 500: the request is well-formed and the server is healthy — the
+		// instruction is just one that can never be carried out, so a caller must not be
+		// told to retry it.
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+		}
+		if !strings.Contains(rec.Body.String(), "at least one must remain counted") {
+			t.Errorf("response should explain the constraint, got %q", rec.Body.String())
 		}
 	})
 }
