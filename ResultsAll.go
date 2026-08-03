@@ -916,10 +916,8 @@ func zipResults(w http.ResponseWriter, r *http.Request) {
 	// A generation failure is logged rather than fatal: the archive still carries the
 	// per-repository results, which are what a user most needs from it.
 	regenerateMu.Lock()
-	for _, v := range variantsToBuild() {
-		if err := ensureReports(v); err != nil {
-			fmt.Println("⚠️  report generation failed while building the archive:", err)
-		}
+	if err := syncReportVariantsLocked(); err != nil {
+		fmt.Println("⚠️  report generation failed while building the archive:", err)
 	}
 	regenerateMu.Unlock()
 
@@ -1166,13 +1164,20 @@ func buildScanSummaryView(summary *utils.ScanSummary, skippedCount, deselectedCo
 	}
 }
 
-// regenerateMu serializes report generation. Generating overwrites shared report
-// files, so two concurrent requests could interleave writes and leave the PDF, the
-// CSV and the page describing different repository sets.
+// regenerateMu serializes every read, write and removal of the generated report files.
+// Generating overwrites shared files, so two concurrent requests could interleave writes
+// and leave the PDF, the CSV and the page describing different repository sets.
+//
+// It also owns the existence of the customized report directory: creating and deleting it
+// must both hold this lock, or a reset can remove the directory while an in-flight
+// rebuild is still writing it and the generator simply re-creates it afterwards.
 //
 // selectionMu separately serializes changes to the persisted selection. They are two
 // locks because a download that has to generate a report should not block on someone
 // changing the selection, nor the reverse.
+//
+// Lock order is selectionMu then regenerateMu — applyDeselection takes both. Nothing
+// acquires them the other way round; keep it that way.
 var (
 	regenerateMu sync.Mutex
 	selectionMu  sync.Mutex
@@ -1457,8 +1462,15 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 	// whole tree — so leaving them behind means a reset user can still hand over an
 	// understated report believing it is current. Delete them rather than rely on the
 	// download links no longer being offered.
+	//
+	// Under regenerateMu, because a rebuild spawned by an earlier request may still be
+	// writing that directory: removing it without the lock lets the generator re-create
+	// it immediately afterwards, restoring the very files this is deleting.
 	if len(records) == 0 {
-		if err := utils.ClearCustomizedReports(resultsBaseDir); err != nil {
+		regenerateMu.Lock()
+		err := utils.ClearCustomizedReports(resultsBaseDir)
+		regenerateMu.Unlock()
+		if err != nil {
 			return nil, fmt.Errorf("cannot remove stale customized reports: %w", err)
 		}
 	}
@@ -1556,11 +1568,41 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 func rebuildReportsInBackground() {
 	regenerateMu.Lock()
 	defer regenerateMu.Unlock()
-	for _, v := range variantsToBuild() {
-		if err := ensureReports(v); err != nil {
-			fmt.Println("⚠️  background report generation failed:", err)
+	if err := syncReportVariantsLocked(); err != nil {
+		fmt.Println("⚠️  background report generation failed:", err)
+	}
+}
+
+// syncReportVariantsLocked makes the report files on disk match the current selection:
+// the variants that should exist are generated, and the customized directory is removed
+// when no selection applies to it.
+//
+// The removal is repeated here rather than trusted to have happened at reset time so the
+// state converges from any starting point — a crash between saving an empty selection and
+// deleting the directory would otherwise leave understated reports in the tree for good.
+//
+// Callers must hold regenerateMu.
+func syncReportVariantsLocked() error {
+	variants := variantsToBuild()
+
+	customizedApplies := false
+	for _, v := range variants {
+		if v.customized {
+			customizedApplies = true
 		}
 	}
+	if !customizedApplies {
+		if err := utils.ClearCustomizedReports(resultsBaseDir); err != nil {
+			return fmt.Errorf("cannot remove stale customized reports: %w", err)
+		}
+	}
+
+	for _, v := range variants {
+		if err := ensureReports(v); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // variantsToBuild returns the report variants worth having on disk right now: the full

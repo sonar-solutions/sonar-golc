@@ -9,6 +9,16 @@ import (
 	"testing"
 )
 
+// Shared fixture identities for this package's tests, named rather than repeated as
+// literals across every case.
+const (
+	testBranchMain = "main"
+	testOrgAcme    = "acme"
+	testRepoKeep   = "keep"
+	testRepoDrop   = "drop"
+	testLangJava   = "Java"
+)
+
 func TestDeselectionKeyRoundTripsThroughResultFileName(t *testing.T) {
 	// The key must be recoverable from the result file name, because the walk that
 	// builds the global report has only the file name to go on while the summary
@@ -21,10 +31,10 @@ func TestDeselectionKeyRoundTripsThroughResultFileName(t *testing.T) {
 		branch         string
 		resultFileName string
 	}{
-		{"plain", "my-org", "api-service", "main", "Result_my-org__api-service__main.json"},
+		{"plain", "my-org", "api-service", testBranchMain, "Result_my-org__api-service__main.json"},
 		{"underscores everywhere", "my_group", "my_repo", "feat_x", "Result_my_group__my_repo__feat_x.json"},
-		{"empty org", "", "repo", "main", "Result___repo__main.json"},
-		{"byfile variant", "org", "repo", "main", "Result_org__repo__main_byfile.json"},
+		{"empty org", "", "repo", testBranchMain, "Result___repo__main.json"},
+		{"byfile variant", "org", "repo", testBranchMain, "Result_org__repo__main_byfile.json"},
 	}
 
 	for _, tc := range cases {
@@ -50,10 +60,10 @@ func TestDeselectionKeyNormalizesPathSeparators(t *testing.T) {
 	//
 	// The key must therefore be separator-free, whatever it is built from.
 	cases := []struct{ org, repo, branch string }{
-		{"group/subgroup", "svc", "main"},
-		{"acme", "svc", "release/1.0"},
-		{"back\\slash", "svc", "main"},
-		{"../escape", "svc", "main"},
+		{"group/subgroup", "svc", testBranchMain},
+		{testOrgAcme, "svc", "release/1.0"},
+		{"back\\slash", "svc", testBranchMain},
+		{"../escape", "svc", testBranchMain},
 	}
 	for _, tc := range cases {
 		key := DeselectionKey(tc.org, tc.repo, tc.branch)
@@ -92,9 +102,9 @@ func TestDeselectionKeyAgreesWithSanitizedFileName(t *testing.T) {
 	// build the key from the raw inventory fields. Both must land on the same key, or
 	// a repository deselected on the page stays counted in the generated reports.
 	cases := []struct{ org, repo, branch string }{
-		{"acme", "svc", "main"},
-		{"group/subgroup", "svc", "main"},
-		{"acme", "svc", "release/1.0"},
+		{testOrgAcme, "svc", testBranchMain},
+		{"group/subgroup", "svc", testBranchMain},
+		{testOrgAcme, "svc", "release/1.0"},
 		{"my_group", "my_repo", "feat_x"},
 	}
 	for _, tc := range cases {
@@ -172,7 +182,7 @@ func TestSaveLoadAndClearDeselectedRepos(t *testing.T) {
 	}
 
 	repos := []DeselectedRepo{
-		{Key: DeselectionKey("org", "dead-repo", "main"), Org: "org", Repo: "dead-repo", Branch: "main"},
+		{Key: DeselectionKey("org", "dead-repo", testBranchMain), Org: "org", Repo: "dead-repo", Branch: testBranchMain},
 		{Key: DeselectionKey("org", "vendored", "master"), Org: "org", Repo: "vendored", Branch: "master"},
 	}
 	if err := SaveDeselectedRepos(base, repos); err != nil {
@@ -277,12 +287,12 @@ func TestPartitionDeselectedEmptySetKeepsEverything(t *testing.T) {
 
 func TestDeselectedRecords(t *testing.T) {
 	records := DeselectedRecords([]RepositoryData{
-		{Key: "org__a__main", Repository: "a", Org: "org", Branch: "main"},
+		{Key: "org__a__main", Repository: "a", Org: "org", Branch: testBranchMain},
 	})
 	if len(records) != 1 {
 		t.Fatalf("got %d records, want 1", len(records))
 	}
-	want := DeselectedRepo{Key: "org__a__main", Org: "org", Repo: "a", Branch: "main"}
+	want := DeselectedRepo{Key: "org__a__main", Org: "org", Repo: "a", Branch: testBranchMain}
 	if records[0] != want {
 		t.Errorf("got %+v, want %+v", records[0], want)
 	}
@@ -312,7 +322,7 @@ func TestAdjustGlobalInfoRecomputesWhenDeselected(t *testing.T) {
 	}
 	languages := []LanguageData{
 		{Language: "Go", CodeLines: 900},
-		{Language: "Java", CodeLines: 100},
+		{Language: testLangJava, CodeLines: 100},
 		{Language: LanguageExcludedFromTotalLOC, CodeLines: 5000}, // held out of the total
 	}
 	repoTotals := []RepoTotal{
@@ -343,7 +353,7 @@ func TestRankTopLanguagesExcludesHeldOutLanguage(t *testing.T) {
 	got := RankTopLanguages([]LanguageShare{
 		{Language: LanguageExcludedFromTotalLOC, CodeLines: 900_000},
 		{Language: "Go", CodeLines: 300},
-		{Language: "Java", CodeLines: 200},
+		{Language: testLangJava, CodeLines: 200},
 		{Language: "XML", CodeLines: 100},
 		{Language: "Shell", CodeLines: 50},
 		{Language: "  ", CodeLines: 999}, // blank name, ignored
@@ -353,7 +363,7 @@ func TestRankTopLanguagesExcludesHeldOutLanguage(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d languages, want 3", len(got))
 	}
-	want := []string{"Go", "Java", "XML"}
+	want := []string{"Go", testLangJava, "XML"}
 	for i, w := range want {
 		if got[i].Language != w {
 			t.Errorf("position %d = %q, want %q", i, got[i].Language, w)

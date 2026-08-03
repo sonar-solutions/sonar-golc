@@ -52,9 +52,28 @@ func pdfText(t *testing.T, path string) string {
 	return strings.NewReplacer(`\(`, "(", `\)`, ")", `\\`, `\`).Replace(text.String())
 }
 
+// Fixture identities and report names, named rather than repeated as literals so a
+// rename is one edit and a typo is a compile error.
+const (
+	orgAcme    = "acme"
+	repoKeep   = "keep"
+	repoDrop   = "drop"
+	branchMain = "main"
+
+	reportGlobal           = "global-report.pdf"
+	reportGlobalCustomized = "global-report-customized.pdf"
+	reportSummaryPDF       = "repository-summary.pdf"
+	reportSummaryCSV       = "repository-summary.csv"
+
+	msgApplyDeselection = "applyDeselection: %v"
+)
+
+// keyDrop is the deselection key the page submits for the fixture's smaller repository.
+var keyDrop = utils.DeselectionKey(orgAcme, repoDrop, branchMain)
+
 // The fixture's arithmetic, named so assertions read as intent rather than magic
-// strings: "keep" contributes 1000 code lines and "drop" 250, so the full scan totals
-// 1250 and deselecting "drop" leaves 1000.
+// strings: repoKeep contributes 1000 code lines and repoDrop 250, so the full scan totals
+// 1250 and deselecting repoDrop leaves 1000.
 var (
 	rawTotalLOC      = utils.FormatCodeLines(1250)
 	filteredTotalLOC = utils.FormatCodeLines(1000)
@@ -100,8 +119,8 @@ func setupResultsFixture(t *testing.T) {
 	writeJSON("Results/config/analysis_result_github.json", map[string]any{
 		"NumRepositories": 2,
 		"ProjectBranches": []map[string]any{
-			{"Org": "acme", "RepoSlug": "keep", "MainBranch": "main"},
-			{"Org": "acme", "RepoSlug": "drop", "MainBranch": "main"},
+			{"Org": orgAcme, "RepoSlug": repoKeep, "MainBranch": branchMain},
+			{"Org": orgAcme, "RepoSlug": repoDrop, "MainBranch": branchMain},
 		},
 	})
 
@@ -124,9 +143,9 @@ func setupResultsFixture(t *testing.T) {
 		{"Language": "Java", "CodeLines": 250},
 	})
 	writeJSON("Results/GlobalReport.json", map[string]any{
-		"Organization":           "acme",
+		"Organization":           orgAcme,
 		"TotalLinesOfCode":       "1.25K",
-		"LargestRepository":      "keep",
+		"LargestRepository":      repoKeep,
 		"LinesOfCodeLargestRepo": "1.00K",
 		"DevOpsPlatform":         "github",
 		"NumberRepos":            2,
@@ -136,9 +155,9 @@ func setupResultsFixture(t *testing.T) {
 func TestApplyDeselectionFiltersEveryTotal(t *testing.T) {
 	setupResultsFixture(t)
 
-	resp, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")})
+	resp, err := applyDeselection([]string{keyDrop})
 	if err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+		t.Fatalf(msgApplyDeselection, err)
 	}
 
 	if resp.DeselectedCount != 1 {
@@ -158,10 +177,10 @@ func TestApplyDeselectionFiltersEveryTotal(t *testing.T) {
 
 	// The published view must agree with the response.
 	pd := snapshot()
-	if len(pd.Repositories) != 1 || pd.Repositories[0].Repository != "keep" {
+	if len(pd.Repositories) != 1 || pd.Repositories[0].Repository != repoKeep {
 		t.Errorf("Repositories = %+v, want only keep", pd.Repositories)
 	}
-	if len(pd.Deselected) != 1 || pd.Deselected[0].Repository != "drop" {
+	if len(pd.Deselected) != 1 || pd.Deselected[0].Repository != repoDrop {
 		t.Errorf("Deselected = %+v, want only drop", pd.Deselected)
 	}
 
@@ -185,8 +204,8 @@ func TestApplyDeselectionFiltersEveryTotal(t *testing.T) {
 func TestApplyDeselectionIsReversible(t *testing.T) {
 	setupResultsFixture(t)
 
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
 
 	// Resetting to the full scan must restore the original figures exactly — that is
@@ -222,9 +241,9 @@ func TestApplyDeselectionIgnoresUnknownKeys(t *testing.T) {
 
 	// Keys come from the browser, so anything not matching an analyzed repository
 	// must be dropped rather than persisted as a no-op entry.
-	resp, err := applyDeselection([]string{"not__a__repo", utils.DeselectionKey("acme", "drop", "main")})
+	resp, err := applyDeselection([]string{"not__a__repo", keyDrop})
 	if err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+		t.Fatalf(msgApplyDeselection, err)
 	}
 	if resp.Ignored != 1 {
 		t.Errorf("Ignored = %d, want 1", resp.Ignored)
@@ -242,10 +261,10 @@ func TestApplyDeselectionIgnoresUnknownKeys(t *testing.T) {
 func TestApplyDeselectionDeduplicatesKeys(t *testing.T) {
 	setupResultsFixture(t)
 
-	key := utils.DeselectionKey("acme", "drop", "main")
+	key := keyDrop
 	resp, err := applyDeselection([]string{key, key})
 	if err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+		t.Fatalf(msgApplyDeselection, err)
 	}
 	if resp.DeselectedCount != 1 {
 		t.Errorf("DeselectedCount = %d, want 1", resp.DeselectedCount)
@@ -256,8 +275,8 @@ func TestApplyDeselectionRefusesToDeselectEverything(t *testing.T) {
 	setupResultsFixture(t)
 
 	_, err := applyDeselection([]string{
-		utils.DeselectionKey("acme", "keep", "main"),
-		utils.DeselectionKey("acme", "drop", "main"),
+		utils.DeselectionKey(orgAcme, repoKeep, branchMain),
+		keyDrop,
 	})
 	if err == nil {
 		t.Fatal("expected an error when every repository is deselected")
@@ -293,8 +312,8 @@ func TestHandleDeselectedRejectsBadInput(t *testing.T) {
 
 	t.Run("deselecting everything", func(t *testing.T) {
 		body, _ := json.Marshal(DeselectionRequest{Keys: []string{
-			utils.DeselectionKey("acme", "keep", "main"),
-			utils.DeselectionKey("acme", "drop", "main"),
+			utils.DeselectionKey(orgAcme, repoKeep, branchMain),
+			keyDrop,
 		}})
 		req := httptest.NewRequest(http.MethodPost, "/api/deselected", bytes.NewReader(body))
 		rec := httptest.NewRecorder()
@@ -314,7 +333,7 @@ func TestHandleDeselectedRoundTrip(t *testing.T) {
 	}
 	publish(pd)
 
-	body, _ := json.Marshal(DeselectionRequest{Keys: []string{utils.DeselectionKey("acme", "drop", "main")}})
+	body, _ := json.Marshal(DeselectionRequest{Keys: []string{keyDrop}})
 	rec := httptest.NewRecorder()
 	handleDeselected(rec, httptest.NewRequest(http.MethodPost, "/api/deselected", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
@@ -331,7 +350,7 @@ func TestHandleDeselectedRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("GET body is not valid JSON: %v", err)
 	}
-	if len(got) != 1 || got[0].Repository != "drop" {
+	if len(got) != 1 || got[0].Repository != repoDrop {
 		t.Errorf("GET returned %+v, want one entry for drop", got)
 	}
 }
@@ -352,7 +371,7 @@ func TestReportGeneratedOnFirstRequest(t *testing.T) {
 		t.Fatalf("fixture should start without a global PDF (err=%v)", err)
 	}
 
-	rec := serveReport(t, "global-report.pdf")
+	rec := serveReport(t, reportGlobal)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
@@ -372,7 +391,7 @@ func TestReportGeneratedOnFirstRequest(t *testing.T) {
 func TestReportNotRegeneratedWhenAlreadyCurrent(t *testing.T) {
 	setupResultsFixture(t)
 
-	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobal); rec.Code != http.StatusOK {
 		t.Fatalf("first request failed: %d", rec.Code)
 	}
 	first, err := os.Stat(fullScanVariant.globalPDFPath())
@@ -390,7 +409,7 @@ func TestReportNotRegeneratedWhenAlreadyCurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobal); rec.Code != http.StatusOK {
 		t.Fatalf("second request failed: %d", rec.Code)
 	}
 
@@ -406,18 +425,18 @@ func TestReportNotRegeneratedWhenAlreadyCurrent(t *testing.T) {
 func TestSelectionChangeInvalidatesCachedReport(t *testing.T) {
 	setupResultsFixture(t)
 
-	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobal); rec.Code != http.StatusOK {
 		t.Fatalf("first request failed: %d", rec.Code)
 	}
 
 	// The full-scan report must be rebuilt after a selection change too, because its
 	// freshness stamp is not only about the selection — but its *content* must not
 	// change, since it always covers every repository.
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
 
-	rec := serveReport(t, "global-report.pdf")
+	rec := serveReport(t, reportGlobal)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -433,14 +452,14 @@ func TestSelectionChangeInvalidatesCachedReport(t *testing.T) {
 func TestCustomizedReportIsSeparateFromOriginal(t *testing.T) {
 	setupResultsFixture(t)
 
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
 
-	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobal); rec.Code != http.StatusOK {
 		t.Fatalf("full-scan request failed: %d", rec.Code)
 	}
-	rec := serveReport(t, "global-report-customized.pdf")
+	rec := serveReport(t, reportGlobalCustomized)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("customized request failed: %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -462,7 +481,7 @@ func TestCustomizedReportIsSeparateFromOriginal(t *testing.T) {
 	if !strings.Contains(custom, filteredTotalLOC) {
 		t.Errorf("customized report should show the filtered total %s", filteredTotalLOC)
 	}
-	if !strings.Contains(custom, "Deselected") || !strings.Contains(custom, "drop") {
+	if !strings.Contains(custom, "Deselected") || !strings.Contains(custom, repoDrop) {
 		t.Error("customized report must disclose what was excluded")
 	}
 	// The headline stat card must say the number is filtered, so a reader glancing at
@@ -489,7 +508,7 @@ func TestCustomizedReportFallsBackWhenNothingDeselected(t *testing.T) {
 
 	// A link left over from a selection that has since been reset must still serve
 	// something sensible rather than 404.
-	rec := serveReport(t, "global-report-customized.pdf")
+	rec := serveReport(t, reportGlobalCustomized)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
@@ -501,10 +520,10 @@ func TestCustomizedReportFallsBackWhenNothingDeselected(t *testing.T) {
 func TestResetRemovesStaleCustomizedReports(t *testing.T) {
 	setupResultsFixture(t)
 
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
-	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobalCustomized); rec.Code != http.StatusOK {
 		t.Fatalf("customized request failed: %d", rec.Code)
 	}
 	if _, err := os.Stat(customizedVariant.globalPDFPath()); err != nil {
@@ -526,10 +545,10 @@ func TestResetRemovesStaleCustomizedReports(t *testing.T) {
 func TestZipExcludesStaleCustomizedReportsAfterReset(t *testing.T) {
 	setupResultsFixture(t)
 
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
-	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobalCustomized); rec.Code != http.StatusOK {
 		t.Fatalf("customized request failed: %d", rec.Code)
 	}
 	if _, err := applyDeselection(nil); err != nil {
@@ -553,13 +572,111 @@ func TestZipExcludesStaleCustomizedReportsAfterReset(t *testing.T) {
 	}
 }
 
+func TestResetWaitsForInFlightRebuildBeforePurging(t *testing.T) {
+	setupResultsFixture(t)
+
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+
+	// Stand in for a background rebuild that is mid-write: hold regenerateMu, and only
+	// create the customized artifact while holding it. A reset that removes the directory
+	// without taking the lock would delete it *before* this write lands, leaving the
+	// understated report on disk — which is the race being guarded against.
+	regenerateMu.Lock()
+
+	resetDone := make(chan error, 1)
+	go func() {
+		_, err := applyDeselection(nil)
+		resetDone <- err
+	}()
+
+	// Give the reset a chance to reach the removal. It must block on the lock rather than
+	// proceed; if the guard is missing it will have already deleted the directory here.
+	time.Sleep(150 * time.Millisecond)
+
+	if err := os.MkdirAll(filepath.Dir(customizedVariant.globalPDFPath()), 0755); err != nil {
+		regenerateMu.Unlock()
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(customizedVariant.globalPDFPath(), []byte("stale filtered report"), 0644); err != nil {
+		regenerateMu.Unlock()
+		t.Fatal(err)
+	}
+
+	regenerateMu.Unlock()
+
+	if err := <-resetDone; err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
+
+	// The write happened while the lock was held, so the reset's removal must have run
+	// after it and taken it with it.
+	if _, err := os.Stat(customizedReportsDir); !os.IsNotExist(err) {
+		t.Errorf("reset must remove customized reports written by an in-flight rebuild (err=%v)", err)
+	}
+}
+
+func TestSyncReportVariantsConvergesFromInconsistentState(t *testing.T) {
+	setupResultsFixture(t)
+
+	// A customized directory with no selection to justify it — what a crash between
+	// saving an empty selection and deleting the directory would leave behind.
+	if err := os.MkdirAll(filepath.Dir(customizedVariant.globalPDFPath()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(customizedVariant.globalPDFPath(), []byte("orphaned report"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	regenerateMu.Lock()
+	err := syncReportVariantsLocked()
+	regenerateMu.Unlock()
+	if err != nil {
+		t.Fatalf("syncReportVariantsLocked: %v", err)
+	}
+
+	if _, err := os.Stat(customizedReportsDir); !os.IsNotExist(err) {
+		t.Errorf("an orphaned customized directory should be removed (err=%v)", err)
+	}
+	// ...while the full-scan reports are brought up to date.
+	if info, err := os.Stat(fullScanVariant.globalPDFPath()); err != nil || info.Size() == 0 {
+		t.Errorf("full-scan report should have been generated (err=%v)", err)
+	}
+}
+
+func TestSyncReportVariantsKeepsCustomizedWhenSelectionApplies(t *testing.T) {
+	setupResultsFixture(t)
+
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+
+	regenerateMu.Lock()
+	err := syncReportVariantsLocked()
+	regenerateMu.Unlock()
+	if err != nil {
+		t.Fatalf("syncReportVariantsLocked: %v", err)
+	}
+
+	for _, path := range []string{
+		fullScanVariant.globalPDFPath(),
+		customizedVariant.globalPDFPath(),
+		customizedVariant.summaryCSVPath(),
+	} {
+		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+			t.Errorf("expected non-empty %s (err=%v)", path, err)
+		}
+	}
+}
+
 func TestNewScanClearsCustomizedReports(t *testing.T) {
 	setupResultsFixture(t)
 
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
-	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobalCustomized); rec.Code != http.StatusOK {
 		t.Fatalf("customized request failed: %d", rec.Code)
 	}
 
@@ -576,7 +693,7 @@ func TestNewScanClearsCustomizedReports(t *testing.T) {
 func TestGlobalPDFListsTopRepositories(t *testing.T) {
 	setupResultsFixture(t)
 
-	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobal); rec.Code != http.StatusOK {
 		t.Fatalf("request failed: %d", rec.Code)
 	}
 	text := pdfText(t, fullScanVariant.globalPDFPath())
@@ -584,7 +701,7 @@ func TestGlobalPDFListsTopRepositories(t *testing.T) {
 	if !strings.Contains(text, "Repositories by Lines of Code") {
 		t.Fatal("global report should list the largest repositories")
 	}
-	for _, want := range []string{"keep", "drop", "MAIN LANGUAGE", "SHARE %"} {
+	for _, want := range []string{repoKeep, repoDrop, "MAIN LANGUAGE", "SHARE %"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("top-repositories table missing %q", want)
 		}
@@ -602,10 +719,10 @@ func TestGlobalPDFListsTopRepositories(t *testing.T) {
 func TestGlobalPDFTopRepositoriesRespectSelection(t *testing.T) {
 	setupResultsFixture(t)
 
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
-	if rec := serveReport(t, "global-report-customized.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobalCustomized); rec.Code != http.StatusOK {
 		t.Fatalf("customized request failed: %d", rec.Code)
 	}
 
@@ -620,7 +737,7 @@ func TestGlobalPDFTopRepositoriesRespectSelection(t *testing.T) {
 	}
 
 	// The full scan still ranks both.
-	if rec := serveReport(t, "global-report.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportGlobal); rec.Code != http.StatusOK {
 		t.Fatalf("full-scan request failed: %d", rec.Code)
 	}
 	if full := pdfText(t, fullScanVariant.globalPDFPath()); !strings.Contains(full, "Top 2 Repositories") {
@@ -631,7 +748,7 @@ func TestGlobalPDFTopRepositoriesRespectSelection(t *testing.T) {
 func TestSummaryPDFAndCSVCarryLanguages(t *testing.T) {
 	setupResultsFixture(t)
 
-	if rec := serveReport(t, "repository-summary.pdf"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportSummaryPDF); rec.Code != http.StatusOK {
 		t.Fatalf("pdf request failed: %d", rec.Code)
 	}
 	pdf := pdfText(t, fullScanVariant.summaryPDFPath())
@@ -642,7 +759,7 @@ func TestSummaryPDFAndCSVCarryLanguages(t *testing.T) {
 		t.Error("summary PDF should show each repository's main language")
 	}
 
-	if rec := serveReport(t, "repository-summary.csv"); rec.Code != http.StatusOK {
+	if rec := serveReport(t, reportSummaryCSV); rec.Code != http.StatusOK {
 		t.Fatalf("csv request failed: %d", rec.Code)
 	}
 	csv, err := os.ReadFile(fullScanVariant.summaryCSVPath())
@@ -676,8 +793,8 @@ func TestPageLanguagesIgnoreStaleAggregateWhenFiltered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := applyDeselection([]string{utils.DeselectionKey("acme", "drop", "main")}); err != nil {
-		t.Fatalf("applyDeselection: %v", err)
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
 	}
 
 	for _, lang := range snapshot().RawLanguages {
@@ -696,8 +813,8 @@ func TestPageLanguagesIgnoreStaleAggregateWhenFiltered(t *testing.T) {
 func TestReportsDropdownOffersBothVariantsWhenFiltered(t *testing.T) {
 	out := renderTemplate(t, PageData{
 		Platform:            "github",
-		Repositories:        []RepositoryData{{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main"}},
-		Deselected:          []RepositoryData{{Number: 1, Key: "acme__drop__main", Repository: "drop", Branch: "main"}},
+		Repositories:        []RepositoryData{{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain}},
+		Deselected:          []RepositoryData{{Number: 1, Key: "acme__drop__main", Repository: repoDrop, Branch: branchMain}},
 		DeselectedKeys:      []string{"acme__drop__main"},
 		DeselectedCount:     1,
 		ScannedRepositories: 2,
@@ -719,7 +836,7 @@ func TestReportsDropdownOffersBothVariantsWhenFiltered(t *testing.T) {
 func TestReportsDropdownOffersOnlyOriginalWhenUnfiltered(t *testing.T) {
 	out := renderTemplate(t, PageData{
 		Platform:     "github",
-		Repositories: []RepositoryData{{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main"}},
+		Repositories: []RepositoryData{{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain}},
 	})
 	if strings.Contains(out, "-customized.pdf") {
 		t.Error("customized report links should not be offered when nothing is deselected")
@@ -739,7 +856,7 @@ func TestRepositoryTableShowsTopLanguages(t *testing.T) {
 
 	var keep *RepositoryData
 	for i := range pd.Repositories {
-		if pd.Repositories[i].Repository == "keep" {
+		if pd.Repositories[i].Repository == repoKeep {
 			keep = &pd.Repositories[i]
 		}
 	}
@@ -774,7 +891,7 @@ func TestRepositoryTableShowsDashWhenLanguagesUnknown(t *testing.T) {
 	out := renderTemplate(t, PageData{
 		Platform: "github",
 		Repositories: []RepositoryData{
-			{Number: 1, Key: "acme__nolang__main", Repository: "nolang", Branch: "main"},
+			{Number: 1, Key: "acme__nolang__main", Repository: "nolang", Branch: branchMain},
 		},
 	})
 	if !strings.Contains(out, `class="top-languages"><span class="text-muted">&mdash;</span>`) {
@@ -788,7 +905,7 @@ func TestRepositoryTableColumnCountsLineUp(t *testing.T) {
 	out := renderTemplate(t, PageData{
 		Platform: "github",
 		Repositories: []RepositoryData{
-			{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main"},
+			{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain},
 		},
 	})
 
@@ -844,10 +961,10 @@ func TestRepositoryTableRendersSelectionControls(t *testing.T) {
 	out := renderTemplate(t, PageData{
 		Platform: "github",
 		Repositories: []RepositoryData{
-			{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main", CodeLines: 1000, CodeLinesF: "1.00K"},
+			{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain, CodeLines: 1000, CodeLinesF: "1.00K"},
 		},
 		Deselected: []RepositoryData{
-			{Number: 1, Key: "acme__drop__main", Repository: "drop", Branch: "main", CodeLines: 250, CodeLinesF: "250"},
+			{Number: 1, Key: "acme__drop__main", Repository: repoDrop, Branch: branchMain, CodeLines: 250, CodeLinesF: "250"},
 		},
 		DeselectedKeys:      []string{"acme__drop__main"},
 		DeselectedCount:     1,
@@ -879,7 +996,7 @@ func TestRepositoryTableOmitsBannerWhenUnfiltered(t *testing.T) {
 	out := renderTemplate(t, PageData{
 		Platform: "github",
 		Repositories: []RepositoryData{
-			{Number: 1, Key: "acme__keep__main", Repository: "keep", Branch: "main"},
+			{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain},
 		},
 	})
 	if strings.Contains(out, "deselected-row") {
@@ -895,7 +1012,7 @@ func TestClearedSelectionSurvivesReload(t *testing.T) {
 
 	// Simulate the scan clearing a stale selection, as golc does at the end of a run.
 	if err := utils.SaveDeselectedRepos(resultsBaseDir, []utils.DeselectedRepo{
-		{Key: utils.DeselectionKey("acme", "drop", "main"), Repo: "drop"},
+		{Key: keyDrop, Repo: repoDrop},
 	}); err != nil {
 		t.Fatal(err)
 	}

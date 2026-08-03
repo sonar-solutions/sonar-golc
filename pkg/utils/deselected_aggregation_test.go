@@ -34,18 +34,18 @@ func TestCollectResultTotalsExcludesDeselectedRepos(t *testing.T) {
 	})
 	writeByLanguageResult(t, byLang, "Result_org__drop__main.json", []LanguageData1{
 		{Language: "Go", CodeLines: 50},
-		{Language: "Java", CodeLines: 25},
+		{Language: testLangJava, CodeLines: 25},
 	})
 
-	deselected := DeselectionSet{DeselectionKey("org", "drop", "main"): true}
+	deselected := DeselectionSet{DeselectionKey("org", testRepoDrop, testBranchMain): true}
 	totals, repoTotals, err := collectResultTotals(base, deselected)
 	if err != nil {
 		t.Fatalf("collectResultTotals: %v", err)
 	}
 
 	// The deselected repository must contribute to neither the language breakdown...
-	if totals["Java"] != 0 {
-		t.Errorf("Java = %d, want 0: the only Java came from the deselected repo", totals["Java"])
+	if totals[testLangJava] != 0 {
+		t.Errorf("Java = %d, want 0: the only Java came from the deselected repo", totals[testLangJava])
 	}
 	if totals["Go"] != 100 {
 		t.Errorf("Go = %d, want 100 (deselected repo's 50 must not count)", totals["Go"])
@@ -54,15 +54,15 @@ func TestCollectResultTotalsExcludesDeselectedRepos(t *testing.T) {
 	if len(repoTotals) != 1 {
 		t.Fatalf("got %d repo totals, want 1", len(repoTotals))
 	}
-	if repoTotals[0].Repo != "keep" {
+	if repoTotals[0].Repo != testRepoKeep {
 		t.Errorf("repo = %q, want keep", repoTotals[0].Repo)
 	}
 	// JSON is excluded from a repository's contribution, as everywhere else.
 	if repoTotals[0].CodeLines != 100 {
 		t.Errorf("CodeLines = %d, want 100 (JSON excluded)", repoTotals[0].CodeLines)
 	}
-	if repoTotals[0].Key != DeselectionKey("org", "keep", "main") {
-		t.Errorf("Key = %q, want %q", repoTotals[0].Key, DeselectionKey("org", "keep", "main"))
+	if repoTotals[0].Key != DeselectionKey("org", testRepoKeep, testBranchMain) {
+		t.Errorf("Key = %q, want %q", repoTotals[0].Key, DeselectionKey("org", testRepoKeep, testBranchMain))
 	}
 }
 
@@ -93,7 +93,7 @@ func TestCollectLanguageTotalsUnchangedByDeselectionFeature(t *testing.T) {
 	writeByLanguageResult(t, byLang, "Result_org__a__main.json", []LanguageData1{{Language: "Go", CodeLines: 7}})
 
 	if err := SaveDeselectedRepos(base, []DeselectedRepo{
-		{Key: DeselectionKey("org", "a", "main"), Repo: "a"},
+		{Key: DeselectionKey("org", "a", testBranchMain), Repo: "a"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -134,8 +134,8 @@ func TestGenerateRepositorySummaryReportsSplitsDeselected(t *testing.T) {
 	inventory := AnalysisResult{
 		NumRepositories: 2,
 		ProjectBranches: []ProjectBranch{
-			{Org: "org", RepoSlug: "keep", MainBranch: "main"},
-			{Org: "org", RepoSlug: "drop", MainBranch: "main"},
+			{Org: "org", RepoSlug: testRepoKeep, MainBranch: testBranchMain},
+			{Org: "org", RepoSlug: testRepoDrop, MainBranch: testBranchMain},
 		},
 	}
 	invJSON, _ := json.Marshal(inventory)
@@ -155,7 +155,7 @@ func TestGenerateRepositorySummaryReportsSplitsDeselected(t *testing.T) {
 	writeByFile("Result_org__drop__main_byfile.json", 40)
 
 	if err := SaveDeselectedRepos("Results", []DeselectedRepo{
-		{Key: DeselectionKey("org", "drop", "main"), Org: "org", Repo: "drop", Branch: "main"},
+		{Key: DeselectionKey("org", testRepoDrop, testBranchMain), Org: "org", Repo: testRepoDrop, Branch: testBranchMain},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestGenerateRepositorySummaryReportsSplitsDeselected(t *testing.T) {
 	if summary.DeselectedCodeLines != 40 {
 		t.Errorf("DeselectedCodeLines = %d, want 40", summary.DeselectedCodeLines)
 	}
-	if len(summary.Deselected) != 1 || summary.Deselected[0].Repository != "drop" {
+	if len(summary.Deselected) != 1 || summary.Deselected[0].Repository != testRepoDrop {
 		t.Errorf("Deselected = %+v, want one entry for drop", summary.Deselected)
 	}
 
@@ -232,8 +232,8 @@ func TestGenerateRepositorySummaryReportsHonoursDeselectionForSubgroupOrg(t *tes
 	invJSON, _ := json.Marshal(AnalysisResult{
 		NumRepositories: 2,
 		ProjectBranches: []ProjectBranch{
-			{Org: org, RepoSlug: "keep", MainBranch: branch},
-			{Org: org, RepoSlug: "drop", MainBranch: branch},
+			{Org: org, RepoSlug: testRepoKeep, MainBranch: branch},
+			{Org: org, RepoSlug: testRepoDrop, MainBranch: branch},
 		},
 	})
 	if err := os.WriteFile("Results/config/analysis_result_gitlab.json", invJSON, 0644); err != nil {
@@ -257,13 +257,13 @@ func TestGenerateRepositorySummaryReportsHonoursDeselectionForSubgroupOrg(t *tes
 			t.Fatal(err)
 		}
 	}
-	writeByFile("keep", 100)
-	writeByFile("drop", 40)
+	writeByFile(testRepoKeep, 100)
+	writeByFile(testRepoDrop, 40)
 
 	// The key the results page would submit for the deselected repository.
-	pageKey := DeselectionKeyForRepo("gitlab", org, "drop", branch)
+	pageKey := DeselectionKeyForRepo("gitlab", org, testRepoDrop, branch)
 	if err := SaveDeselectedRepos("Results", []DeselectedRepo{
-		{Key: pageKey, Org: org, Repo: "drop", Branch: branch},
+		{Key: pageKey, Org: org, Repo: testRepoDrop, Branch: branch},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestGenerateRepositorySummaryReportsHonoursDeselectionForSubgroupOrg(t *tes
 	if summary.DeselectedRepositories != 1 || len(summary.Deselected) != 1 {
 		t.Fatalf("Deselected = %d/%+v, want exactly one", summary.DeselectedRepositories, summary.Deselected)
 	}
-	if summary.Deselected[0].Repository != "drop" {
+	if summary.Deselected[0].Repository != testRepoDrop {
 		t.Errorf("deselected %q, want drop", summary.Deselected[0].Repository)
 	}
 	// The key this generator derives must equal the one the page submitted.
@@ -323,7 +323,7 @@ func TestGenerateRepositorySummaryReportsOmitsDeselectedFieldsWhenUnfiltered(t *
 
 	invJSON, _ := json.Marshal(AnalysisResult{
 		NumRepositories: 1,
-		ProjectBranches: []ProjectBranch{{Org: "org", RepoSlug: "only", MainBranch: "main"}},
+		ProjectBranches: []ProjectBranch{{Org: "org", RepoSlug: "only", MainBranch: testBranchMain}},
 	})
 	if err := os.WriteFile("Results/config/analysis_result_github.json", invJSON, 0644); err != nil {
 		t.Fatal(err)

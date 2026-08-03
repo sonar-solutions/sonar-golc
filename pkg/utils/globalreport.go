@@ -144,8 +144,16 @@ func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 	scanSummary := LoadScanSummary(directory)
 
 	// Create a PDF
-	if err := renderGlobalPDF(languages, ginfo, skippedRepos, scanSummary, deselected, rawTotalLOC,
-		opts.PDFPath, repoTotals); err != nil {
+	if err := renderGlobalPDF(globalPDFContent{
+		Languages:    languages,
+		Info:         ginfo,
+		SkippedRepos: skippedRepos,
+		ScanSummary:  scanSummary,
+		Deselected:   deselected,
+		RawTotalLOC:  rawTotalLOC,
+		RepoTotals:   repoTotals,
+		OutputPath:   opts.PDFPath,
+	}); err != nil {
 		return err
 	}
 
@@ -491,6 +499,21 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 	pdf.SetXY(marginL, rowY+rowH)
 }
 
+// fitToWidth truncates a cell value with an ellipsis so it fits the given column width.
+// gofpdf has no native ellipsis, so width is measured with the current font.
+//
+// Shared by every table section rather than redeclared as a closure in each: three
+// byte-identical copies had accumulated, and they would have drifted apart.
+func fitToWidth(pdf *gofpdf.Fpdf, s string, w float64) string {
+	if pdf.GetStringWidth(s) <= w-2 {
+		return s
+	}
+	for len(s) > 1 && pdf.GetStringWidth(s+"...") > w-2 {
+		s = s[:len(s)-1]
+	}
+	return s + "..."
+}
+
 // renderScanSummarySection appends a "Scan Summary" section to the global PDF,
 // showing how many repositories were scanned versus analyzed and how many were
 // filtered out (archived/disabled, empty) or could not be completed (skipped).
@@ -597,18 +620,6 @@ func renderSkippedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, skipped
 	}
 	drawHeaders()
 
-	// Truncate a cell value so it fits its column width (gofpdf has no native
-	// ellipsis); width is estimated from the current font's string width.
-	fit := func(s string, w float64) string {
-		if pdf.GetStringWidth(s) <= w-2 {
-			return s
-		}
-		for len(s) > 1 && pdf.GetStringWidth(s+"...") > w-2 {
-			s = s[:len(s)-1]
-		}
-		return s + "..."
-	}
-
 	pdf.SetFont("Helvetica", "", 8)
 	pdf.SetTextColor(40, 40, 50)
 	for i, r := range skippedRepos {
@@ -625,9 +636,9 @@ func renderSkippedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, skipped
 		}
 		pdf.SetX(marginL)
 		pdf.CellFormat(colNum, 6, fmt.Sprintf("%d", i+1), "0", 0, "C", false, 0, "")
-		pdf.CellFormat(colRepo, 6, fit(tr(repo), colRepo), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colBranch, 6, fit(tr(r.Branch), colBranch), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colReason, 6, fit(tr(r.Reason), colReason), "0", 1, "L", false, 0, "")
+		pdf.CellFormat(colRepo, 6, fitToWidth(pdf, tr(repo), colRepo), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colBranch, 6, fitToWidth(pdf, tr(r.Branch), colBranch), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colReason, 6, fitToWidth(pdf, tr(r.Reason), colReason), "0", 1, "L", false, 0, "")
 	}
 	pdf.SetTextColor(0, 0, 0)
 }
@@ -711,16 +722,6 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 	}
 	drawHeaders()
 
-	fit := func(s string, w float64) string {
-		if pdf.GetStringWidth(s) <= w-2 {
-			return s
-		}
-		for len(s) > 1 && pdf.GetStringWidth(s+"...") > w-2 {
-			s = s[:len(s)-1]
-		}
-		return s + "..."
-	}
-
 	const rowH = 6.0
 	for i, rt := range top {
 		if pdf.GetY() > 265 {
@@ -759,12 +760,12 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 
 		pdf.SetFont("Helvetica", "B", 8)
 		pdf.SetTextColor(20, 20, 30)
-		pdf.CellFormat(colRepo, rowH, fit(tr(rt.Repo), colRepo), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colRepo, rowH, fitToWidth(pdf, tr(rt.Repo), colRepo), "0", 0, "L", false, 0, "")
 
 		pdf.SetFont("Helvetica", "", 8)
 		pdf.SetTextColor(60, 60, 70)
-		pdf.CellFormat(colBranch, rowH, fit(tr(rt.Branch), colBranch), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colLang, rowH, fit(tr(language), colLang), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colBranch, rowH, fitToWidth(pdf, tr(rt.Branch), colBranch), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colLang, rowH, fitToWidth(pdf, tr(language), colLang), "0", 0, "L", false, 0, "")
 		pdf.CellFormat(colLOC, rowH, FormatCodeLines(float64(rt.CodeLines)), "0", 0, "R", false, 0, "")
 		pdf.CellFormat(colShare, rowH, share, "0", 1, "R", false, 0, "")
 
@@ -824,16 +825,6 @@ func renderDeselectedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, dese
 	}
 	drawHeaders()
 
-	fit := func(s string, w float64) string {
-		if pdf.GetStringWidth(s) <= w-2 {
-			return s
-		}
-		for len(s) > 1 && pdf.GetStringWidth(s+"...") > w-2 {
-			s = s[:len(s)-1]
-		}
-		return s + "..."
-	}
-
 	pdf.SetFont("Helvetica", "", 8)
 	pdf.SetTextColor(40, 40, 50)
 	for i, r := range deselected {
@@ -845,9 +836,9 @@ func renderDeselectedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, dese
 		}
 		pdf.SetX(marginL)
 		pdf.CellFormat(colNum, 6, fmt.Sprintf("%d", i+1), "0", 0, "C", false, 0, "")
-		pdf.CellFormat(colRepo, 6, fit(tr(r.Repo), colRepo), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colBranch, 6, fit(tr(r.Branch), colBranch), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colOrg, 6, fit(tr(r.Org), colOrg), "0", 1, "L", false, 0, "")
+		pdf.CellFormat(colRepo, 6, fitToWidth(pdf, tr(r.Repo), colRepo), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colBranch, 6, fitToWidth(pdf, tr(r.Branch), colBranch), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colOrg, 6, fitToWidth(pdf, tr(r.Org), colOrg), "0", 1, "L", false, 0, "")
 	}
 	pdf.SetTextColor(0, 0, 0)
 }
@@ -855,8 +846,33 @@ func renderDeselectedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, dese
 // renderGlobalPDF generates the GlobalReport.pdf from languages and global info.
 // deselected lists repositories the user removed from the totals on the results
 // page, and rawTotalLOC is the unfiltered total shown alongside them for comparison.
-func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []SkippedRepo, summary *ScanSummary,
-	deselected []DeselectedRepo, rawTotalLOC, outputPath string, repoTotals []RepoTotal) error {
+// globalPDFContent is everything the global report renders. Grouped into a struct rather
+// than passed as a parameter list, which had grown past the point where call sites were
+// readable and an argument could be transposed without the compiler noticing.
+type globalPDFContent struct {
+	Languages    []LanguageData
+	Info         Globalinfo
+	SkippedRepos []SkippedRepo
+	ScanSummary  *ScanSummary
+	Deselected   []DeselectedRepo
+	// RawTotalLOC is the total across every analyzed repository, shown alongside the
+	// deselected list so a filtered report states what it left out.
+	RawTotalLOC string
+	// RepoTotals drives the top-repositories table; it reflects the same selection as
+	// every other figure in the report.
+	RepoTotals []RepoTotal
+	OutputPath string
+}
+
+func renderGlobalPDF(content globalPDFContent) error {
+	languages := content.Languages
+	ginfo := content.Info
+	skippedRepos := content.SkippedRepos
+	summary := content.ScanSummary
+	deselected := content.Deselected
+	rawTotalLOC := content.RawTotalLOC
+	outputPath := content.OutputPath
+
 	loggers := NewLogger()
 
 	languages, maxLOC := prepareLanguagesForPDF(languages)
@@ -1024,7 +1040,7 @@ func renderGlobalPDF(languages []LanguageData, ginfo Globalinfo, skippedRepos []
 	// ── Top repositories section ─────────────────────────────────────
 	// Shares are computed against the same total the headline figure uses, so the
 	// percentages add up to what the reader sees on the first page.
-	renderTopRepositoriesSection(pdf, tr, repoTotals, getTotalCodeLinesExcludingJSON(languages), marginL, contentW)
+	renderTopRepositoriesSection(pdf, tr, content.RepoTotals, getTotalCodeLinesExcludingJSON(languages), marginL, contentW)
 
 	// ── Scan summary section ─────────────────────────────────────────
 	renderScanSummarySection(pdf, summary, len(skippedRepos), len(deselected), marginL, contentW)

@@ -31,8 +31,13 @@ func TestRenderGlobalPDF_NoMojibakeStatCard(t *testing.T) {
 		NumberRepos:            2,
 	}
 	langs := []LanguageData{{Language: "Golang", CodeLines: 29, Percentage: 100, CodeLinesF: "29"}}
-	if err := renderGlobalPDF(langs, ginfo, nil, nil, nil, ginfo.TotalLinesOfCode, "Results/GlobalReport.pdf",
-		[]RepoTotal{{Repo: "café-service", Branch: "main", CodeLines: 18, PrimaryLanguage: "Golang"}}); err != nil {
+	if err := renderGlobalPDF(globalPDFContent{
+		Languages:   langs,
+		Info:        ginfo,
+		RawTotalLOC: ginfo.TotalLinesOfCode,
+		RepoTotals:  []RepoTotal{{Repo: "café-service", Branch: "main", CodeLines: 18, PrimaryLanguage: "Golang"}},
+		OutputPath:  "Results/GlobalReport.pdf",
+	}); err != nil {
 		t.Fatalf("renderGlobalPDF: %v", err)
 	}
 
