@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/SonarSource-Demos/sonar-golc/assets"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
@@ -1782,6 +1783,13 @@ func handlePortConflict(port int) {
 
 func main() {
 	utils.ChdirToBinaryDir()
+
+	// Report the build and exit. This binary is shipped and run separately from webui, so
+	// it needs its own way to answer "which release is this?".
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Printf("GoLC ResultsAll %s\n", assets.Version)
+		os.Exit(0)
+	}
 
 	// No report generation at startup: reports are built when they are first requested,
 	// and a stale one cannot be served because the freshness stamp covers both the
