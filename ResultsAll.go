@@ -116,6 +116,9 @@ type RepositoryData struct {
 	// TopLanguages are the repository's largest languages, biggest first, excluding the
 	// language held out of the totals. Empty when no by-language result file was found.
 	TopLanguages []utils.LanguageShare `json:"TopLanguages,omitempty"`
+	// Deselected marks a row excluded from the totals. Set only on the table view
+	// (PageData.TableRows), where counted and deselected rows are interleaved.
+	Deselected bool `json:"Deselected,omitempty"`
 }
 
 // PrimaryLanguage returns the repository's largest language, or "" when unknown. Used as
@@ -215,6 +218,12 @@ type PageData struct {
 	// Deselection: repositories analyzed but removed from every total by the user.
 	// Deselected is empty and RawTotalLinesOfCode equals GlobalReport.TotalLinesOfCode
 	// on an untouched selection, so the page renders exactly as before.
+	// TableRows is every repository in ranked order, with Deselected set on the excluded
+	// ones. The table renders from this single list so a deselected repository keeps its
+	// position instead of jumping to the bottom — its size relative to the others is
+	// usually why it was being looked at, and losing that ordering makes the effect of the
+	// change hard to judge and the row hard to find again.
+	TableRows           []RepositoryData
 	Deselected          []RepositoryData
 	DeselectedKeys      []string // same set as Deselected, for the page's JavaScript
 	DeselectedCount     int
@@ -1042,6 +1051,10 @@ func loadApplicationData() (PageData, error) {
 		repositoryData = []RepositoryData{}
 	}
 
+	// The table view keeps every repository in its ranked position, flagging the excluded
+	// ones. Built before partitioning, which renumbers each group independently.
+	tableRows := buildTableRows(repositoryData, deselectedSet)
+
 	// Split off the repositories the user removed from the totals. With no
 	// deselection this returns everything in Repositories and nothing in deselected.
 	repositoryData, deselected := partitionDeselected(repositoryData, deselectedSet)
@@ -1076,6 +1089,7 @@ func loadApplicationData() (PageData, error) {
 		NoteLOCExcluded: utils.NoteExcludedFromTotal,
 		Platform:        detectedPlatform,
 
+		TableRows:           tableRows,
 		Deselected:          deselected,
 		DeselectedKeys:      deselectedKeys,
 		DeselectedCount:     len(deselected),
@@ -1086,6 +1100,26 @@ func loadApplicationData() (PageData, error) {
 	}
 
 	return pageData, nil
+}
+
+// buildTableRows returns every repository in its original ranked order, flagging the
+// deselected ones and numbering only those still counted. Keeping a deselected row in
+// place preserves the size ordering the user is reading the table for; the numbering
+// skips it, which is what the "—" in its row column represents.
+func buildTableRows(repositories []RepositoryData, deselected utils.DeselectionSet) []RepositoryData {
+	rows := make([]RepositoryData, 0, len(repositories))
+	counted := 0
+	for _, repo := range repositories {
+		if deselected.Contains(repo.Key) {
+			repo.Deselected = true
+			repo.Number = 0
+		} else {
+			counted++
+			repo.Number = counted
+		}
+		rows = append(rows, repo)
+	}
+	return rows
 }
 
 // partitionDeselected splits repositories into those still counted and those the
@@ -2160,28 +2194,17 @@ const htmlTemplate = `
                       </thead>
                       <tbody id="repositoryTableBody">
                         {{$platform := .Platform}}
-                        {{range .Repositories}}
-                        <tr data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-language="{{.PrimaryLanguage}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
-                          <td><input type="checkbox" class="form-check-input repo-select" checked value="{{.Key}}" aria-label="Count {{.Repository}} in the totals"></td>
-                          <td class="row-num">{{.Number}}</td>
-                          <td><a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{if and (eq $platform "gitlab") .Org}}<span class="text-muted" style="font-size:0.85em;">{{.Org}}&thinsp;/&thinsp;</span>{{end}}{{.Repository}}</a></td>
-                          <td>{{.Branch}}</td>
-                          <td class="top-languages">{{template "topLanguages" .TopLanguages}}</td>
-                          <td>{{.LinesF}}</td>
-                          <td>{{.BlankLinesF}}</td>
-                          <td>{{.CommentsF}}</td>
-                          <td><strong>{{.CodeLinesF}}</strong></td>
-                        </tr>
-                        {{end}}
-                        {{/* Deselected repositories stay in the table, unchecked and muted,
-                             so the change can be undone here rather than only by a full reset. */}}
-                        {{range .Deselected}}
-                        <tr class="deselected-row" style="opacity:0.55;" data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-language="{{.PrimaryLanguage}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
-                          <td><input type="checkbox" class="form-check-input repo-select" value="{{.Key}}" aria-label="Count {{.Repository}} in the totals"></td>
-                          <td class="row-num">&mdash;</td>
+                        {{/* One loop over TableRows, not counted-then-deselected: a
+                             deselected repository keeps its ranked position so its size
+                             relative to the others stays visible and the row stays where
+                             the user left it. */}}
+                        {{range .TableRows}}
+                        <tr {{if .Deselected}}class="deselected-row" style="opacity:0.55;" {{end}}data-key="{{.Key}}" data-repository="{{if eq $platform "gitlab"}}{{.Org}}/{{end}}{{.Repository}}" data-branch="{{.Branch}}" data-language="{{.PrimaryLanguage}}" data-lines="{{.Lines}}" data-blanklines="{{.BlankLines}}" data-comments="{{.Comments}}" data-codelines="{{.CodeLines}}">
+                          <td><input type="checkbox" class="form-check-input repo-select" {{if not .Deselected}}checked {{end}}value="{{.Key}}" aria-label="Count {{.Repository}} in the totals"></td>
+                          <td class="row-num">{{if .Deselected}}&mdash;{{else}}{{.Number}}{{end}}</td>
                           <td>
                             <a href="/repository/{{.Repository}}/{{.Branch}}" class="repo-link">{{if and (eq $platform "gitlab") .Org}}<span class="text-muted" style="font-size:0.85em;">{{.Org}}&thinsp;/&thinsp;</span>{{end}}{{.Repository}}</a>
-                            <span class="badge bg-secondary ms-1" style="font-size:0.65em;">deselected</span>
+                            {{if .Deselected}}<span class="badge bg-secondary ms-1" style="font-size:0.65em;">deselected</span>{{end}}
                           </td>
                           <td>{{.Branch}}</td>
                           <td class="top-languages">{{template "topLanguages" .TopLanguages}}</td>

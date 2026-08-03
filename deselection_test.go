@@ -152,6 +152,31 @@ func setupResultsFixture(t *testing.T) {
 	})
 }
 
+// tablePageData builds a PageData the way loadApplicationData does, so template tests
+// exercise the same field wiring the server produces instead of setting fields by hand and
+// drifting from it. `all` is in ranked order; the named keys are the deselected ones.
+func tablePageData(platform string, all []RepositoryData, deselectedKeys ...string) PageData {
+	set := utils.DeselectionSet{}
+	for _, k := range deselectedKeys {
+		set[k] = true
+	}
+	kept, removed := partitionDeselected(all, set)
+	keys := make([]string, 0, len(removed))
+	for _, r := range removed {
+		keys = append(keys, r.Key)
+	}
+	return PageData{
+		Platform:            platform,
+		Repositories:        kept,
+		Deselected:          removed,
+		TableRows:           buildTableRows(all, set),
+		DeselectedKeys:      keys,
+		DeselectedCount:     len(removed),
+		ScannedRepositories: len(all),
+		TopLanguagesShown:   utils.TopLanguagesShown,
+	}
+}
+
 func TestApplyDeselectionFiltersEveryTotal(t *testing.T) {
 	setupResultsFixture(t)
 
@@ -840,10 +865,9 @@ func TestReportsDropdownOffersBothVariantsWhenFiltered(t *testing.T) {
 }
 
 func TestReportsDropdownOffersOnlyOriginalWhenUnfiltered(t *testing.T) {
-	out := renderTemplate(t, PageData{
-		Platform:     "github",
-		Repositories: []RepositoryData{{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain}},
-	})
+	out := renderTemplate(t, tablePageData("github", []RepositoryData{
+		{Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain},
+	}))
 	if strings.Contains(out, "-customized.pdf") {
 		t.Error("customized report links should not be offered when nothing is deselected")
 	}
@@ -891,15 +915,62 @@ func TestRepositoryTableShowsTopLanguages(t *testing.T) {
 	}
 }
 
+func TestDeselectedRowKeepsItsPosition(t *testing.T) {
+	// A deselected repository must stay where it ranks. Moving it to the bottom loses the
+	// size ordering the table is read for, and makes the row hard to find again to undo.
+	all := []RepositoryData{
+		{Key: "acme__big__main", Repository: "big", Branch: branchMain, CodeLines: 900},
+		{Key: "acme__mid__main", Repository: "mid", Branch: branchMain, CodeLines: 500},
+		{Key: "acme__small__main", Repository: "small", Branch: branchMain, CodeLines: 100},
+	}
+	// Deselect the middle one — the position most likely to be disturbed.
+	out := renderTemplate(t, tablePageData("github", all, "acme__mid__main"))
+
+	body := out[strings.Index(out, `<tbody id="repositoryTableBody">`):]
+	body = body[:strings.Index(body, "</tbody>")]
+
+	order := regexp.MustCompile(`data-key="([^"]*)"`).FindAllStringSubmatch(body, -1)
+	got := make([]string, 0, len(order))
+	for _, m := range order {
+		got = append(got, m[1])
+	}
+	want := []string{"acme__big__main", "acme__mid__main", "acme__small__main"}
+	if len(got) != len(want) {
+		t.Fatalf("rendered %d rows, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %q, want %q (deselected row must not move)", i, got[i], want[i])
+		}
+	}
+
+	// Numbering skips the deselected row rather than renumbering around it, which is what
+	// the em dash in its row column stands for.
+	nums := regexp.MustCompile(`<td class="row-num">([^<]*)</td>`).FindAllStringSubmatch(body, -1)
+	gotNums := make([]string, 0, len(nums))
+	for _, m := range nums {
+		gotNums = append(gotNums, m[1])
+	}
+	wantNums := []string{"1", "&mdash;", "2"}
+	for i := range wantNums {
+		if i >= len(gotNums) || gotNums[i] != wantNums[i] {
+			t.Errorf("row numbers = %v, want %v", gotNums, wantNums)
+			break
+		}
+	}
+
+	// And it is still the deselected one, muted and re-selectable.
+	if !strings.Contains(body, "deselected-row") || strings.Count(body, "checked") != 2 {
+		t.Errorf("expected one unchecked deselected row and two checked rows; body=%q", body)
+	}
+}
+
 func TestRepositoryTableShowsDashWhenLanguagesUnknown(t *testing.T) {
 	// A repository whose by-language result file is missing must read as unknown rather
 	// than as an empty cell that looks like a rendering bug.
-	out := renderTemplate(t, PageData{
-		Platform: "github",
-		Repositories: []RepositoryData{
-			{Number: 1, Key: "acme__nolang__main", Repository: "nolang", Branch: branchMain},
-		},
-	})
+	out := renderTemplate(t, tablePageData("github", []RepositoryData{
+		{Key: "acme__nolang__main", Repository: "nolang", Branch: branchMain},
+	}))
 	if !strings.Contains(out, `class="top-languages"><span class="text-muted">&mdash;</span>`) {
 		t.Error("a repository with no language data should render an em dash")
 	}
@@ -908,12 +979,9 @@ func TestRepositoryTableShowsDashWhenLanguagesUnknown(t *testing.T) {
 func TestRepositoryTableColumnCountsLineUp(t *testing.T) {
 	// The totals row spans the table with a colspan, so adding a column without
 	// adjusting it would silently misalign every figure in the footer.
-	out := renderTemplate(t, PageData{
-		Platform: "github",
-		Repositories: []RepositoryData{
-			{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain},
-		},
-	})
+	out := renderTemplate(t, tablePageData("github", []RepositoryData{
+		{Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain},
+	}))
 
 	section := out[strings.Index(out, `<tbody id="repositoryTableBody">`):]
 	header := out[strings.Index(out, `<thead class="table-dark">`):strings.Index(out, `<tbody id="repositoryTableBody">`)]
@@ -964,19 +1032,13 @@ func TestAdjustGlobalInfoPageUntouchedWhenNothingDeselected(t *testing.T) {
 }
 
 func TestRepositoryTableRendersSelectionControls(t *testing.T) {
-	out := renderTemplate(t, PageData{
-		Platform: "github",
-		Repositories: []RepositoryData{
-			{Number: 1, Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain, CodeLines: 1000, CodeLinesF: "1.00K"},
-		},
-		Deselected: []RepositoryData{
-			{Number: 1, Key: "acme__drop__main", Repository: repoDrop, Branch: branchMain, CodeLines: 250, CodeLinesF: "250"},
-		},
-		DeselectedKeys:      []string{"acme__drop__main"},
-		DeselectedCount:     1,
-		DeselectedCodeLines: "250",
-		RawTotalLinesOfCode: "1.25K",
-	})
+	pd := tablePageData("github", []RepositoryData{
+		{Key: "acme__keep__main", Repository: repoKeep, Branch: branchMain, CodeLines: 1000, CodeLinesF: "1.00K"},
+		{Key: "acme__drop__main", Repository: repoDrop, Branch: branchMain, CodeLines: 250, CodeLinesF: "250"},
+	}, "acme__drop__main")
+	pd.DeselectedCodeLines = "250"
+	pd.RawTotalLinesOfCode = rawTotalLOC
+	out := renderTemplate(t, pd)
 
 	for _, want := range []string{
 		`id="btnApplySelection"`,

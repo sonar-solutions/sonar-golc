@@ -89,6 +89,16 @@ func (r RepositoryData) PrimaryLanguage() string {
 	return r.TopLanguages[0].Language
 }
 
+// PrimaryLanguageLabel renders the main language with its own code lines, e.g.
+// "C++ 761.37K", so the report shows how much of the repository that language accounts
+// for rather than just naming it. A dash when no language was recorded.
+func (r RepositoryData) PrimaryLanguageLabel() string {
+	if len(r.TopLanguages) == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%s %s", r.TopLanguages[0].Language, r.TopLanguages[0].CodeLinesF)
+}
+
 // AnalysisResult represents the structure of analysis result files
 type AnalysisResult struct {
 	NumRepositories int             `json:"NumRepositories"`
@@ -402,13 +412,11 @@ func createRepositoryPDFRow(pdf *gofpdf.Fpdf, tr func(string) string, repo Repos
 	repoName := truncateText(tr(repo.Repository), 22)
 	branchName := truncateText(tr(repo.Branch), 12)
 
-	// A dash rather than a blank when no by-language result file was found, so an unknown
-	// language is visibly unknown instead of looking like an empty cell.
-	language := repo.PrimaryLanguage()
-	if language == "" {
-		language = "-"
-	}
-	language = truncateText(tr(language), 15)
+	// The main language with its own line count ("C++ 761.37K"); a dash when no
+	// by-language result file was found, so an unknown reads as unknown rather than as an
+	// empty cell. Truncated by measured width rather than character count, because the
+	// number must survive — a fixed character limit would cut "JavaScript 2.87K" mid-name.
+	language := fitToWidth(pdf, tr(repo.PrimaryLanguageLabel()), colPDFLanguage)
 
 	pdf.CellFormat(colPDFNum, 6, strconv.Itoa(repo.Number), "1", 0, "C", fill, 0, "")
 	pdf.CellFormat(colPDFRepo, 6, repoName, "1", 0, "L", fill, 0, "")

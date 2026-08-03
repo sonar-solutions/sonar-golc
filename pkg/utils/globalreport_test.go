@@ -139,9 +139,10 @@ func TestAccumulateLanguageTotalsFromFile(t *testing.T) {
 	if fileLOC != 150 {
 		t.Errorf("accumulateLanguageTotalsFromFile fileLOC = %d, want 150", fileLOC)
 	}
-	// The largest language of that file, used for the top-repositories table.
-	if primary != "Go" {
-		t.Errorf("accumulateLanguageTotalsFromFile primary = %q, want Go", primary)
+	// The largest language of that file with its own line count, used for the
+	// top-repositories table.
+	if primary.Language != "Go" || primary.CodeLines != 100 {
+		t.Errorf("accumulateLanguageTotalsFromFile primary = %+v, want Go/100", primary)
 	}
 	if _, ok := totals[""]; ok {
 		t.Errorf("blank language should be ignored")

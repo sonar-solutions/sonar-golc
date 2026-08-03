@@ -732,8 +732,12 @@ func TestCreatePDFTableHeader(t *testing.T) {
 
 func TestCreateRepositoryPDFRow(t *testing.T) {
 	t.Run("PDF row creation", func(t *testing.T) {
-		// This tests the helper function that was extracted during refactoring
+		// This tests the helper function that was extracted during refactoring.
+		// A font must be set, as every production caller does before drawing rows: the
+		// language cell is truncated by measured width, and gofpdf cannot measure a
+		// string without a current font.
 		pdf := gofpdf.New("P", "mm", "A4", "")
+		pdf.SetFont("Arial", "", 8)
 		pdf.AddPage()
 		tr := pdf.UnicodeTranslatorFromDescriptor("")
 

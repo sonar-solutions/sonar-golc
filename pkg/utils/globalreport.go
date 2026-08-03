@@ -173,6 +173,19 @@ type RepoTotal struct {
 	// PrimaryLanguage is the repository's largest language, excluding the one held out
 	// of the totals. Empty when the file listed none.
 	PrimaryLanguage string
+	// PrimaryLanguageCodeLines is that language's own code lines, reported alongside it
+	// so a reader can see how much of the repository's total it accounts for.
+	PrimaryLanguageCodeLines int
+}
+
+// PrimaryLanguageLabel renders the main language with its own code lines, e.g.
+// "C++ 761.37K". A dash when no language was recorded, so an unknown reads as unknown
+// rather than as an empty cell.
+func (r RepoTotal) PrimaryLanguageLabel() string {
+	if r.PrimaryLanguage == "" {
+		return "-"
+	}
+	return fmt.Sprintf("%s %s", r.PrimaryLanguage, FormatCodeLines(float64(r.PrimaryLanguageCodeLines)))
 }
 
 // collectLanguageTotals walks result files and aggregates language totals.
@@ -226,12 +239,13 @@ func collectResultTotals(directory string, deselected DeselectionSet) (map[strin
 			repo = key
 		}
 		repoTotals = append(repoTotals, RepoTotal{
-			Key:             key,
-			Org:             org,
-			Repo:            repo,
-			Branch:          branch,
-			CodeLines:       repoLOC,
-			PrimaryLanguage: primaryLanguage,
+			Key:                      key,
+			Org:                      org,
+			Repo:                     repo,
+			Branch:                   branch,
+			CodeLines:                repoLOC,
+			PrimaryLanguage:          primaryLanguage.Language,
+			PrimaryLanguageCodeLines: primaryLanguage.CodeLines,
 		})
 		return nil
 	})
@@ -316,16 +330,17 @@ func isEligibleResultFile(info os.FileInfo, path string) bool {
 
 // accumulateLanguageTotalsFromFile parses a file and updates the totals map. It returns
 // that single file's contribution to the headline LOC figure — its code lines excluding
-// the language held out of the total (JSON) — and its largest language, so a caller
-// tracking per-repository figures does not have to parse the file a second time.
-func accumulateLanguageTotalsFromFile(path string, totals map[string]int) (int, string, error) {
+// the language held out of the total (JSON) — and its largest language with that
+// language's own line count, so a caller tracking per-repository figures does not have to
+// parse the file a second time.
+func accumulateLanguageTotalsFromFile(path string, totals map[string]int) (int, LanguageShare, error) {
 	fileData, err := os.ReadFile(path)
 	if err != nil {
-		return 0, "", err
+		return 0, LanguageShare{}, err
 	}
 	var data FileData
 	if err := json.Unmarshal(fileData, &data); err != nil {
-		return 0, "", err
+		return 0, LanguageShare{}, err
 	}
 
 	fileLOC := 0
@@ -342,9 +357,9 @@ func accumulateLanguageTotalsFromFile(path string, totals map[string]int) (int, 
 		shares = append(shares, LanguageShare{Language: lang, CodeLines: result.CodeLines})
 	}
 
-	primary := ""
+	var primary LanguageShare
 	if ranked := RankTopLanguages(shares, 1); len(ranked) > 0 {
-		primary = ranked[0].Language
+		primary = ranked[0]
 	}
 	return fileLOC, primary, nil
 }
@@ -701,10 +716,11 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 
 	const (
 		colNum    = 10.0
-		colBranch = 30.0
-		colLang   = 30.0
-		colLOC    = 26.0
-		colShare  = 20.0
+		colBranch = 26.0
+		// Wide enough for a language name plus its own line count ("JavaScript 761.37K").
+		colLang  = 38.0
+		colLOC   = 26.0
+		colShare = 20.0
 	)
 	colRepo := contentW - colNum - colBranch - colLang - colLOC - colShare
 
@@ -717,7 +733,7 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		pdf.CellFormat(colRepo, 6, "REPOSITORY", "0", 0, "L", true, 0, "")
 		pdf.CellFormat(colBranch, 6, "BRANCH", "0", 0, "L", true, 0, "")
 		pdf.CellFormat(colLang, 6, "MAIN LANGUAGE", "0", 0, "L", true, 0, "")
-		pdf.CellFormat(colLOC, 6, "LOC", "0", 0, "R", true, 0, "")
+		pdf.CellFormat(colLOC, 6, "TOTAL LOC", "0", 0, "R", true, 0, "")
 		pdf.CellFormat(colShare, 6, "SHARE %", "0", 1, "R", true, 0, "")
 	}
 	drawHeaders()
@@ -744,10 +760,6 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		}
 		pdf.Rect(marginL, rowY, contentW, rowH, "F")
 
-		language := rt.PrimaryLanguage
-		if language == "" {
-			language = "-"
-		}
 		share := "-"
 		if totalLOC > 0 {
 			share = fmt.Sprintf("%.1f%%", float64(rt.CodeLines)/float64(totalLOC)*100)
@@ -765,7 +777,7 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		pdf.SetFont("Helvetica", "", 8)
 		pdf.SetTextColor(60, 60, 70)
 		pdf.CellFormat(colBranch, rowH, fitToWidth(pdf, tr(rt.Branch), colBranch), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colLang, rowH, fitToWidth(pdf, tr(language), colLang), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colLang, rowH, fitToWidth(pdf, tr(rt.PrimaryLanguageLabel()), colLang), "0", 0, "L", false, 0, "")
 		pdf.CellFormat(colLOC, rowH, FormatCodeLines(float64(rt.CodeLines)), "0", 0, "R", false, 0, "")
 		pdf.CellFormat(colShare, rowH, share, "0", 1, "R", false, 0, "")
 
