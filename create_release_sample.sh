@@ -1,7 +1,7 @@
 #!/bin/bash
 
-export TAG="ver2.0" # Release TAG in GitHub
-export Release1="ver2.0" # Release Number
+export TAG="ver2.1.0" # Release TAG in GitHub
+export Release1="ver2.1.0" # Release Number
 export buildpath="XXXXXXX"  # Replace with the path where the release files are located
 
 CMD=`PWD`

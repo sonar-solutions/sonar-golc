@@ -123,7 +123,13 @@ const directoryconf = "/config"
 var logFile *os.File
 var AppConfig Config
 var logger *logrus.Logger
-var version1 = "2.0"
+
+// version1 is the config-file schema version this build expects. Only its major
+// component is enforced — see configVersionCompatible.
+//
+// This is the config compatibility version, not the build identity; the release tag is
+// stamped into assets.Version at link time.
+var version1 = "2.1"
 
 var directoriesToCreate = []string{
 	directoryconf,
@@ -133,6 +139,38 @@ var directoriesToCreate = []string{
 	"/byfile-report/pdf-report",
 	"/bylanguage-report/csv-report",
 	"/bylanguage-report/pdf-report",
+}
+
+// configVersionCompatible reports whether a config file's declared version can be used by
+// a build expecting `expected`.
+//
+// Only the major component has to match. A minor release adds optional fields with
+// defaults rather than changing the schema, so rejecting a 2.0 config from a 2.1 build
+// would force every existing user to hand-edit a file that works perfectly — a startup
+// failure with no underlying problem. A major bump remains the signal that the schema
+// really changed and the file must be regenerated.
+//
+// An empty or unparseable version is rejected: those indicate a malformed config rather
+// than an older one.
+func configVersionCompatible(configVersion, expected string) bool {
+	major := majorVersion(configVersion)
+	return major != "" && major == majorVersion(expected)
+}
+
+// majorVersion extracts the leading numeric component of a version string, tolerating the
+// `v`/`ver` prefixes used by release tags. Returns "" when there is no leading number.
+func majorVersion(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "ver")
+	v = strings.TrimPrefix(v, "v")
+	end := strings.IndexFunc(v, func(r rune) bool { return r < '0' || r > '9' })
+	if end == 0 {
+		return ""
+	}
+	if end > 0 {
+		return v[:end]
+	}
+	return v
 }
 
 // Check Exclusion File Exist
@@ -542,12 +580,12 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 	}
 
 	params := RepoParams{
-		ProjectKey: p.ProjectKey,
-		Namespace:  "",
-		RepoSlug:   p.RepoSlug,
-		MainBranch: p.MainBranch,
-		PathToScan: pathToScan,
-		WorkDir:    getWorkDir(platformConfig),
+		ProjectKey:   p.ProjectKey,
+		Namespace:    "",
+		RepoSlug:     p.RepoSlug,
+		MainBranch:   p.MainBranch,
+		PathToScan:   pathToScan,
+		WorkDir:      getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
@@ -571,12 +609,12 @@ func analyseBitSRVRepo(project interface{}, DestinationResult string, platformCo
 	fileNamePatterns := getStringSliceConfig(platformConfig, "FileNamePatterns")
 
 	params := RepoParams{
-		ProjectKey: p.ProjectKey,
-		Namespace:  "",
-		RepoSlug:   p.RepoSlug,
-		MainBranch: p.MainBranch,
-		PathToScan: fmt.Sprintf("%s://%s:%s@%sscm/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["Users"].(string), platformConfig["AccessToken"].(string), trimmedURL, p.ProjectKey, p.RepoSlug),
-		WorkDir:    getWorkDir(platformConfig),
+		ProjectKey:   p.ProjectKey,
+		Namespace:    "",
+		RepoSlug:     p.RepoSlug,
+		MainBranch:   p.MainBranch,
+		PathToScan:   fmt.Sprintf("%s://%s:%s@%sscm/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["Users"].(string), platformConfig["AccessToken"].(string), trimmedURL, p.ProjectKey, p.RepoSlug),
+		WorkDir:      getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
@@ -601,12 +639,12 @@ func analyseGithubRepo(project interface{}, DestinationResult string, platformCo
 
 	baseapi := extractDomain(platformConfig["Baseapi"].(string))
 	params := RepoParams{
-		ProjectKey: p.Org,
-		Namespace:  "",
-		RepoSlug:   p.RepoSlug,
-		MainBranch: p.MainBranch,
-		PathToScan: fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), baseapi, p.Org, p.RepoSlug),
-		WorkDir:    getWorkDir(platformConfig),
+		ProjectKey:   p.Org,
+		Namespace:    "",
+		RepoSlug:     p.RepoSlug,
+		MainBranch:   p.MainBranch,
+		PathToScan:   fmt.Sprintf("%s://%s:x-oauth-basic@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), baseapi, p.Org, p.RepoSlug),
+		WorkDir:      getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
@@ -632,12 +670,12 @@ func analyseGitlabRepo(project interface{}, DestinationResult string, platformCo
 	domain := extractDomain(platformConfig["Url"].(string))
 
 	params := RepoParams{
-		ProjectKey: p.Org,
-		Namespace:  p.Namespace,
-		RepoSlug:   p.RepoSlug,
-		MainBranch: p.MainBranch,
-		PathToScan: fmt.Sprintf("%s://gitlab-ci-token:%s@%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), domain, p.Namespace),
-		WorkDir:    getWorkDir(platformConfig),
+		ProjectKey:   p.Org,
+		Namespace:    p.Namespace,
+		RepoSlug:     p.RepoSlug,
+		MainBranch:   p.MainBranch,
+		PathToScan:   fmt.Sprintf("%s://gitlab-ci-token:%s@%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), domain, p.Namespace),
+		WorkDir:      getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
@@ -660,12 +698,12 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 	fileNamePatterns := getStringSliceConfig(platformConfig, "FileNamePatterns")
 
 	params := RepoParams{
-		ProjectKey: p.ProjectKey,
-		Namespace:  "",
-		RepoSlug:   p.RepoSlug,
-		MainBranch: p.MainBranch,
-		PathToScan: fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), "dev.azure.com", platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
-		WorkDir:    getWorkDir(platformConfig),
+		ProjectKey:   p.ProjectKey,
+		Namespace:    "",
+		RepoSlug:     p.RepoSlug,
+		MainBranch:   p.MainBranch,
+		PathToScan:   fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), "dev.azure.com", platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
+		WorkDir:      getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
 	performRepoAnalysis(params, DestinationResult, spin, results, count, analysisOptions{
@@ -699,14 +737,14 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 	// pkg/reporter/pdf can recover all three fields unambiguously.
 	outputFileName := fmt.Sprintf("Result_%s__%s__%s", params.ProjectKey, params.RepoSlug, params.MainBranch)
 	golocParams := goloc.Params{
-		Path:             params.PathToScan,
-		ByFile:           opts.ResultByFile,
-		ByAll:            opts.ResultAll,
-		ExcludePaths:     opts.ExcludePaths,
+		Path:              params.PathToScan,
+		ByFile:            opts.ResultByFile,
+		ByAll:             opts.ResultAll,
+		ExcludePaths:      opts.ExcludePaths,
 		ExcludeExtensions: opts.ExcludeExtensions,
 		IncludeExtensions: []string{},
-		FolderKeywords:   opts.FolderKeywords,
-		FileNamePatterns: opts.FileNamePatterns,
+		FolderKeywords:    opts.FolderKeywords,
+		FileNamePatterns:  opts.FileNamePatterns,
 		OrderByLang:       false,
 		OrderByFile:       false,
 		OrderByCode:       false,
@@ -889,8 +927,8 @@ type fileProjectBranch struct {
 }
 
 type fileAnalysisResult struct {
-	NumRepositories int                  `json:"NumRepositories"`
-	ProjectBranches []fileProjectBranch  `json:"ProjectBranches"`
+	NumRepositories int                 `json:"NumRepositories"`
+	ProjectBranches []fileProjectBranch `json:"ProjectBranches"`
 }
 
 func saveFileAnalysisResult(destDir, org string, dirs []string) error {
@@ -1190,8 +1228,9 @@ func runGolcInProcess(platform string) {
 		fmt.Fprintf(os.Stderr, "\n❌ Failed to load config: %s\n", err)
 		exitGolc(1)
 	}
-	if AppConfig.Release.Version != version1 {
-		fmt.Fprintf(os.Stderr, "\n❌ Version mismatch: expected %s but got %s - Use the correct config.json file!\n", version1, AppConfig.Release.Version)
+	if !configVersionCompatible(AppConfig.Release.Version, version1) {
+		fmt.Fprintf(os.Stderr, "\n❌ Incompatible config file: this build needs a %s.x config but found %q - Use the correct config.json file!\n",
+			majorVersion(version1), AppConfig.Release.Version)
 		exitGolc(1)
 	}
 

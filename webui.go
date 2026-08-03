@@ -252,7 +252,10 @@ func savePlatformConfig(platformKey string, platformCfg map[string]interface{}) 
 		// If config.json doesn't exist yet, build a minimal one
 		full = map[string]interface{}{
 			"platforms": map[string]interface{}{},
-			"Release":   map[string]interface{}{"Version": "2.0"},
+			// version1 rather than a literal: a hardcoded version here would silently
+			// drift from the one the scanner enforces, and the UI would then write
+			// config files its own scanner rejects.
+			"Release": map[string]interface{}{"Version": version1},
 		}
 	}
 	platforms, ok := full["platforms"].(map[string]interface{})

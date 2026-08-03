@@ -12,7 +12,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 
 **Supported platforms:** GitHub.com · GitHub Enterprise Server · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Local files/directories
 
-> Current version: **v2.0**
+> Current version: **v2.1**
 
 ---
 
