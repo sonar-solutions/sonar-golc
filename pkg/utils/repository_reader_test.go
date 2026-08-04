@@ -128,6 +128,68 @@ func TestDetectPlatformReportsNothingFound(t *testing.T) {
 	}
 }
 
+func TestPreferredBranchesKeepsFirstWhenNoneIsMain(t *testing.T) {
+	// In all-branches mode a repository can have several branches and none that counts as
+	// a main branch. Which one is reported is arbitrary, but it must not change: it decides
+	// whose line counts appear for that repository. First encountered wins.
+	got := PreferredBranches([]ProjectBranch{
+		{RepoSlug: "svc", MainBranch: "feature/a"},
+		{RepoSlug: "svc", MainBranch: "feature/b"},
+		{RepoSlug: "svc", MainBranch: "feature/c"},
+	})
+	if got["svc"].MainBranch != "feature/a" {
+		t.Errorf("kept %q, want the first branch encountered (feature/a)", got["svc"].MainBranch)
+	}
+}
+
+func TestPreferredBranchesMainWinsFromAnyPosition(t *testing.T) {
+	// A main branch must win wherever it appears, including after other branches.
+	for _, order := range [][]ProjectBranch{
+		{{RepoSlug: "svc", MainBranch: testBranchMain}, {RepoSlug: "svc", MainBranch: "feature/a"}},
+		{{RepoSlug: "svc", MainBranch: "feature/a"}, {RepoSlug: "svc", MainBranch: testBranchMain}},
+		{{RepoSlug: "svc", MainBranch: "feature/a"}, {RepoSlug: "svc", MainBranch: testBranchMain},
+			{RepoSlug: "svc", MainBranch: "feature/b"}},
+	} {
+		if got := PreferredBranches(order); got["svc"].MainBranch != testBranchMain {
+			t.Errorf("kept %q, want the main branch", got["svc"].MainBranch)
+		}
+	}
+}
+
+func TestPreferredBranchesMatchesTheOriginalNestedCondition(t *testing.T) {
+	// The original spelling nested two conditions. This pins that the flattened form
+	// agrees with it for every combination of (already seen, new is main, existing is
+	// main) — the property that makes the simplification safe rather than merely tidier.
+	original := func(preferred map[string]ProjectBranch, branch ProjectBranch) bool {
+		existing, exists := preferred[branch.RepoSlug]
+		if !exists || isMainBranch(branch.MainBranch) {
+			return !exists || isMainBranch(branch.MainBranch) || !isMainBranch(existing.MainBranch)
+		}
+		return false
+	}
+
+	branchNames := []string{testBranchMain, "feature/a"}
+	for _, existingBranch := range branchNames {
+		for _, newBranch := range branchNames {
+			for _, seen := range []bool{false, true} {
+				state := map[string]ProjectBranch{}
+				if seen {
+					state["svc"] = ProjectBranch{RepoSlug: "svc", MainBranch: existingBranch}
+				}
+				candidate := ProjectBranch{RepoSlug: "svc", MainBranch: newBranch}
+
+				_, isSeen := state["svc"]
+				flattened := !isSeen || isMainBranch(candidate.MainBranch)
+
+				if flattened != original(state, candidate) {
+					t.Errorf("seen=%v existing=%q new=%q: flattened=%v, original=%v",
+						seen, existingBranch, newBranch, flattened, original(state, candidate))
+				}
+			}
+		}
+	}
+}
+
 func TestPreferredBranchesPrefersMain(t *testing.T) {
 	// An all-branches scan records several entries per repository; the summaries show one.
 	got := PreferredBranches([]ProjectBranch{

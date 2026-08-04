@@ -138,11 +138,18 @@ func DetectPlatform(baseResultsDir string) (PlatformSpec, []byte, error) {
 // PreferredBranches collapses an inventory to one entry per repository, preferring a
 // main/master/default branch. An all-branches scan records several entries per repository,
 // and the summaries report one row each.
+//
+// When no branch is a recognised main branch, the first one encountered wins. That is
+// arbitrary but it is the long-standing behaviour, and changing which branch's line counts
+// get reported is not something a repository-layout refactor should do quietly.
+//
+// The original spelling nested this inside a second, wider condition. The two were
+// equivalent — the inner test is implied by the outer one in all eight combinations, so it
+// never changed the outcome — and flattening it to the outer test alone is what this is.
 func PreferredBranches(branches []ProjectBranch) map[string]ProjectBranch {
 	preferred := make(map[string]ProjectBranch, len(branches))
 	for _, branch := range branches {
-		existing, seen := preferred[branch.RepoSlug]
-		if !seen || isMainBranch(branch.MainBranch) || !isMainBranch(existing.MainBranch) {
+		if _, seen := preferred[branch.RepoSlug]; !seen || isMainBranch(branch.MainBranch) {
 			preferred[branch.RepoSlug] = branch
 		}
 	}
