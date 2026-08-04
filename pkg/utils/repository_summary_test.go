@@ -183,7 +183,11 @@ func TestGetFirstPartForPlatform(t *testing.T) {
 		expected string
 	}{
 		{"Azure platform", "azure", testProjectName},
-		{"BitBucket DC platform", "bitbucketdc", testProjectName},
+		// Canonical key, matching config.json's DevOps value, the inventory file
+		// name and the results page. pkg/utils used to spell it "bitbucketdc"
+		// internally, which is how the summary reports came to look for an inventory
+		// file no scanner writes.
+		{"BitBucket DC platform", "bitbucket_dc", testProjectName},
 		{"BitBucket platform", "bitbucket", testProjectName},
 		{"GitLab platform", "gitlab", testOrgName},
 		{"GitHub platform", "github", testOrgName},
@@ -813,8 +817,8 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 		if err != nil {
 			t.Errorf("detectPlatformAndReadAnalysis() error = %v, want nil", err)
 		}
-		if platform != "bitbucketdc" {
-			t.Errorf(msgDetectPlatformAnalysisResult, platform, "bitbucketdc")
+		if platform != "bitbucket_dc" {
+			t.Errorf(msgDetectPlatformAnalysisResult, platform, "bitbucket_dc")
 		}
 		if len(data) == 0 {
 			t.Error("detectPlatformAndReadAnalysis() returned empty data for BitBucket DC")
@@ -827,11 +831,11 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 	t.Run("All supported platforms", func(t *testing.T) {
 		// Test all platforms defined in the detection map
 		platforms := map[string]string{
-			"github":      "analysis_result_github.json",
-			"azure":       "analysis_result_azure.json",
-			"bitbucket":   "analysis_result_bitbucket.json",
-			"gitlab":      "analysis_result_gitlab.json",
-			"bitbucketdc": "analysis_result_bitbucket_dc.json",
+			"github":       "analysis_result_github.json",
+			"azure":        "analysis_result_azure.json",
+			"bitbucket":    "analysis_result_bitbucket.json",
+			"gitlab":       "analysis_result_gitlab.json",
+			"bitbucket_dc": "analysis_result_bitbucket_dc.json",
 		}
 
 		for platform, filename := range platforms {

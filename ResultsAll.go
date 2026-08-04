@@ -97,52 +97,16 @@ type LanguageData struct {
 	RelativePct float64 `json:"-"`
 }
 
-type RepositoryData struct {
-	Number int `json:"Number"`
-	// Key identifies the repository across page and reports — the stem of its
-	// result file — and is what the deselection checkboxes submit.
-	Key         string `json:"Key"`
-	Repository  string `json:"Repository"`
-	Org         string `json:"Org"`
-	Branch      string `json:"Branch"`
-	Lines       int    `json:"Lines"`
-	BlankLines  int    `json:"BlankLines"`
-	Comments    int    `json:"Comments"`
-	CodeLines   int    `json:"CodeLines"`
-	LinesF      string `json:"LinesF"`
-	BlankLinesF string `json:"BlankLinesF"`
-	CommentsF   string `json:"CommentsF"`
-	CodeLinesF  string `json:"CodeLinesF"`
-	// TopLanguages are the repository's largest languages, biggest first, excluding the
-	// language held out of the totals. Empty when no by-language result file was found.
-	TopLanguages []utils.LanguageShare `json:"TopLanguages,omitempty"`
-	// Deselected marks a row excluded from the totals. Set only on the table view
-	// (PageData.TableRows), where counted and deselected rows are interleaved.
-	Deselected bool `json:"Deselected,omitempty"`
-}
+// The repository row, its inventory and the platform naming rules all live in pkg/utils
+// now. Aliases rather than copies: two structurally identical definitions were what let
+// this page and the generated reports drift apart in the first place.
+type (
+	RepositoryData = utils.RepositoryData
+	ProjectBranch  = utils.ProjectBranch
+	AnalysisResult = utils.AnalysisResult
+)
 
-// PrimaryLanguage returns the repository's largest language, or "" when unknown. Used as
-// the sort key for the Top Languages column.
-func (r RepositoryData) PrimaryLanguage() string {
-	if len(r.TopLanguages) == 0 {
-		return ""
-	}
-	return r.TopLanguages[0].Language
-}
-
-type ProjectBranch struct {
-	Org         string `json:"Org"`
-	ProjectKey  string `json:"ProjectKey"`
-	RepoSlug    string `json:"RepoSlug"`
-	MainBranch  string `json:"MainBranch"`
-	LargestSize int64  `json:"LargestSize"`
-}
-
-type AnalysisResult struct {
-	NumRepositories int             `json:"NumRepositories"`
-	ProjectBranches []ProjectBranch `json:"ProjectBranches"`
-}
-
+// AnalysisResult_ProjectBranch is the older spelling used through this file.
 type AnalysisResult_ProjectBranch = ProjectBranch
 
 type RepositoryLanguageData struct {
@@ -330,195 +294,28 @@ func isMainBranch(branchName string) bool {
 	return false
 }
 
+// getRepositoryData collects every analyzed repository. The layout logic — inventory
+// discovery, per-platform naming and the deselection key — lives in pkg/utils, so this
+// page and the generated reports read through exactly the same rules. They used to carry
+// separate copies, and the drift between them produced repositories that were deselected
+// here yet still counted in the PDF.
 func getRepositoryData() ([]RepositoryData, error) {
-	var repositories []RepositoryData
-
-	// Detect platform and read analysis results
-	platform, analysisFile, err := detectPlatformAndReadAnalysis()
-	if err != nil {
-		fmt.Printf("❌ Error reading analysis result file: %v\n", err)
-		return nil, err
-	}
-
-	var analysisResult AnalysisResult
-	err = json.Unmarshal(analysisFile, &analysisResult)
-	if err != nil {
-		fmt.Printf("❌ Error decoding JSON analysis result file for platform %s: %v\n", platform, err)
-		return nil, err
-	}
-
-	// Group by repository to avoid duplicate entries (needed for --all-branches mode)
-	repoMap := make(map[string]AnalysisResult_ProjectBranch)
-
-	// First pass: Group by repository and prefer main/master/default branches
-	for _, branch := range analysisResult.ProjectBranches {
-		repoKey := branch.RepoSlug
-
-		// If we haven't seen this repo, or if this is a main branch, use it
-		if existing, exists := repoMap[repoKey]; !exists || isMainBranch(branch.MainBranch) {
-			// Only override if current is main branch, or existing is not main branch
-			if !exists || isMainBranch(branch.MainBranch) || !isMainBranch(existing.MainBranch) {
-				repoMap[repoKey] = branch
-			}
-		}
-	}
-
-	// Process each unique repository (now showing only one branch per repository)
-	i := 0
-	for _, branch := range repoMap {
-		i++
-		// Construct filename for byfile report using platform-specific logic
-		var fileName, byLanguagePath string
-		if platform == "file" {
-			// File mode uses simpler naming: Result_{slug}_byfile.json
-			fileName = buildSecurePath(byFileReportDir,
-				fmt.Sprintf("Result_%s_byfile.json", sanitizePathComponent(branch.RepoSlug)))
-			byLanguagePath = buildSecurePath(byLanguageReportDir,
-				fmt.Sprintf("Result_%s.json", sanitizePathComponent(branch.RepoSlug)))
-		} else {
-			firstPart := getFirstPartForPlatform(platform, branch, branch.RepoSlug)
-			// Match the Result_<Org>__<Repo>__<Branch> convention written by
-			// performRepoAnalysis in golc.go. Double-underscore between fields
-			// keeps `_` free inside any component for unambiguous parsing.
-			fileName = buildSecurePath(byFileReportDir,
-				fmt.Sprintf("Result_%s__%s__%s_byfile.json",
-					sanitizePathComponent(firstPart),
-					sanitizePathComponent(branch.RepoSlug),
-					sanitizePathComponent(branch.MainBranch)))
-			byLanguagePath = buildSecurePath(byLanguageReportDir,
-				fmt.Sprintf("Result_%s__%s__%s.json",
-					sanitizePathComponent(firstPart),
-					sanitizePathComponent(branch.RepoSlug),
-					sanitizePathComponent(branch.MainBranch)))
-		}
-
-		// Read the byfile report
-		fileData, err := os.ReadFile(fileName)
-		if err != nil {
-			fmt.Printf("❌ Error reading byfile report %s: %v\n", fileName, err)
-			continue // Skip this repository if file doesn't exist
-		}
-
-		// Parse the JSON structure
-		var reportData struct {
-			TotalLines      int `json:"TotalLines"`
-			TotalBlankLines int `json:"TotalBlankLines"`
-			TotalComments   int `json:"TotalComments"`
-			TotalCodeLines  int `json:"TotalCodeLines"`
-		}
-
-		err = json.Unmarshal(fileData, &reportData)
-		if err != nil {
-			fmt.Printf("❌ Error decoding JSON byfile report %s: %v\n", fileName, err)
-			continue
-		}
-
-		// Code lines for report total: exclude JSON to match SonarQube behavior. The same
-		// parse yields the repository's largest languages — the per-language list is
-		// already in hand here, so surfacing the top few costs no extra read.
-		codeLinesForReport := reportData.TotalCodeLines
-		var topLanguages []utils.LanguageShare
-		if langData, err := os.ReadFile(byLanguagePath); err == nil {
-			var byLang struct {
-				Results []utils.LanguageShare `json:"Results"`
-			}
-			if json.Unmarshal(langData, &byLang) == nil {
-				for _, r := range byLang.Results {
-					if strings.TrimSpace(r.Language) == utils.LanguageExcludedFromTotalLOC {
-						codeLinesForReport = reportData.TotalCodeLines - r.CodeLines
-						break
-					}
-				}
-				topLanguages = utils.RankTopLanguages(byLang.Results, utils.TopLanguagesShown)
-			}
-		}
-
-		// Built from the inventory fields through the shared key function rather than
-		// read back out of byLanguagePath. This page and the report generators
-		// construct their paths separately, so a key recovered from a path inherits
-		// every difference between them — which is how a repository could be
-		// deselected here and still counted in the generated reports.
-		key := utils.DeselectionKeyForRepo(platform, getFirstPartForPlatform(platform, branch, branch.RepoSlug),
-			branch.RepoSlug, branch.MainBranch)
-
-		// Create repository data entry (CodeLines excludes JSON for report total)
-		repo := RepositoryData{
-			Number:       i,
-			Key:          key,
-			Repository:   branch.RepoSlug,
-			Org:          branch.Org,
-			Branch:       branch.MainBranch,
-			Lines:        reportData.TotalLines,
-			BlankLines:   reportData.TotalBlankLines,
-			Comments:     reportData.TotalComments,
-			CodeLines:    codeLinesForReport,
-			LinesF:       utils.FormatCodeLines(float64(reportData.TotalLines)),
-			BlankLinesF:  utils.FormatCodeLines(float64(reportData.TotalBlankLines)),
-			CommentsF:    utils.FormatCodeLines(float64(reportData.TotalComments)),
-			CodeLinesF:   utils.FormatCodeLines(float64(codeLinesForReport)),
-			TopLanguages: topLanguages,
-		}
-
-		repositories = append(repositories, repo)
-	}
-
-	// Sort repositories by Code Lines (descending) by default
-	sort.Slice(repositories, func(i, j int) bool {
-		return repositories[i].CodeLines > repositories[j].CodeLines
-	})
-
-	// Update numbers after sorting
-	for i := range repositories {
-		repositories[i].Number = i + 1
-	}
-
-	return repositories, nil
+	return utils.ReadRepositoryData(resultsBaseDir)
 }
 
 func detectPlatformAndReadAnalysis() (string, []byte, error) {
-	// Try to detect platform from existing analysis result files
-	// Supporting all platforms from config_sample.json
-	platforms := []string{"github", "gitlab", "bitbucket", "bitbucket_dc", "azure", "file"}
-
-	for _, platform := range platforms {
-		filePath := fmt.Sprintf("%s/analysis_result_%s.json", configResultsDir, platform)
-		if data, err := os.ReadFile(filePath); err == nil {
-			return platform, data, nil
-		}
-	}
-
-	// Default fallback to github if no specific file found
-	data, err := os.ReadFile(fmt.Sprintf("%s/analysis_result_github.json", configResultsDir))
-	if err != nil {
-		return "", nil, fmt.Errorf("no analysis result file found")
-	}
-	return "github", data, nil
+	spec, data, err := utils.DetectPlatform(resultsBaseDir)
+	return spec.Name, data, err
 }
 
-// Helper function to determine the correct first part of filename based on platform
+// getFirstPartForPlatform returns the leading component of a result file name — the
+// organization for GitHub and GitLab, the project key for Azure and Bitbucket.
 func getFirstPartForPlatform(platform string, branch AnalysisResult_ProjectBranch, repoName string) string {
-	switch platform {
-	case "azure":
-		// Azure uses ProjectKey for filenames
-		if branch.ProjectKey != "" {
-			return branch.ProjectKey
-		}
-		// Fallback to repoName if ProjectKey is not available
-		return repoName
-	case "bitbucket", "bitbucket_dc":
-		// Bitbucket uses ProjectKey for filenames
-		if branch.ProjectKey != "" {
-			return branch.ProjectKey
-		}
-		// Fallback to Org if ProjectKey is not available
-		return branch.Org
-	case "github", "gitlab", "file":
-		// GitHub, GitLab, and file use Org
-		return branch.Org
-	default:
-		// Default fallback to Org
+	spec, ok := utils.PlatformSpecFor(platform)
+	if !ok {
 		return branch.Org
 	}
+	return spec.FirstPart(branch)
 }
 
 // Helper function for cases where we only have orgName and repoName
