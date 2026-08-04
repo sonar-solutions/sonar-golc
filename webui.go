@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SonarSource-Demos/sonar-golc/assets"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 )
 
@@ -46,12 +47,12 @@ func getEnvPort(envKey string, defaultVal int) int {
 type Phase string
 
 const (
-	PhaseIdle       Phase = "idle"
-	PhaseIdentify   Phase = "identifying"
-	PhaseAnalyzing  Phase = "analyzing"
-	PhaseReporting  Phase = "reporting"
-	PhaseComplete   Phase = "complete"
-	PhaseError      Phase = "error"
+	PhaseIdle      Phase = "idle"
+	PhaseIdentify  Phase = "identifying"
+	PhaseAnalyzing Phase = "analyzing"
+	PhaseReporting Phase = "reporting"
+	PhaseComplete  Phase = "complete"
+	PhaseError     Phase = "error"
 )
 
 const (
@@ -62,9 +63,9 @@ const (
 )
 
 type ProgressEvent struct {
-	Type    string `json:"type"`             // "progress" | "log" | "complete" | "error"
-	Message string `json:"message"`          // displayed in log terminal (original log line when available)
-	Label   string `json:"label,omitempty"`  // progress-bar label; falls back to Message when empty
+	Type    string `json:"type"`            // "progress" | "log" | "complete" | "error"
+	Message string `json:"message"`         // displayed in log terminal (original log line when available)
+	Label   string `json:"label,omitempty"` // progress-bar label; falls back to Message when empty
 	Phase   Phase  `json:"phase"`
 	Current int    `json:"current"`
 	Total   int    `json:"total"`
@@ -174,7 +175,7 @@ var platformDefaults = map[string]map[string]interface{}{
 	},
 	"BitBucketSRV": {
 		"DevOps": "bitbucket_dc", "Apiver": "1.0", "Baseapi": "rest/api/",
-		"FileExclusion": "",
+		"FileExclusion":  "",
 		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
 		"ResultAll": true, "Org": true, "Period": float64(-5), "Factor": float64(33),
 		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
@@ -251,7 +252,10 @@ func savePlatformConfig(platformKey string, platformCfg map[string]interface{}) 
 		// If config.json doesn't exist yet, build a minimal one
 		full = map[string]interface{}{
 			"platforms": map[string]interface{}{},
-			"Release":   map[string]interface{}{"Version": "2.0"},
+			// version1 rather than a literal: a hardcoded version here would silently
+			// drift from the one the scanner enforces, and the UI would then write
+			// config files its own scanner rejects.
+			"Release": map[string]interface{}{"Version": version1},
 		}
 	}
 	platforms, ok := full["platforms"].(map[string]interface{})
@@ -1031,6 +1035,13 @@ func openBrowser(url string) {
 
 func main() {
 	utils.ChdirToBinaryDir()
+
+	// Report the build and exit. Without this the stamped version was unreachable: there
+	// was no way to ask a binary which release it came from.
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Printf("GoLC %s\n", assets.Version)
+		os.Exit(0)
+	}
 
 	// When invoked as an internal analysis subprocess, run the GoLC engine and exit.
 	if len(os.Args) > 1 && os.Args[1] == "--internal-run" {

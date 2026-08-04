@@ -12,7 +12,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 
 **Supported platforms:** GitHub.com · GitHub Enterprise Server · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Local files/directories
 
-> Current version: **v2.0**
+> Current version: **v2.1**
 
 ---
 
@@ -22,6 +22,8 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 - [Configuration](#configuration)
   - [Optional Parameters](#optional-parameters)
 - [Reports](#reports)
+  - [Languages per repository](#languages-per-repository)
+  - [Excluding repositories from the totals](#excluding-repositories-from-the-totals)
 - [Supported Languages](#supported-languages)
 - [Execution Log](#execution-log)
 - [Troubleshooting](#troubleshooting)
@@ -134,10 +136,75 @@ The same data is available as exportable files in the `Results/` folder next to 
 
 | Report | Contents |
 |--------|----------|
-| `GlobalReport.pdf / .json` | Organisation-wide totals: lines of code per language, largest repository, total repository and branch counts |
-| `byfile-report/repository_summary.*` | Cross-repository file summary — lists every analysed repository with its total lines, blank lines, comments, and code lines |
+| `GlobalReport.pdf / .json` | Organisation-wide totals: lines of code per language, largest repository, total repository and branch counts, and a **Top 30 Repositories** table (branch, main language, LOC, share of total) |
+| `byfile-report/repository_summary.*` | Cross-repository file summary — lists every analysed repository with its total lines, blank lines, comments, and code lines, plus its largest languages |
 | `byfile-report/*_byfile.*` | Per-repository file tree — one row per source file with individual line counts |
 | `bylanguage-report/*.json` | Per-repository language breakdown — one row per detected language with line counts |
+
+### Languages per repository
+
+The **Lines of Code by Repository** table shows each repository's three largest
+languages with their code lines (`Python 54.9K · C# 50.0K · YAML 32.0K`), sortable by
+the primary language. The full breakdown for a repository is one click away on its
+detail page.
+
+The same information reaches the reports:
+
+| Report | Languages shown |
+|--------|-----------------|
+| `repository_summary.csv` / `.json` | all three, in fixed columns so a spreadsheet can sort or pivot on them |
+| `repository_summary.pdf` | the main language (the table has no room for three) |
+| `GlobalReport.pdf` | the main language of each of the Top 30 repositories |
+
+> JSON is excluded from these rankings, exactly as it is excluded from the code-line
+> totals they sit beside. A repository whose by-language results are missing shows `—`.
+
+### Excluding repositories from the totals
+
+Some repositories should not count towards a sizing exercise — a repository that was
+archived after the scan, a mirror, a vendored dependency dump. On the Results
+dashboard, the **Lines of Code by Repository** table has a checkbox per repository.
+Uncheck the ones to leave out and click **Apply selection** — the totals, language
+breakdown, and chart update immediately.
+
+This works on every platform (GitHub, GitHub Enterprise, GitLab, Bitbucket
+Cloud/Data Center, Azure DevOps, and local directories), because it operates on the
+analysis results rather than on any platform API. **No re-scan is needed** — the
+repositories were already counted, and only the totals are recomputed.
+
+#### Original and customized reports
+
+Once a selection exists, the **Reports** menu offers two sets:
+
+| | Covers | Files |
+|---|---|---|
+| **Full scan** | every analysed repository, whatever is selected | `Results/GlobalReport.pdf`, `Results/byfile-report/repository_summary.*` |
+| **Current selection** | only the selected repositories | `Results/customized/…` (same layout) |
+
+The original is never overwritten, so it is always available for comparison. Downloads
+are named `..._full-scan.pdf` and `..._selection.pdf` so the two cannot be confused
+once detached from the dashboard.
+
+Reports are generated **when you click them**, not when you change the selection, so
+applying a selection is instant and no PDF is ever served stale. The first click after
+a change takes a moment while the report is built. (GoLC also rebuilds them in the
+background after a change, so anything reading `Results/` directly — a script, a CI
+job — finds current files too.)
+
+Both PDFs and the CSV state what was excluded and what the unfiltered total was, and
+the customized report's headline figures are explicitly labelled *(filtered)*, so a
+filtered report can be handed to a customer without misleading them.
+
+**It is always reversible.** The per-repository result files are never modified and
+`GlobalReport.json` keeps the figures as scanned, so **Reset to full scan** restores
+the original figures exactly. The selection is stored in
+`Results/config/deselected_repos.json` and survives a dashboard restart. At least one
+repository must remain selected.
+
+> A new analysis run clears the selection: it rediscovers repositories from scratch,
+> so a selection made against the previous run could silently drop repositories from
+> the new totals. To exclude repositories *before* a scan instead, so they are never
+> cloned, use the platform's `FileExclusion` file in `config.json`.
 
 ---
 

@@ -348,12 +348,16 @@ func TestGenerateRepositoryCSVReport(t *testing.T) {
 		t.Fatalf("Failed to read generated CSV file: %v", err)
 	}
 
-	// Check that the file contains expected data
+	// Check that the file contains expected data. The top-language columns are appended
+	// after the original ones, so existing column positions are unchanged and the rows
+	// simply gain empty trailing fields when no language data is available.
 	contentStr := string(content)
+	languagePadding := strings.Repeat(",", TopLanguagesShown*2)
 	expectedStrings := []string{
-		"#,Repository,Branch,Lines,Blank Lines,Comments,Code Lines",
-		"1,repo1,main,100,10,20,70",
-		"2,repo2,master,200,15,25,160",
+		"#,Repository,Branch,Lines,Blank Lines,Comments,Code Lines,Language 1,Language 1 Code Lines," +
+			"Language 2,Language 2 Code Lines,Language 3,Language 3 Code Lines",
+		"1,repo1,main,100,10,20,70" + languagePadding,
+		"2,repo2,master,200,15,25,160" + languagePadding,
 		"TOTAL,2 repositories,,300,25,45,230",
 	}
 
@@ -728,8 +732,12 @@ func TestCreatePDFTableHeader(t *testing.T) {
 
 func TestCreateRepositoryPDFRow(t *testing.T) {
 	t.Run("PDF row creation", func(t *testing.T) {
-		// This tests the helper function that was extracted during refactoring
+		// This tests the helper function that was extracted during refactoring.
+		// A font must be set, as every production caller does before drawing rows: the
+		// language cell is truncated by measured width, and gofpdf cannot measure a
+		// string without a current font.
 		pdf := gofpdf.New("P", "mm", "A4", "")
+		pdf.SetFont("Arial", "", 8)
 		pdf.AddPage()
 		tr := pdf.UnicodeTranslatorFromDescriptor("")
 
@@ -796,7 +804,7 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 			},
 		}
 		analysisJSON, _ := json.Marshal(analysisData)
-		err = os.WriteFile("Results/config/analysis_repos_bitbucketdc.json", analysisJSON, 0644)
+		err = os.WriteFile("Results/config/analysis_result_bitbucket_dc.json", analysisJSON, 0644)
 		if err != nil {
 			t.Fatalf("Failed to create BitBucket DC file: %v", err)
 		}
@@ -813,7 +821,7 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 		}
 
 		// Clean up
-		os.Remove("Results/config/analysis_repos_bitbucketdc.json")
+		os.Remove("Results/config/analysis_result_bitbucket_dc.json")
 	})
 
 	t.Run("All supported platforms", func(t *testing.T) {
@@ -823,7 +831,7 @@ func TestAdvancedPlatformDetection(t *testing.T) {
 			"azure":       "analysis_result_azure.json",
 			"bitbucket":   "analysis_result_bitbucket.json",
 			"gitlab":      "analysis_result_gitlab.json",
-			"bitbucketdc": "analysis_repos_bitbucketdc.json",
+			"bitbucketdc": "analysis_result_bitbucket_dc.json",
 		}
 
 		for platform, filename := range platforms {

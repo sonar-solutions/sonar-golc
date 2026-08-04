@@ -31,7 +31,13 @@ func TestRenderGlobalPDF_NoMojibakeStatCard(t *testing.T) {
 		NumberRepos:            2,
 	}
 	langs := []LanguageData{{Language: "Golang", CodeLines: 29, Percentage: 100, CodeLinesF: "29"}}
-	if err := renderGlobalPDF(langs, ginfo, nil, nil); err != nil {
+	if err := renderGlobalPDF(globalPDFContent{
+		Languages:   langs,
+		Info:        ginfo,
+		RawTotalLOC: ginfo.TotalLinesOfCode,
+		RepoTotals:  []RepoTotal{{Repo: "café-service", Branch: "main", CodeLines: 18, PrimaryLanguage: "Golang"}},
+		OutputPath:  "Results/GlobalReport.pdf",
+	}); err != nil {
 		t.Fatalf("renderGlobalPDF: %v", err)
 	}
 
@@ -123,11 +129,20 @@ func TestAccumulateLanguageTotalsFromFile(t *testing.T) {
 		},
 	})
 	totals := map[string]int{}
-	if err := accumulateLanguageTotalsFromFile(path, totals); err != nil {
+	fileLOC, primary, err := accumulateLanguageTotalsFromFile(path, totals)
+	if err != nil {
 		t.Fatalf("accumulateLanguageTotalsFromFile error: %v", err)
 	}
 	if totals["Go"] != 100 || totals["Java"] != 50 {
 		t.Errorf("unexpected totals: %+v", totals)
+	}
+	if fileLOC != 150 {
+		t.Errorf("accumulateLanguageTotalsFromFile fileLOC = %d, want 150", fileLOC)
+	}
+	// The largest language of that file with its own line count, used for the
+	// top-repositories table.
+	if primary.Language != "Go" || primary.CodeLines != 100 {
+		t.Errorf("accumulateLanguageTotalsFromFile primary = %+v, want Go/100", primary)
 	}
 	if _, ok := totals[""]; ok {
 		t.Errorf("blank language should be ignored")
@@ -177,7 +192,7 @@ func TestWriteLanguageTotalsJSONAndReadGlobalInfoAndRenderPDF(t *testing.T) {
 	}
 
 	// write language totals
-	data, err := writeLanguageTotalsJSON(map[string]int{"Go": 100})
+	data, err := writeLanguageTotalsJSON(map[string]int{"Go": 100}, "Results/code_lines_by_language.json")
 	if err != nil {
 		t.Fatalf("writeLanguageTotalsJSON error: %v", err)
 	}

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-export TAG="ver2.0" # Release TAG in GitHub
-export Release1="ver2.0" # Release Number
+export TAG="ver2.1.0" # Release TAG in GitHub
+export Release1="ver2.1.0" # Release Number
 export buildpath="XXXXXXX"  # Replace with the path where the release files are located
 
 CMD=`PWD`
@@ -20,11 +20,11 @@ build_platform() {
 
   # -trimpath removes file system paths from binaries for security/privacy
   if [ "${GOOS}" = "windows" ]; then
-      go build -trimpath -tags=webui -ldflags "-X main.version=${TAG}" -o "${DEST}/webui.exe" webui.go golc.go
-      go build -trimpath -tags=resultsall -o "${DEST}/ResultsAll.exe" ResultsAll.go
+      go build -trimpath -tags=webui -ldflags "-X github.com/SonarSource-Demos/sonar-golc/assets.Version=${TAG}" -o "${DEST}/webui.exe" webui.go golc.go
+      go build -trimpath -tags=resultsall -ldflags "-X github.com/SonarSource-Demos/sonar-golc/assets.Version=${TAG}" -o "${DEST}/ResultsAll.exe" ResultsAll.go
   else
-      go build -trimpath -tags=webui -ldflags "-X main.version=${TAG}" -o "${DEST}/webui" webui.go golc.go
-      go build -trimpath -tags=resultsall -o "${DEST}/ResultsAll" ResultsAll.go
+      go build -trimpath -tags=webui -ldflags "-X github.com/SonarSource-Demos/sonar-golc/assets.Version=${TAG}" -o "${DEST}/webui" webui.go golc.go
+      go build -trimpath -tags=resultsall -ldflags "-X github.com/SonarSource-Demos/sonar-golc/assets.Version=${TAG}" -o "${DEST}/ResultsAll" ResultsAll.go
   fi
 
   cp README.md  "${DEST}/"

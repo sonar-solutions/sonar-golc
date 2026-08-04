@@ -21,7 +21,7 @@ func TestRenderScanSummarySection(t *testing.T) {
 			pdf := gofpdf.New("P", "mm", "A4", "")
 			pdf.SetFont("Helvetica", "", 8)
 			pdf.AddPage()
-			renderScanSummarySection(pdf, summary, 4, 15.0, 180.0)
+			renderScanSummarySection(pdf, summary, 4, 3, 15.0, 180.0)
 			if err := pdf.OutputFileAndClose(filepath.Join(t.TempDir(), "out.pdf")); err != nil {
 				t.Fatalf("render/output failed: %v", err)
 			}

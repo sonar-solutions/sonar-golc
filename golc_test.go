@@ -5,6 +5,7 @@ package main
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -656,4 +657,71 @@ func TestFlagsFunctions(t *testing.T) {
 			t.Error("setupResultsDirectory should return non-empty directory path")
 		}
 	})
+}
+
+// TestConfigVersionCompatible pins the compatibility rule, because it decides whether an
+// existing user's config.json still loads. Getting it wrong means either a startup failure
+// with no underlying problem, or accepting a config whose schema really did change.
+func TestConfigVersionCompatible(t *testing.T) {
+	cases := []struct {
+		name     string
+		config   string
+		expected string
+		want     bool
+	}{
+		{"exact match", "2.1", "2.1", true},
+		// The reason this rule exists: a 2.0 config must keep working on a 2.1 build.
+		{"older minor accepted", "2.0", "2.1", true},
+		{"newer minor accepted", "2.5", "2.1", true},
+		{"patch level accepted", "2.0.6", "2.1", true},
+		{"tag prefixes tolerated", "ver2.0", "2.1", true},
+		{"v prefix tolerated", "v2.0", "2.1", true},
+		{"whitespace tolerated", " 2.0 ", "2.1", true},
+		// A major bump is the signal that the schema genuinely changed.
+		{"older major rejected", "1.9", "2.1", false},
+		{"newer major rejected", "3.0", "2.1", false},
+		// Malformed rather than merely old.
+		{"empty rejected", "", "2.1", false},
+		{"non-numeric rejected", "abc", "2.1", false},
+		{"prefix only rejected", "v", "2.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := configVersionCompatible(tc.config, tc.expected); got != tc.want {
+				t.Errorf("configVersionCompatible(%q, %q) = %v, want %v", tc.config, tc.expected, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMajorVersion(t *testing.T) {
+	cases := map[string]string{
+		"2.1": "2", "2.0.6": "2", "ver2.0": "2", "v3": "3", "10.4": "10",
+		"2": "2", "": "", "abc": "", "v": "",
+	}
+	for in, want := range cases {
+		if got := majorVersion(in); got != want {
+			t.Errorf("majorVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestVersionsAreInLockstep guards the pairing that actually breaks users: the UI writes
+// version1 into every config it creates, so a literal that drifted from the scanner's
+// expectation would make the UI generate configs its own scanner refuses.
+func TestShippedSampleConfigIsCompatible(t *testing.T) {
+	data, err := os.ReadFile("config_sample.json")
+	if err != nil {
+		t.Skipf("config_sample.json not readable: %v", err)
+	}
+	var sample struct {
+		Release struct{ Version string } `json:"Release"`
+	}
+	if err := json.Unmarshal(data, &sample); err != nil {
+		t.Fatalf("config_sample.json is not valid JSON: %v", err)
+	}
+	if !configVersionCompatible(sample.Release.Version, version1) {
+		t.Errorf("config_sample.json declares %q, which this build (%q) would reject",
+			sample.Release.Version, version1)
+	}
 }
