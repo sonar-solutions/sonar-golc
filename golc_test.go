@@ -18,6 +18,7 @@ import (
 	getbibucketdc "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucketdc"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgithub"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgitlab"
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 
 	"github.com/sirupsen/logrus"
 )
@@ -723,5 +724,315 @@ func TestShippedSampleConfigIsCompatible(t *testing.T) {
 	if !configVersionCompatible(sample.Release.Version, version1) {
 		t.Errorf("config_sample.json declares %q, which this build (%q) would reject",
 			sample.Release.Version, version1)
+	}
+}
+
+// --- Regression tests for the config panic and the file-platform directory count ---
+
+// TestNormalizePlatformConfigFillsMissingKeys covers the crash this function exists to
+// prevent: a config that simply omits an optional key used to reach an unchecked
+// assertion such as platformConfig["FileLoad"].(string) and panic with
+// "interface conversion: interface {} is nil, not string".
+func TestNormalizePlatformConfigFillsMissingKeys(t *testing.T) {
+	cfg := map[string]interface{}{"DevOps": "file", "Directory": "/tmp"}
+
+	if mistyped := normalizePlatformConfig(cfg); len(mistyped) != 0 {
+		t.Fatalf("absent keys must be filled silently, got mistyped=%v", mistyped)
+	}
+
+	// The assertions the analysis actually performs must now all succeed.
+	for _, key := range []string{"FileLoad", "FileExclusion", "Organization", "Protocol"} {
+		if _, ok := cfg[key].(string); !ok {
+			t.Errorf("cfg[%q] = %#v, want a string", key, cfg[key])
+		}
+	}
+	for _, key := range []string{"ResultAll", "ResultByFile", "ScanSubDirs"} {
+		if _, ok := cfg[key].(bool); !ok {
+			t.Errorf("cfg[%q] = %#v, want a bool", key, cfg[key])
+		}
+	}
+	for _, key := range []string{"Workers", "NumberWorkerRepos"} {
+		if _, ok := cfg[key].(float64); !ok {
+			t.Errorf("cfg[%q] = %#v, want a float64", key, cfg[key])
+		}
+	}
+	if _, ok := cfg["ExtExclusion"].([]interface{}); !ok {
+		t.Errorf("cfg[\"ExtExclusion\"] = %#v, want []interface{}", cfg["ExtExclusion"])
+	}
+}
+
+func TestNormalizePlatformConfigPreservesSuppliedValues(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "github",
+		"Organization": "acme",
+		"ResultAll":    false,
+		"Workers":      float64(4),
+		"ExtExclusion": []interface{}{".css"},
+	}
+
+	normalizePlatformConfig(cfg)
+
+	if cfg["Organization"] != "acme" {
+		t.Errorf("Organization = %#v, want \"acme\"", cfg["Organization"])
+	}
+	if cfg["ResultAll"] != false {
+		t.Errorf("ResultAll = %#v, want false (a supplied false must not be overwritten)", cfg["ResultAll"])
+	}
+	if cfg["Workers"] != float64(4) {
+		t.Errorf("Workers = %#v, want 4", cfg["Workers"])
+	}
+	if got := cfg["ExtExclusion"].([]interface{}); len(got) != 1 || got[0] != ".css" {
+		t.Errorf("ExtExclusion = %#v, want [.css]", got)
+	}
+}
+
+func TestNormalizePlatformConfigReportsMistypedKeys(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "file",
+		"Workers":      "ten",  // string where a number belongs
+		"ResultAll":    "yes",  // string where a bool belongs
+		"ExtExclusion": ".css", // string where an array belongs
+		"Organization": nil,    // explicit null: absent, not mistyped
+	}
+
+	mistyped := normalizePlatformConfig(cfg)
+
+	want := []string{"ExtExclusion", "ResultAll", "Workers"} // sorted, and no "Organization"
+	if len(mistyped) != len(want) {
+		t.Fatalf("mistyped = %v, want %v", mistyped, want)
+	}
+	for i := range want {
+		if mistyped[i] != want[i] {
+			t.Fatalf("mistyped = %v, want %v", mistyped, want)
+		}
+	}
+	if _, ok := cfg["Workers"].(float64); !ok {
+		t.Errorf("a mistyped key must be replaced by its default, got %#v", cfg["Workers"])
+	}
+	if _, ok := cfg["Organization"].(string); !ok {
+		t.Errorf("an explicit null must be replaced by its default, got %#v", cfg["Organization"])
+	}
+}
+
+func TestNormalizePlatformConfigNilMap(t *testing.T) {
+	if got := normalizePlatformConfig(nil); got != nil {
+		t.Errorf("normalizePlatformConfig(nil) = %v, want nil", got)
+	}
+}
+
+// writeResultFile writes one per-repository result file of the shape the analysis
+// phase produces.
+func writeResultFile(t *testing.T, dir, name string, totalCodeLines, jsonCodeLines int) {
+	t.Helper()
+	payload := map[string]interface{}{
+		"TotalCodeLines": totalCodeLines,
+		"Results": []map[string]interface{}{
+			{"Language": "Java", "CodeLines": totalCodeLines - jsonCodeLines},
+			{"Language": utils.LanguageExcludedFromTotalLOC, "CodeLines": jsonCodeLines},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// TestAggregateResultFilesCountsEveryRepository is the regression test for the
+// directory count. Repository counting used to live inside the largest-repository
+// branch, so it reported how many times the running maximum changed. These sizes
+// ascend, which would have hidden the bug, then descend, which exposes it: a
+// 5-directory scan reported 2.
+func TestAggregateResultFilesCountsEveryRepository(t *testing.T) {
+	dir := t.TempDir()
+	writeResultFile(t, dir, "Result_alpha.json", 100, 0)
+	writeResultFile(t, dir, "Result_bravo.json", 900, 0) // new maximum
+	writeResultFile(t, dir, "Result_charlie.json", 50, 0)
+	writeResultFile(t, dir, "Result_delta.json", 20, 0)
+	writeResultFile(t, dir, "Result_echo.json", 10, 0)
+
+	aggregate, err := aggregateResultFiles(dir, true)
+	if err != nil {
+		t.Fatalf("aggregateResultFiles: %v", err)
+	}
+
+	if aggregate.Repositories != 5 {
+		t.Errorf("Repositories = %d, want 5 (one per result file, not per new maximum)",
+			aggregate.Repositories)
+	}
+	if aggregate.TotalCodeLines != 1080 {
+		t.Errorf("TotalCodeLines = %d, want 1080", aggregate.TotalCodeLines)
+	}
+	if aggregate.MaxRepo != "bravo" || aggregate.MaxCodeLines != 900 {
+		t.Errorf("largest = %q/%d, want bravo/900", aggregate.MaxRepo, aggregate.MaxCodeLines)
+	}
+}
+
+func TestAggregateResultFilesExcludesJSONFromTotals(t *testing.T) {
+	dir := t.TempDir()
+	writeResultFile(t, dir, "Result_alpha.json", 1000, 400)
+
+	aggregate, err := aggregateResultFiles(dir, true)
+	if err != nil {
+		t.Fatalf("aggregateResultFiles: %v", err)
+	}
+	if aggregate.TotalCodeLines != 600 {
+		t.Errorf("TotalCodeLines = %d, want 600 (1000 less the 400 excluded)", aggregate.TotalCodeLines)
+	}
+}
+
+func TestAggregateResultFilesSkipsUnreadableAndNonResultFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeResultFile(t, dir, "Result_alpha.json", 100, 0)
+	if err := os.WriteFile(filepath.Join(dir, "Result_broken.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "csv-report"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	aggregate, err := aggregateResultFiles(dir, true)
+	if err != nil {
+		t.Fatalf("aggregateResultFiles: %v", err)
+	}
+	if aggregate.Repositories != 1 {
+		t.Errorf("Repositories = %d, want 1 (undecodable, non-JSON and directories all skipped)",
+			aggregate.Repositories)
+	}
+}
+
+func TestAggregateResultFilesMissingDirectory(t *testing.T) {
+	if _, err := aggregateResultFiles(filepath.Join(t.TempDir(), "absent"), true); err == nil {
+		t.Error("expected an error for a missing directory")
+	}
+}
+
+// TestMissingRequiredKeysReportsIncompleteConfig covers the other half of
+// normalizePlatformConfig: defaulting an absent key removes the panic, but a config
+// that is genuinely incomplete must still say so rather than failing later with an
+// unrelated-looking message ("The resource cannot be found.").
+func TestMissingRequiredKeysReportsIncompleteConfig(t *testing.T) {
+	cfg := map[string]interface{}{"DevOps": "azure"}
+	normalizePlatformConfig(cfg)
+
+	missing := missingRequiredKeys(cfg)
+	want := map[string]bool{"Url": true, "AccessToken": true, "Organization": true}
+	if len(missing) != len(want) {
+		t.Fatalf("missing = %v, want %v", missing, want)
+	}
+	for _, key := range missing {
+		if !want[key] {
+			t.Errorf("unexpected key reported as required: %q", key)
+		}
+	}
+}
+
+func TestMissingRequiredKeysSatisfiedConfig(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "azure",
+		"Url":          "https://dev.azure.com/",
+		"AccessToken":  "token",
+		"Organization": "acme",
+	}
+	normalizePlatformConfig(cfg)
+
+	if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
+	}
+}
+
+// TestMissingRequiredKeysBlankIsMissing guards against a whitespace-only value
+// passing as supplied.
+func TestMissingRequiredKeysBlankIsMissing(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "azure",
+		"Url":          "https://dev.azure.com/",
+		"AccessToken":  "   ",
+		"Organization": "acme",
+	}
+	normalizePlatformConfig(cfg)
+
+	missing := missingRequiredKeys(cfg)
+	if len(missing) != 1 || missing[0] != "AccessToken" {
+		t.Errorf("missing = %v, want [AccessToken]", missing)
+	}
+}
+
+// TestMissingRequiredKeysGitHubPersonalAccount pins the exemption that makes this
+// list safe to enforce: getgithub resolves an empty Organization from the
+// authenticated user for a personal account, so requiring it unconditionally would
+// reject a configuration that works today.
+func TestMissingRequiredKeysGitHubPersonalAccount(t *testing.T) {
+	personal := map[string]interface{}{
+		"DevOps": "github", "Url": "https://api.github.com/", "AccessToken": "token",
+		"Org": false, "Organization": "",
+	}
+	normalizePlatformConfig(personal)
+	if missing := missingRequiredKeys(personal); len(missing) != 0 {
+		t.Errorf("personal account: missing = %v, want none (Organization is derived)", missing)
+	}
+
+	org := map[string]interface{}{
+		"DevOps": "github", "Url": "https://api.github.com/", "AccessToken": "token",
+		"Org": true, "Organization": "",
+	}
+	normalizePlatformConfig(org)
+	if missing := missingRequiredKeys(org); len(missing) != 1 || missing[0] != "Organization" {
+		t.Errorf("organisation: missing = %v, want [Organization]", missing)
+	}
+}
+
+// TestMissingRequiredKeysGitLabRunsWithoutOrganization pins the second exemption: a
+// real working GitLab config leaves Organization empty and takes its groups from the
+// group field.
+func TestMissingRequiredKeysGitLabRunsWithoutOrganization(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps": "gitlab", "Url": "https://gitlab.com/", "AccessToken": "token",
+		"Organization": "",
+	}
+	normalizePlatformConfig(cfg)
+	if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+		t.Errorf("missing = %v, want none (GitLab runs with Organization empty)", missing)
+	}
+}
+
+// TestMissingRequiredKeysFilePlatform confirms the file platform is left to its own
+// check, which already reports the Directory/FileLoad alternatives.
+func TestMissingRequiredKeysFilePlatform(t *testing.T) {
+	cfg := map[string]interface{}{"DevOps": "file"}
+	normalizePlatformConfig(cfg)
+	if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
+	}
+}
+
+// TestShippedSampleConfigSatisfiesRequiredKeys guards the enforcement against the
+// configuration the project ships: every platform block in config_sample.json must
+// pass, or the sample would be rejected by its own scanner.
+func TestShippedSampleConfigSatisfiesRequiredKeys(t *testing.T) {
+	data, err := os.ReadFile("config_sample.json")
+	if err != nil {
+		t.Skipf("config_sample.json not readable: %v", err)
+	}
+	var sample struct {
+		Platforms map[string]interface{} `json:"platforms"`
+	}
+	if err := json.Unmarshal(data, &sample); err != nil {
+		t.Fatalf("config_sample.json is not valid JSON: %v", err)
+	}
+	for name, raw := range sample.Platforms {
+		cfg, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		normalizePlatformConfig(cfg)
+		if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+			t.Errorf("config_sample.json platform %q would be rejected, missing %v", name, missing)
+		}
 	}
 }
