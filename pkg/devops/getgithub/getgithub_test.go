@@ -1362,30 +1362,6 @@ func TestListFunctions(t *testing.T) {
 		}
 	})
 
-	t.Run("GetAllBranchesForRepositories function", func(t *testing.T) {
-		platformConfig := map[string]interface{}{
-			"AccessToken": testToken,
-		}
-
-		repositories := []ProjectBranch{
-			{Org: testOrgName, RepoSlug: "test-repo", MainBranch: "main"},
-		}
-
-		// This will test the error handling path
-		branches, err := GetAllBranchesForRepositories(platformConfig, repositories)
-
-		// Function should handle errors gracefully - may return nil or empty slice on error
-		if branches == nil {
-			t.Logf("GetAllBranchesForRepositories returned nil slice on error (acceptable)")
-		} else {
-			t.Logf("GetAllBranchesForRepositories returned slice with %d elements", len(branches))
-		}
-
-		// Error is expected due to invalid token/network
-		if err != nil {
-			t.Logf("GetAllBranchesForRepositories handled error as expected: %v", err)
-		}
-	})
 }
 
 // TestGetGithubLanguages tests language analysis functionality

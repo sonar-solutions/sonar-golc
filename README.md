@@ -8,7 +8,7 @@
 
 **GoLC** counts physical lines of source code across all programming languages supported by [SonarQube](https://www.sonarsource.com/knowledge/languages/) — without running a full Sonar analysis.
 
-It connects to your DevOps platform, identifies the largest branch of each repository, counts lines of code per language, and presents the results in an interactive web dashboard with PDF, JSON, and CSV exports.
+It connects to your DevOps platform, counts one branch per repository, and presents the results in an interactive web dashboard with PDF, JSON, and CSV exports.
 
 **Supported platforms:** GitHub.com · GitHub Enterprise Server · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Local files/directories
 
@@ -21,6 +21,7 @@ It connects to your DevOps platform, identifies the largest branch of each repos
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
   - [Optional Parameters](#optional-parameters)
+  - [Which branch is counted](#which-branch-is-counted)
 - [Reports](#reports)
   - [Languages per repository](#languages-per-repository)
   - [Excluding repositories from the totals](#excluding-repositories-from-the-totals)
@@ -74,8 +75,9 @@ Credentials are entered in the browser and saved automatically — no config fil
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `DefaultBranch` | bool | `true` = default branch only (faster). `false` = scan all branches and pick the largest. |
-| `Branch` | string | Analyze a specific branch name across all repos. Leave blank for auto. |
+| `DefaultBranch` | bool | `true` (default) = count each repository's default branch. `false` = count its most recently active branch instead. See [Which branch is counted](#which-branch-is-counted). |
+| `Branch` | string | Count this branch name in every repository instead. Requires `DefaultBranch: false`. |
+| `Period` | int | How far back to look when deciding which branch is most active, in months (e.g. `-1` = the last month). Only used when `DefaultBranch: false` and `Branch` is empty. Default `-1`; Bitbucket Data Center `-5`. |
 | `Multithreading` | bool | Enable parallel analysis. Default: `true`. |
 | `Workers` | int | Concurrent workers. Default: `10`. |
 | `FolderKeywords` | array | Exclude folders whose name contains the keyword as a whole word at any depth. Word boundaries are delimiters `-`, `_`, `.` — so `"test"` matches `integration-test/` and `test_helpers/` but not `protest/` or `latest/`. |
@@ -88,6 +90,28 @@ Credentials are entered in the browser and saved automatically — no config fil
 | `Org` | bool | `true` = analyze an organization account, `false` = analyze a personal account. GitHub and GitHub Enterprise only. Default: `true`. |
 | `WorkDir` | string | Base directory where repositories are cloned before counting, then deleted. Leave blank to use the system temp directory (the default). Set this to a path on a disk with enough free space when `/tmp` is small or RAM-backed and large/many repos fail with `no space left on device`. The directory is created if missing and must be writable. Can also be set globally with the `GOLC_WORKDIR` environment variable; the per-platform `WorkDir` value takes precedence over the environment variable. |
 
+
+---
+
+### Which branch is counted
+
+**GoLC counts exactly one branch per repository** — never several, and never all of them
+added together. This keeps the total comparable to what SonarQube would report.
+
+Which one depends on the **Analyze default branch only** switch in the UI:
+
+| Setting | Branch counted | Use it when |
+|---------|----------------|-------------|
+| **On** (default) | the repository's **default** branch | Almost always. Fastest, and matches what SonarQube analyses. |
+| **Off** | the **most recently active** branch | Your main line of work is not the default branch. |
+| **Off** + *Specific branch name* | that **exact branch**, in every repository | You size a named branch such as `develop` or `release/2025`. |
+
+"Most recently active" means the branch with the most commits in the last `Period`
+months (`-1` by default, so the last month).
+
+> **If no branch has commits in that window, GoLC falls back to the default branch.** For
+> repositories that have been quiet, turning the switch off therefore changes nothing.
+> Widen `Period` (for example `-12`) if you want a longer history taken into account.
 
 ---
 

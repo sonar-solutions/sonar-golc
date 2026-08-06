@@ -1308,56 +1308,23 @@ func runGolcInProcess(platform string) {
 
 		var fileexclusion = ".cloc_github_ignore"
 		fileexclusionEX := getFileNameIfExists(fileexclusion)
-		var fast bool
 
 		startTime = time.Now()
 
-		if false {
-			// fast mode (not available via web UI)
+		// GoLC analyses one branch per repository: the default branch, a branch named
+		// explicitly in the configuration, or — when neither applies — the most active
+		// branch. Selection happens inside the platform getter.
+		repositories, err := getgithub.GetRepoGithubList(platformConfig, fileexclusionEX, false)
+		if err != nil {
+			logger.Errorf(errorMessageRepos, platformConfig["Organization"].(string), err)
+			return
+		}
+
+		if len(repositories) == 0 {
+			logger.Error(errorMessageAnalyse)
+			exitGolc(1)
 		} else {
-			fast = false
-
-			if false {
-				fmt.Println("🌿 All-branches mode enabled for Github")
-				logger.Infof("🌿 All-branches mode enabled - analyzing ALL branches for each repository")
-
-				// Get the main repositories list (one per repo)
-				repositories, err := getgithub.GetRepoGithubList(platformConfig, fileexclusionEX, fast)
-				if err != nil {
-					logger.Errorf(errorMessageRepos, platformConfig["Organization"].(string), err)
-					return
-				}
-
-				if len(repositories) == 0 {
-					logger.Error(errorMessageAnalyse)
-					exitGolc(1)
-				} else {
-					// Get all branches for each repository and analyze them
-					allBranches, err := getgithub.GetAllBranchesForRepositories(platformConfig, repositories)
-					if err != nil {
-						logger.Errorf("❌ Error getting all branches: %v", err)
-						return
-					}
-
-					NumberRepos = AnalyseReposListGithub(DestinationResult, platformConfig, allBranches)
-				}
-			} else {
-				repositories, err := getgithub.GetRepoGithubList(platformConfig, fileexclusionEX, fast)
-				if err != nil {
-					logger.Errorf(errorMessageRepos, platformConfig["Organization"].(string), err)
-					return
-				}
-
-				if len(repositories) == 0 {
-					logger.Error(errorMessageAnalyse)
-					exitGolc(1)
-
-				} else {
-
-					NumberRepos = AnalyseReposListGithub(DestinationResult, platformConfig, repositories)
-
-				}
-			}
+			NumberRepos = AnalyseReposListGithub(DestinationResult, platformConfig, repositories)
 		}
 
 	case "gitlab":
