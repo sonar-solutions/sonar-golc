@@ -486,61 +486,6 @@ func getAllBranches(ctx context.Context, client *github.Client, repoName, organi
 // Get Infos for all Repositories in Organization
 
 // GetRepoGithubListAllBranches retrieves ALL branches for ALL repositories in the organization
-// GetAllBranchesForRepositories takes a repository list and expands it to analyze all branches
-func GetAllBranchesForRepositories(platformConfig map[string]interface{}, repositories []ProjectBranch) ([]ProjectBranch, error) {
-	var allBranches []ProjectBranch
-	loggers := utils.SharedLogger()
-
-	client := github.NewClient(nil).WithAuthToken(platformConfig["AccessToken"].(string))
-	ctx := withRateLimitSleep(context.Background())
-
-	spin1 := spinner.New(spinner.CharSets[35], 100*time.Millisecond)
-	spin1.Color("green", "bold")
-
-	for i, repo := range repositories {
-		messageB := fmt.Sprintf("   🌿 Getting all branches for repo %d/%d: %s ", i+1, len(repositories), repo.RepoSlug)
-		spin1.Suffix = messageB
-		spin1.Start()
-
-		// Get ALL branches for this repository
-		branchOpt := &github.BranchListOptions{
-			ListOptions: github.ListOptions{PerPage: 100},
-		}
-
-		var repoBranches []*github.Branch
-		for {
-			branches, resp, err := client.Repositories.ListBranches(ctx, repo.Org, repo.RepoSlug, branchOpt)
-			if err != nil {
-				loggers.Errorf("❌ Error getting branches for repo %s: %v", repo.RepoSlug, err)
-				break
-			}
-			repoBranches = append(repoBranches, branches...)
-			if resp.NextPage == 0 {
-				break
-			}
-			branchOpt.Page = resp.NextPage
-		}
-
-		// Create a ProjectBranch entry for EACH branch (for analysis purposes)
-		for _, branch := range repoBranches {
-			allBranches = append(allBranches, ProjectBranch{
-				Org:         repo.Org,
-				RepoSlug:    repo.RepoSlug,
-				MainBranch:  branch.GetName(),
-				LargestSize: repo.LargestSize,
-			})
-		}
-
-		spin1.Stop()
-		loggers.Infof("\r\t\t\t\t✅ %d Repo: %s - Found %d branches", i+1, repo.RepoSlug, len(repoBranches))
-	}
-
-	loggers.Infof("✅ Branch expansion completed:")
-	loggers.Infof("   - Repositories: %d", len(repositories))
-	loggers.Infof("   - Total branches to analyze: %d", len(allBranches))
-
-	return allBranches, nil
-}
 
 // getAllRepositories fetches all repositories from GitHub organization
 func getAllRepositories(client *github.Client, ctx context.Context, orgName string) ([]*github.Repository, error) {
