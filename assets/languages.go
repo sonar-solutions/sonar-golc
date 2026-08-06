@@ -73,6 +73,20 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".go"},
 	},
+	// Suffixes follow sonar.gosu.file.suffixes (gs,gsx,gsp).
+	"Gosu": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".gs", ".gsx", ".gsp"},
+	},
+	// Suffixes follow sonar.groovy.file.suffixes (groovy,gvy,gy,gsh). SonarQube also
+	// claims *Jenkinsfile via sonar.groovy.file.patterns; an extensionless path falls
+	// back to its base name here, so the bare name matches the common case.
+	"Groovy": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".groovy", ".gvy", ".gy", ".gsh", "Jenkinsfile"},
+	},
 	"HTML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
@@ -91,7 +105,16 @@ var Languages = language.Languages{
 	"JavaScript": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".js", ".jsx", ".jsp", ".jspf"},
+		Extensions:        []string{".js", ".jsx"},
+	},
+	// .jsp/.jspf used to be counted as JavaScript, which both mislabelled them and
+	// applied the wrong comment syntax: a JSP comment is <%-- --%> and its template
+	// text uses <!-- -->, neither of which is "//". SonarQube reports these under its
+	// own jsp language (sonar.jsp.file.suffixes), so they are separated here too.
+	"JSP": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{{"<%--", "--%>"}, {"<!--", "-->"}},
+		Extensions:        []string{".jsp", ".jspf", ".jspx"},
 	},
 	"JSON": {
 		LineComments:      []string{},
@@ -122,6 +145,12 @@ var Languages = language.Languages{
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".pl1", ".pli"},
+	},
+	// Suffixes follow sonar.powershell.file.suffixes (ps1,psm1,psd1).
+	"PowerShell": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{{"<#", "#>"}},
+		Extensions:        []string{".ps1", ".psm1", ".psd1"},
 	},
 	"Python": {
 		LineComments:      []string{"#"},

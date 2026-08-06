@@ -250,16 +250,20 @@ CSS                | .css                                     |                 
 Dart               | .dart                                    | //              | /* */
 Docker             | Dockerfile, dockerfile                   | #               |
 Golang             | .go                                      | //              | /* */
+Gosu               | .gs, .gsx, .gsp                          | //              | /* */
+Groovy             | .groovy, .gvy, .gy, .gsh, Jenkinsfile    | //              | /* */
 HTML               | .html, .htm, .cshtml, .vbhtml, ...       |                 | <!-- -->
 Java               | .java, .jav                              | //              | /* */
-JavaScript         | .js, .jsx, .jsp, .jspf                   | //              | /* */
+JavaScript         | .js, .jsx                                | //              | /* */
 JCL                | .jcl, .JCL                               | //*             |
 JSON               | .json                                    |                 |
+JSP                | .jsp, .jspf, .jspx                       |                 | <%-- --%>, <!-- -->
 Kotlin             | .kt, .kts                                | //              | /* */
 Objective-C        | .m, .mm                                  | //              | /* */
 Oracle PL/SQL      | .pkb                                     | --              | /* */
 PHP                | .php, .php3, .php4, .php5, .phtml, .inc  | //, #           | /* */
 PL/I               | .pl1, .pli                               |                 | /* */
+PowerShell         | .ps1, .psm1, .psd1                       | #               | <# #>
 Python             | .py                                      | #               | """ """, ''' '''
 RPG                | .rpg                                     | *               |
 Ruby               | .rb                                      | #               | =begin =end
