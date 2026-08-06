@@ -116,6 +116,13 @@ func (a *Analyzer) canAdd(path string, extension string) bool {
 		}
 	}
 
+	// Minified JavaScript and CSS never reach SonarQube's ncloc, so counting them would
+	// over-estimate - a single committed bundle can be tens of thousands of lines. The
+	// test is SonarJS's own, name and average line length both; see minified.go.
+	if looksMinified(path) {
+		return false
+	}
+
 	if len(a.includeExtensions) > 0 {
 		_, ok := a.includeExtensions[a.getFileExtension(path)]
 		return ok

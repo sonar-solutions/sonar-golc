@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,18 +20,26 @@ import (
 // Detection reads only the head of a file and never fails the analysis: an unreadable or
 // unrecognised file keeps the language its extension gave it.
 
-// headLines caps how much of a file is read. IaC markers appear in the first few keys,
-// and files reached here can be large.
-const headLines = 60
+// headLines and headBytes cap how much of a file is read; IaC markers appear in the first
+// few keys. The byte cap is the one that matters: a minified single-line JSON has no
+// newline to stop at, so a line limit alone would pull the whole file - possibly many
+// megabytes - into memory on the first read.
+const (
+	headLines = 60
+	headBytes = 64 * 1024
+)
 
 var (
 	// A Kubernetes manifest has both of these at the top level.
 	reK8sAPIVersion = regexp.MustCompile(`(?m)^apiVersion:\s*\S`)
 	reK8sKind       = regexp.MustCompile(`(?m)^kind:\s*\S`)
 
-	// CloudFormation: the version key, or a resource with an AWS:: type.
-	reCFNVersion  = regexp.MustCompile(`(?m)^["']?AWSTemplateFormatVersion["']?\s*:`)
-	reCFNResource = regexp.MustCompile(`Type:\s*["']?AWS::`)
+	// CloudFormation: the version key, or a resource with an AWS:: type. A template may
+	// be YAML or JSON, so both patterns have to tolerate the JSON spelling - an indented,
+	// quoted key ("  \"AWSTemplateFormatVersion\":") and a quoted value ("\"Type\": \"AWS::").
+	// Anchoring at column 0 or requiring a colon straight after Type matches YAML only.
+	reCFNVersion  = regexp.MustCompile(`(?m)^\s*["']?AWSTemplateFormatVersion["']?\s*:`)
+	reCFNResource = regexp.MustCompile(`["']?Type["']?\s*:\s*["']?AWS::`)
 
 	// An Ansible playbook is a list of plays keyed by hosts, or a task file.
 	reAnsibleHosts = regexp.MustCompile(`(?m)^\s*-?\s*hosts:\s*\S`)
@@ -117,8 +126,10 @@ func readHead(path string) (string, bool) {
 	}
 	defer f.Close()
 
+	// io.LimitReader bounds the total bytes regardless of where newlines fall, so a file
+	// with no newline at all cannot be read past headBytes.
 	var b strings.Builder
-	reader := bufio.NewReader(f)
+	reader := bufio.NewReader(io.LimitReader(f, headBytes))
 	for i := 0; i < headLines; i++ {
 		line, err := reader.ReadString('\n')
 		b.WriteString(line)

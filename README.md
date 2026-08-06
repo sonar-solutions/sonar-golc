@@ -83,7 +83,7 @@ Credentials are entered in the browser and saved automatically — no config fil
 | `FolderKeywords` | array | Exclude folders whose name contains the keyword as a whole word at any depth. Word boundaries are delimiters `-`, `_`, `.` — so `"test"` matches `integration-test/` and `test_helpers/` but not `protest/` or `latest/`. |
 | `FileNamePatterns` | array | Exclude files whose name matches a glob pattern (e.g. `["*_test.go", "*.min.js", "*.spec.ts"]`). The `*` wildcard is matched against the file name only, not the full path. |
 | `ExtExclusion` | array | Exclude all files with these extensions, regardless of language (e.g. `[".css", ".html"]`). |
-| `ExcludeTests` | bool | Shortcut that adds common test-directory keywords to `FolderKeywords`: `test`, `tests`, `spec`, `specs`, `e2e`, `testdata`, `fixtures`, `mocks`, `integration`. |
+| `ExcludeTests` | bool | Shortcut that adds common test-directory keywords to `FolderKeywords`: `test`, `tests`, `spec`, `specs`, `e2e`, `testdata`, `fixtures`, `mock`, `mocks`, `integration`, `doc`, `docs`. The last three match SonarQube, which treats a file as a test — and so leaves it out of `ncloc` — when any directory on its path is named `doc`, `docs`, `test`, `tests`, `mock` or `mocks`. |
 | `ExcludeVendor` | bool | Shortcut that adds common vendor-directory keywords to `FolderKeywords`: `vendor`, `node_modules`, `bower_components`, `third_party`, `external`. |
 | `Project` | string | Limit to a specific project key (Bitbucket, Azure DevOps). |
 | `Repos` | string | Limit to specific repositories (comma-separated). GitHub/GHE: repository name. Bitbucket: repository slug. Azure DevOps: repository name. Not applicable for GitLab — use the Group URL slug field instead. |
@@ -242,11 +242,11 @@ ActionScript       | .as                                      | //              
 Apex               | .cls, .trigger                           | //              | /* */
 C                  | .c                                       | //              | /* */
 C Header           | .h                                       | //              | /* */
-C++                | .cpp, .cc                                | //              | /* */
-C++ Header         | .hh, .hpp                                | //              | /* */
-C#                 | .cs                                      | //              | /* */
+C++                | .cpp, .cc, .cxx, .c++, .ipp, .ixx, ...   | //              | /* */
+C++ Header         | .hh, .hpp, .hxx, .h++                    | //              | /* */
+C#                 | .cs, .razor                              | //              | /* */
 COBOL              | .cbl, .ccp, .cob, .cobol, .cpy           | *               |
-CSS                | .css                                     |                 | /* */
+CSS                | .css, .less, .sass                       |                 | /* */
 Dart               | .dart                                    | //              | /* */
 Docker             | Dockerfile, dockerfile                   | #               |
 Golang             | .go                                      | //              | /* */
@@ -254,18 +254,18 @@ Gosu               | .gs, .gsx, .gsp                          | //              
 Groovy             | .groovy, .gvy, .gy, .gsh, Jenkinsfile    | //              | /* */
 HTML               | .html, .htm, .cshtml, .vbhtml, ...       |                 | <!-- -->
 Java               | .java, .jav                              | //              | /* */
-JavaScript         | .js, .jsx                                | //              | /* */
+JavaScript         | .js, .jsx, .cjs, .mjs                    | //              | /* */
 JCL                | .jcl, .JCL                               | //*             |
 JSON               | .json                                    |                 |
 JSP                | .jsp, .jspf, .jspx                       |                 | <%-- --%>, <!-- -->
 Kotlin             | .kt, .kts                                | //              | /* */
 Objective-C        | .m, .mm                                  | //              | /* */
-Oracle PL/SQL      | .pkb                                     | --              | /* */
+Oracle PL/SQL      | .pkb, .pks                               | --              | /* */
 PHP                | .php, .php3, .php4, .php5, .phtml, .inc  | //, #           | /* */
 PL/I               | .pl1, .pli                               |                 | /* */
 PowerShell         | .ps1, .psm1, .psd1                       | #               | <# #>
 Python             | .py                                      | #               | """ """, ''' '''
-RPG                | .rpg                                     | *               |
+RPG                | .rpg, .rpgle, .sqlrpgle (+ uppercase)    | *               |
 Ruby               | .rb                                      | #               | =begin =end
 Rust               | .rs                                      | //              | /* */
 Scala              | .scala                                   | //              | /* */
@@ -275,11 +275,11 @@ SQL                | .sql                                     | --              
 Swift              | .swift                                   | //              | /* */
 Terraform          | .tf                                      | #, //           | /* */
 T-SQL              | .tsql                                    | --              | /* */
-TypeScript         | .ts, .tsx                                | //              | /* */
-VB6                | .bas, .frm, .cls                         | '               |
+TypeScript         | .ts, .tsx, .cts, .mts                    | //              | /* */
+VB6                | .bas, .frm, .cls, .ctl                   | '               |
 Visual Basic .NET  | .vb                                      | '               |
 Vue                | .vue                                     |                 | <!-- -->
-XML                | .xml, .XML                               |                 | <!-- -->
+XML                | .xml, .XML, .xsd, .xsl, .config          |                 | <!-- -->
 XHTML              | .xhtml                                   |                 | <!-- -->
 YAML               | .yaml, .yml                              | #               |
 ```
@@ -307,6 +307,20 @@ Azure Resource Manager | JSON whose `$schema` names a `deploymentTemplate`
 
 Anything unrecognised stays `YAML` or `JSON`. Only those two languages are ever
 inspected; every other file is classified from its extension without being opened.
+
+### Minified JavaScript and CSS are never counted
+
+SonarQube excludes minified files from analysis, so they never reach `ncloc`. GoLC applies
+the same test, ported from SonarJS so the two agree by construction
+([`filter-minified.ts`](https://github.com/SonarSource/SonarJS/blob/master/packages/analysis/src/common/filter/filter-minified.ts)):
+
+- the name ends in `.min.js`, `-min.js`, `.min.css` or `-min.css`; **or**
+- the file is `.js` or `.css` **and** its average line length exceeds **200** characters.
+
+The second test is what catches a bundle committed under an ordinary name such as
+`vendor.js`. Note it applies only to `.js` and `.css` — a long-lined `.ts` file is still
+counted, because SonarQube counts it too. A file that cannot be read is counted rather
+than dropped.
 
 ### PHP open and close tags
 

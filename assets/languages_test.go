@@ -23,11 +23,28 @@ func extensionOwners() map[string][]string {
 // analyses by default should be present with the same suffixes it uses. These were
 // missing entirely, which made GoLC under-report repositories that use them.
 func TestLanguagesCoverSonarQubeDefaults(t *testing.T) {
+	// Captured from a live instance via /api/settings/list_definitions - every
+	// sonar.<lang>.file.suffixes default. Where GoLC splits a language that SonarQube
+	// keeps whole (C/C++ headers, Scss under CSS) the suffixes are asserted on whichever
+	// GoLC entry owns them.
 	want := map[string][]string{
 		"Gosu":       {".gs", ".gsx", ".gsp"},
 		"Groovy":     {".groovy", ".gvy", ".gy", ".gsh", "Jenkinsfile"},
 		"JSP":        {".jsp", ".jspf", ".jspx"},
 		"PowerShell": {".ps1", ".psm1", ".psd1"},
+		// Aligned to SonarQube's defaults; each of these was previously absent, so a
+		// repository using it was silently under-counted.
+		"C#":            {".cs", ".razor"},
+		"C++":           {".cpp", ".cc", ".cxx", ".c++", ".ipp", ".ixx", ".mxx", ".cppm", ".ccm", ".cxxm", ".c++m"},
+		"C++ Header":    {".hh", ".hpp", ".hxx", ".h++"},
+		"CSS":           {".css", ".less", ".sass"},
+		"HTML":          {".twig"},
+		"JavaScript":    {".js", ".jsx", ".cjs", ".mjs"},
+		"TypeScript":    {".ts", ".tsx", ".cts", ".mts"},
+		"Oracle PL/SQL": {".pkb", ".pks"},
+		"RPG":           {".rpg", ".rpgle", ".sqlrpgle", ".RPG", ".RPGLE", ".SQLRPGLE"},
+		"VB6":           {".bas", ".frm", ".ctl"},
+		"XML":           {".xml", ".xsd", ".xsl", ".config"},
 	}
 
 	for lang, extensions := range want {

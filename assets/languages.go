@@ -31,12 +31,12 @@ var Languages = language.Languages{
 	"C++": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".cpp", ".cc"},
+		Extensions:        []string{".cpp", ".cc", ".cxx", ".c++", ".ipp", ".ixx", ".mxx", ".cppm", ".ccm", ".cxxm", ".c++m"},
 	},
 	"C++ Header": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".hh", ".hpp"},
+		Extensions:        []string{".hh", ".hpp", ".hxx", ".h++"},
 	},
 	"COBOL": {
 		LineComments:      []string{"*"},
@@ -46,12 +46,12 @@ var Languages = language.Languages{
 	"C#": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".cs"},
+		Extensions:        []string{".cs", ".razor"},
 	},
 	"CSS": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".css"},
+		Extensions:        []string{".css", ".less", ".sass"},
 	},
 	"Dart": {
 		LineComments:      []string{"//"},
@@ -90,7 +90,7 @@ var Languages = language.Languages{
 	"HTML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
-		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp"},
+		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp", ".twig"},
 	},
 	"JCL": {
 		LineComments:      []string{"//*"},
@@ -105,7 +105,7 @@ var Languages = language.Languages{
 	"JavaScript": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".js", ".jsx"},
+		Extensions:        []string{".js", ".jsx", ".cjs", ".mjs"},
 	},
 	// .jsp/.jspf used to be counted as JavaScript, which both mislabelled them and
 	// applied the wrong comment syntax: a JSP comment is <%-- --%> and its template
@@ -134,7 +134,7 @@ var Languages = language.Languages{
 	"Oracle PL/SQL": {
 		LineComments:      []string{"--"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".pkb"},
+		Extensions:        []string{".pkb", ".pks"},
 	},
 	"PHP": {
 		LineComments:      []string{"//", "#"},
@@ -163,7 +163,9 @@ var Languages = language.Languages{
 	"RPG": {
 		LineComments:      []string{"*"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".rpg"},
+		// sonar.rpg.file.suffixes lists the RPG IV suffixes and their uppercase spellings;
+		// extension lookup here is case-sensitive, so both cases are needed.
+		Extensions: []string{".rpg", ".rpgle", ".sqlrpgle", ".RPG", ".RPGLE", ".SQLRPGLE"},
 	},
 	"Ruby": {
 		LineComments:      []string{"#"},
@@ -213,12 +215,12 @@ var Languages = language.Languages{
 	"TypeScript": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".ts", ".tsx"},
+		Extensions:        []string{".ts", ".tsx", ".cts", ".mts"},
 	},
 	"VB6": {
 		LineComments:      []string{"'"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".bas", ".frm", ".cls"},
+		Extensions:        []string{".bas", ".frm", ".cls", ".ctl"},
 	},
 	"Visual Basic .NET": {
 		LineComments:      []string{"'"},
@@ -233,7 +235,7 @@ var Languages = language.Languages{
 	"XML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
-		Extensions:        []string{".xml", ".XML"},
+		Extensions:        []string{".xml", ".XML", ".xsd", ".xsl", ".config"},
 	},
 	"XHTML": {
 		LineComments:      []string{},

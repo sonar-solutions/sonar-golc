@@ -3,6 +3,7 @@ package analyzer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,6 +85,24 @@ func TestRefineLanguageDetectsIaCDialects(t *testing.T) {
 			language: "JSON", want: "Azure Resource Manager",
 		},
 		{
+			name:     "cloudformation JSON by template version",
+			file:     "infra/stack.json",
+			content:  "{\n  \"AWSTemplateFormatVersion\": \"2010-09-09\",\n  \"Resources\": {}\n}\n",
+			language: "JSON", want: "CloudFormation",
+		},
+		{
+			name:     "cloudformation JSON by AWS resource type",
+			file:     "infra/res.json",
+			content:  "{\n  \"Resources\": {\n    \"Bucket\": { \"Type\": \"AWS::S3::Bucket\" }\n  }\n}\n",
+			language: "JSON", want: "CloudFormation",
+		},
+		{
+			name:     "cloudformation YAML still works with the shared patterns",
+			file:     "infra/indented.yaml",
+			content:  "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n",
+			language: "YAML", want: "CloudFormation",
+		},
+		{
 			name:     "plain json stays json",
 			file:     "data/values.json",
 			content:  "{\n  \"a\": 1\n}\n",
@@ -119,5 +138,32 @@ func TestRefineLanguageFallsBackWhenUnreadable(t *testing.T) {
 	}
 	if got := RefineLanguage(filepath.Join(t.TempDir(), "missing.json"), "JSON"); got != "JSON" {
 		t.Errorf("got %q, want JSON", got)
+	}
+}
+
+// readHead caps the bytes it reads, not just the lines. A single-line file has no newline
+// to stop at, so without a byte budget the whole thing would be pulled into memory - and
+// a minified JSON is exactly that shape. Proven behaviourally: a marker pushed past the
+// cap must not be found.
+func TestRefineLanguageStopsReadingAtTheByteCap(t *testing.T) {
+	dir := t.TempDir()
+
+	marker := `"$schema": "https://schema.management.azure.com/deploymentTemplate.json#"`
+
+	within := writeFile(t, dir, "near.json", "{"+marker+"}")
+	if got := RefineLanguage(within, "JSON"); got != "Azure Resource Manager" {
+		t.Errorf("a marker inside the cap should be found, got %q", got)
+	}
+
+	// One line, no newline anywhere, with the marker beyond headBytes.
+	padded := writeFile(t, dir, "far.json",
+		"{"+strings.Repeat(" ", headBytes+1024)+marker+"}")
+	if got := RefineLanguage(padded, "JSON"); got != "JSON" {
+		t.Errorf("a marker past the byte cap should not be read, got %q", got)
+	}
+
+	if info, err := os.Stat(padded); err == nil && info.Size() <= headBytes {
+		t.Fatalf("test file is only %d bytes; it must exceed the %d-byte cap to be meaningful",
+			info.Size(), headBytes)
 	}
 }
