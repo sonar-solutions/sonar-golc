@@ -49,6 +49,56 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 top-repositories table. `chmod 600 config.json` — it holds a live token. Delete the
 workspace afterwards.
 
+## Configure through the web UI, not a hand-written config.json
+
+The UI applies defaults a hand-written config does not. `webui.go` ships three exclusion
+presets **on by default** (test / vendor / build folder keywords) plus
+`DEFAULT_FILE_PATTERNS` (`*_test.*`, `*.spec.*`, `*.min.*`, …). A `config.json` copied from
+`config_sample.json` has these empty, so it measures GoLC **with its defaults switched
+off** — and the UI is the channel customers actually use.
+
+This caused a real false finding: a SonarQube comparison concluded "GoLC over-counts
+minified files and test code" and recommended exclusions that already existed and were on.
+The bug was in the harness.
+
+Drive the same path the browser does — `POST /api/run` with `{"Platform":…,"Config":…}`,
+including `FolderKeywords` and `FileNamePatterns` as the page would send them — then poll
+`/api/status` until `running` is false. If a scripted run must write `config.json`
+directly, copy those two lists from `webui.go` first and say so in the write-up.
+
+## The optional test corpus
+
+A generator for a synthetic multi-repo corpus may exist outside the repo (ask the user for
+the location; it is deliberately not version-controlled because it embeds their platform
+identifiers). It answers three different questions — do not confuse them:
+
+| Script | Question | Use when |
+|---|---|---|
+| `verify.py` | Did GoLC count what was generated? | Changing the scanner, the language map, or exclusions |
+| `sqscan.py` + `sqcompare.py` | Does GoLC predict SonarQube's `ncloc`? | Changing anything that affects the estimate customers act on |
+| the feature probes | Does the tool behave on awkward repos? | Branch selection, exclusion decoys, archived/empty repos, Top-30 truncation |
+
+**Its oracle mirrors GoLC's logic in Python, so a GoLC counting change must be mirrored
+there or `verify.py` reports false failures.** Currently mirrored: the scanner's line
+classification, `NonCodeLines`, `looksMinified`, and `RefineLanguage`. After touching
+`assets/languages.go`, regenerate the corpus's language snapshot (`extract_languages.py`)
+— a stale snapshot silently marks new languages as uncounted.
+
+Two traps:
+
+- **`verify.py` needs exclusions OFF.** The oracle models the scanner and analyzer but not
+  config-driven exclusions, so scan with empty `FolderKeywords`/`FileNamePatterns`. That is
+  the one place the web-UI-defaults rule above does not apply. Use the UI defaults for the
+  SonarQube comparison and for anything customer-representative.
+- **`sonar-scanner` writes a 40 MB+ `.scannerwork/` into the directory it scans**, mutating
+  the fixtures. Force `sonar.working.directory` outside the corpus and check
+  `find <build> -name .scannerwork` is empty afterwards.
+
+For SonarQube parity, three analyzers count nothing under a stock configuration:
+`sonar.yaml.activate` and `sonar.json.activate` default to **false**, and
+`sonar.cobol.file.suffixes` defaults to **empty**. C# and VB.NET need SonarScanner for
+.NET, which builds the project, so they can only be compared against source that compiles.
+
 ## Drive the dashboard
 
 ```bash
