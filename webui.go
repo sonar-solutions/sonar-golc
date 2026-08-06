@@ -1718,7 +1718,10 @@ const reposPlaceholders = {
   Azure:            'my-service, backend-api',
 };
 
-const PRESET_TEST_KEYWORDS   = ['test','tests','spec','specs','e2e','testdata','fixtures','mocks','integration'];
+// 'doc', 'docs' and the singular 'mock' are here to match SonarQube, which classifies a
+// file as a test - and so leaves it out of ncloc - when any directory on its path is
+// named doc, docs, test, tests, mock or mocks.
+const PRESET_TEST_KEYWORDS   = ['test','tests','spec','specs','e2e','testdata','fixtures','mock','mocks','integration','doc','docs'];
 const PRESET_VENDOR_KEYWORDS = ['vendor','node_modules','bower_components','third_party','external'];
 const PRESET_BUILD_KEYWORDS  = ['dist','build','out','target','bin','coverage'];
 const ALL_PRESET_KEYWORDS    = [...PRESET_TEST_KEYWORDS, ...PRESET_VENDOR_KEYWORDS, ...PRESET_BUILD_KEYWORDS];

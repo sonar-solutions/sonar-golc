@@ -140,6 +140,9 @@ var Languages = language.Languages{
 		LineComments:      []string{"//", "#"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".php", ".php3", ".php4", ".php5", ".phtml", ".inc"},
+		// Measured against SonarQube: a line holding only an open or close tag is not
+		// counted, while a tag sharing a line with code is.
+		NonCodeLines: []string{"<?php", "<?", "?>"},
 	},
 	"PL/I": {
 		LineComments:      []string{},
@@ -241,5 +244,53 @@ var Languages = language.Languages{
 		LineComments:      []string{"#"},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".yaml", ".yml"},
+	},
+
+	// --------------------------------------------------------- content-detected (IaC)
+	//
+	// SonarQube ships plain YAML and JSON analysis OFF (sonar.yaml.activate and
+	// sonar.json.activate both default to false) but every IaC analyzer ON. So a stock
+	// SonarQube bills a Kubernetes manifest and ignores the plain YAML beside it.
+	// Reporting all .yaml as one language cannot match that, whichever way it is
+	// counted, so these dialects are recognised from file content instead and reported
+	// separately. They intentionally declare no extensions - see analyzer.RefineLanguage.
+	//
+	// Comment syntax is inherited from the host format: # for YAML, none for JSON.
+	"Ansible": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"Azure Pipelines": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"CloudFormation": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"GitHub Actions": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"Kubernetes": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	// Azure Resource Manager templates are JSON, which has no comment syntax.
+	"Azure Resource Manager": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
 	},
 }

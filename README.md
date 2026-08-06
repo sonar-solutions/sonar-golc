@@ -284,6 +284,36 @@ XHTML              | .xhtml                                   |                 
 YAML               | .yaml, .yml                              | #               |
 ```
 
+### Infrastructure-as-code, detected by content
+
+A Kubernetes manifest, an Ansible playbook and an arbitrary settings file are all
+`.yaml`, so extension alone cannot tell them apart — and the difference changes the
+count. SonarQube analyses every IaC dialect **by default**, while plain YAML and JSON
+analysis are **off** by default (`sonar.yaml.activate` and `sonar.json.activate`). A
+stock SonarQube therefore counts a Kubernetes manifest and ignores the plain YAML beside
+it, so reporting all `.yaml` under one label cannot match it either way.
+
+These are recognised from file content (or, for GitHub Actions, from its path) and
+reported as their own language. Comment syntax is inherited from the host format:
+
+Language               | Recognised by
+-----------------------+--------------------------------------------------------------
+Kubernetes             | top-level `apiVersion:` **and** `kind:`
+CloudFormation         | `AWSTemplateFormatVersion:`, or a resource with `Type: AWS::`
+Ansible                | `hosts:` together with `tasks:`/`roles:`/`become:`
+Azure Pipelines        | `stages:`/`jobs:`/`steps:` together with `pool:`/`trigger:`
+GitHub Actions         | any file under `.github/workflows/`
+Azure Resource Manager | JSON whose `$schema` names a `deploymentTemplate`
+
+Anything unrecognised stays `YAML` or `JSON`. Only those two languages are ever
+inspected; every other file is classified from its extension without being opened.
+
+### PHP open and close tags
+
+A line holding only `<?php`, `<?` or `?>` is markup, not code, and is counted in no
+category — matching SonarQube, which leaves such a line out of `ncloc`. A tag sharing a
+line with code (`<?php $a = 1;`) is still a line of code.
+
 ---
 
 ## Execution Log

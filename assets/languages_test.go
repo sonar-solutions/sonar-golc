@@ -92,11 +92,61 @@ func TestNoNewExtensionCollisions(t *testing.T) {
 	}
 }
 
-// Every language must be usable: a language with no extensions can never match a file.
-func TestEveryLanguageHasAnExtension(t *testing.T) {
+// Every language must be reachable. Normally that means declaring an extension; the IaC
+// dialects are the exception, since they are recognised from file content by
+// analyzer.RefineLanguage and would collide with YAML/JSON if they claimed a suffix.
+// The two conditions are mutually exclusive, so a mistake in either direction is caught.
+func TestEveryLanguageIsReachable(t *testing.T) {
 	for lang, info := range Languages {
-		if len(info.Extensions) == 0 {
-			t.Errorf("language %q declares no extensions, so it can never be counted", lang)
+		switch {
+		case info.ContentDetected && len(info.Extensions) > 0:
+			t.Errorf("language %q is content-detected but also claims extensions %v; it "+
+				"would be resolved by suffix and shadow YAML or JSON", lang, info.Extensions)
+		case !info.ContentDetected && len(info.Extensions) == 0:
+			t.Errorf("language %q declares no extensions and is not content-detected, so "+
+				"it can never be counted", lang)
+		}
+	}
+}
+
+// The IaC dialects must inherit the comment syntax of the format they are written in,
+// otherwise their comment lines would be miscounted as code.
+func TestContentDetectedLanguagesInheritHostCommentSyntax(t *testing.T) {
+	yamlBased := map[string]bool{
+		"Ansible": true, "Azure Pipelines": true, "CloudFormation": true,
+		"GitHub Actions": true, "Kubernetes": true,
+	}
+
+	for lang, info := range Languages {
+		if !info.ContentDetected {
+			continue
+		}
+		hasHash := len(info.LineComments) == 1 && info.LineComments[0] == "#"
+		if yamlBased[lang] && !hasHash {
+			t.Errorf("%q is YAML-based and must treat # as a line comment, got %v",
+				lang, info.LineComments)
+		}
+		if !yamlBased[lang] && len(info.LineComments) != 0 {
+			t.Errorf("%q is JSON-based and JSON has no comment syntax, got %v",
+				lang, info.LineComments)
+		}
+	}
+}
+
+// The delimiter rule exists to match SonarQube's ncloc, which ignores a line holding only
+// a PHP tag. Whole-line matching is what makes "<?php $a = 1;" still count as code.
+func TestPHPDeclaresItsMarkupDelimiters(t *testing.T) {
+	want := map[string]bool{"<?php": false, "<?": false, "?>": false}
+	for _, d := range Languages["PHP"].NonCodeLines {
+		if _, ok := want[d]; !ok {
+			t.Errorf("unexpected PHP delimiter %q", d)
+			continue
+		}
+		want[d] = true
+	}
+	for d, found := range want {
+		if !found {
+			t.Errorf("PHP should declare %q as a non-code delimiter", d)
 		}
 	}
 }

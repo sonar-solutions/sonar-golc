@@ -59,7 +59,10 @@ func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 			fm := FileMetadata{
 				FilePath:  path,
 				Extension: fileExtension,
-				Language:  a.SupportedExtensions[fileExtension],
+				// YAML and JSON are refined to their IaC dialect where the content says
+				// so, because SonarQube counts those by default and plain YAML/JSON not
+				// at all. Any other language is returned unchanged, unopened.
+				Language: RefineLanguage(path, a.SupportedExtensions[fileExtension]),
 			}
 			files = append(files, fm)
 		}
