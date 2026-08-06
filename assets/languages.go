@@ -31,12 +31,12 @@ var Languages = language.Languages{
 	"C++": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".cpp", ".cc"},
+		Extensions:        []string{".cpp", ".cc", ".cxx", ".c++", ".ipp", ".ixx", ".mxx", ".cppm", ".ccm", ".cxxm", ".c++m"},
 	},
 	"C++ Header": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".hh", ".hpp"},
+		Extensions:        []string{".hh", ".hpp", ".hxx", ".h++"},
 	},
 	"COBOL": {
 		LineComments:      []string{"*"},
@@ -46,7 +46,7 @@ var Languages = language.Languages{
 	"C#": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".cs"},
+		Extensions:        []string{".cs", ".razor"},
 	},
 	"CSS": {
 		LineComments:      []string{},
@@ -73,6 +73,20 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".go"},
 	},
+	// Suffixes follow sonar.gosu.file.suffixes (gs,gsx,gsp).
+	"Gosu": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".gs", ".gsx", ".gsp"},
+	},
+	// Suffixes follow sonar.groovy.file.suffixes (groovy,gvy,gy,gsh). SonarQube also
+	// claims *Jenkinsfile via sonar.groovy.file.patterns; an extensionless path falls
+	// back to its base name here, so the bare name matches the common case.
+	"Groovy": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".groovy", ".gvy", ".gy", ".gsh", "Jenkinsfile"},
+	},
 	"HTML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
@@ -91,12 +105,29 @@ var Languages = language.Languages{
 	"JavaScript": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".js", ".jsx", ".jsp", ".jspf"},
+		Extensions:        []string{".js", ".jsx", ".cjs", ".mjs"},
+	},
+	// .jsp/.jspf used to be counted as JavaScript, which both mislabelled them and
+	// applied the wrong comment syntax: a JSP comment is <%-- --%> and its template
+	// text uses <!-- -->, neither of which is "//". SonarQube reports these under its
+	// own jsp language (sonar.jsp.file.suffixes), so they are separated here too.
+	"JSP": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{{"<%--", "--%>"}, {"<!--", "-->"}},
+		Extensions:        []string{".jsp", ".jspf", ".jspx"},
 	},
 	"JSON": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".json"},
+	},
+	// SonarQube reports Less and Sass under its css language, but they cannot share
+	// GoLC's CSS entry: both support "//" line comments, which plain CSS does not, so
+	// folding them in would count every such comment as code. Same tokens as Scss.
+	"Less": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".less"},
 	},
 	"Kotlin": {
 		LineComments:      []string{"//"},
@@ -111,17 +142,26 @@ var Languages = language.Languages{
 	"Oracle PL/SQL": {
 		LineComments:      []string{"--"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".pkb"},
+		Extensions:        []string{".pkb", ".pks"},
 	},
 	"PHP": {
 		LineComments:      []string{"//", "#"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".php", ".php3", ".php4", ".php5", ".phtml", ".inc"},
+		// Measured against SonarQube: a line holding only an open or close tag is not
+		// counted, while a tag sharing a line with code is.
+		NonCodeLines: []string{"<?php", "<?", "?>"},
 	},
 	"PL/I": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".pl1", ".pli"},
+	},
+	// Suffixes follow sonar.powershell.file.suffixes (ps1,psm1,psd1).
+	"PowerShell": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{{"<#", "#>"}},
+		Extensions:        []string{".ps1", ".psm1", ".psd1"},
 	},
 	"Python": {
 		LineComments:      []string{"#"},
@@ -131,7 +171,9 @@ var Languages = language.Languages{
 	"RPG": {
 		LineComments:      []string{"*"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".rpg"},
+		// sonar.rpg.file.suffixes lists the RPG IV suffixes and their uppercase spellings;
+		// extension lookup here is case-sensitive, so both cases are needed.
+		Extensions: []string{".rpg", ".rpgle", ".sqlrpgle", ".RPG", ".RPGLE", ".SQLRPGLE"},
 	},
 	"Ruby": {
 		LineComments:      []string{"#"},
@@ -147,6 +189,11 @@ var Languages = language.Languages{
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".scala"},
+	},
+	"Sass": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".sass"},
 	},
 	"Scss": {
 		LineComments:      []string{"//"},
@@ -178,15 +225,23 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".tsql"},
 	},
+	// SonarQube reports Twig under its html language, but a Twig comment is {# #}, which
+	// the HTML entry does not know. Template files also contain markup, so both forms are
+	// recognised here.
+	"Twig": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{{"{#", "#}"}, {"<!--", "-->"}},
+		Extensions:        []string{".twig"},
+	},
 	"TypeScript": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".ts", ".tsx"},
+		Extensions:        []string{".ts", ".tsx", ".cts", ".mts"},
 	},
 	"VB6": {
 		LineComments:      []string{"'"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".bas", ".frm", ".cls"},
+		Extensions:        []string{".bas", ".frm", ".cls", ".ctl"},
 	},
 	"Visual Basic .NET": {
 		LineComments:      []string{"'"},
@@ -201,7 +256,7 @@ var Languages = language.Languages{
 	"XML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
-		Extensions:        []string{".xml", ".XML"},
+		Extensions:        []string{".xml", ".XML", ".xsd", ".xsl", ".config"},
 	},
 	"XHTML": {
 		LineComments:      []string{},
@@ -212,5 +267,53 @@ var Languages = language.Languages{
 		LineComments:      []string{"#"},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".yaml", ".yml"},
+	},
+
+	// --------------------------------------------------------- content-detected (IaC)
+	//
+	// SonarQube ships plain YAML and JSON analysis OFF (sonar.yaml.activate and
+	// sonar.json.activate both default to false) but every IaC analyzer ON. So a stock
+	// SonarQube bills a Kubernetes manifest and ignores the plain YAML beside it.
+	// Reporting all .yaml as one language cannot match that, whichever way it is
+	// counted, so these dialects are recognised from file content instead and reported
+	// separately. They intentionally declare no extensions - see analyzer.RefineLanguage.
+	//
+	// Comment syntax is inherited from the host format: # for YAML, none for JSON.
+	"Ansible": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"Azure Pipelines": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"CloudFormation": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"GitHub Actions": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	"Kubernetes": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
+	},
+	// Azure Resource Manager templates are JSON, which has no comment syntax.
+	"Azure Resource Manager": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{},
+		ContentDetected:   true,
 	},
 }

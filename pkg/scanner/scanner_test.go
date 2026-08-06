@@ -125,3 +125,93 @@ func TestScanEmptyFileListReturnsNoError(t *testing.T) {
 		t.Fatalf("expected 0 results for empty input, got %d", len(results))
 	}
 }
+
+// A PHP file's opening and closing tags are markup, not code, and SonarQube does not
+// count a line holding only one of them towards ncloc. The expectations below were
+// measured against SonarQube Enterprise 2026.4 on exactly these three files: each
+// reported ncloc=2, and the third reported one comment line.
+func TestScanDoesNotCountLoneMarkupDelimiters(t *testing.T) {
+	dir := t.TempDir()
+
+	cases := []struct {
+		name                         string
+		content                      string
+		code, comments, blank, lines int
+	}{
+		{
+			name:    "open and close tags alone are not code",
+			content: "<?php\n$a = 1;\n$b = 2;\n?>\n",
+			code:    2, comments: 0, blank: 0, lines: 2,
+		},
+		{
+			name:    "a tag sharing a line with code is still code",
+			content: "<?php $c = 3;\n$d = 4;\n",
+			code:    2, comments: 0, blank: 0, lines: 2,
+		},
+		{
+			name:    "comments and blanks are unaffected",
+			content: "<?php\n// a comment\n$e = 5;\n\n$f = 6;\n",
+			code:    2, comments: 1, blank: 1, lines: 4,
+		},
+	}
+
+	sc := NewScanner(language.Languages{
+		"PHP": {
+			LineComments:      []string{"//", "#"},
+			MultiLineComments: [][]string{{"/*", "*/"}},
+			Extensions:        []string{".php"},
+			NonCodeLines:      []string{"<?php", "<?", "?>"},
+		},
+	})
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(dir, "f.php")
+			if err := os.WriteFile(path, []byte(c.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := sc.scanFile(analyzer.FileMetadata{
+				FilePath: path, Extension: ".php", Language: "PHP",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.CodeLines != c.code {
+				t.Errorf("CodeLines = %d, want %d", got.CodeLines, c.code)
+			}
+			if got.Comments != c.comments {
+				t.Errorf("Comments = %d, want %d", got.Comments, c.comments)
+			}
+			if got.BlankLines != c.blank {
+				t.Errorf("BlankLines = %d, want %d", got.BlankLines, c.blank)
+			}
+			if got.Lines != c.lines {
+				t.Errorf("Lines = %d, want %d", got.Lines, c.lines)
+			}
+		})
+	}
+}
+
+// A language without NonCodeLines must be untouched by the delimiter check.
+func TestScanCountsDelimiterLikeLinesForOtherLanguages(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("<?php\nplain\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := NewScanner(language.Languages{
+		"Plain": {Extensions: []string{".txt"}},
+	})
+
+	got, err := sc.scanFile(analyzer.FileMetadata{
+		FilePath: path, Extension: ".txt", Language: "Plain",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CodeLines != 2 {
+		t.Errorf("CodeLines = %d, want 2 (no NonCodeLines configured)", got.CodeLines)
+	}
+}

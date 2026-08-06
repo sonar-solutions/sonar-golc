@@ -192,12 +192,32 @@ func (sc *Scanner) scanFile(file analyzer.FileMetadata) (scanResult, error) {
 			continue
 		}
 
+		// A markup delimiter alone on its line (PHP's "<?php") is not code. It is not a
+		// comment or a blank line either, so it is counted in no category at all -
+		// meaning Lines below excludes it, as SonarQube's ncloc does.
+		if sc.isNonCodeLine(file, line) {
+			continue
+		}
+
 		result.CodeLines++
 	}
 
 	result.Lines = result.CodeLines + result.BlankLines + result.Comments
 
 	return result, nil
+}
+
+// isNonCodeLine reports whether the whole trimmed line is a markup delimiter that
+// carries no code. Comparison is against the entire line, so a delimiter followed by
+// real code on the same line is still counted as code.
+func (sc *Scanner) isNonCodeLine(file analyzer.FileMetadata, line string) bool {
+	for _, delimiter := range sc.SupportedLanguages[file.Language].NonCodeLines {
+		if line == delimiter {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (sc *Scanner) hasFirstMultiLineComment(file analyzer.FileMetadata, line string) (bool, string) {
