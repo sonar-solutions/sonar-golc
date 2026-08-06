@@ -18,6 +18,7 @@ import (
 	getbibucketdc "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucketdc"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgithub"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgitlab"
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 
 	"github.com/sirupsen/logrus"
 )
@@ -723,5 +724,190 @@ func TestShippedSampleConfigIsCompatible(t *testing.T) {
 	if !configVersionCompatible(sample.Release.Version, version1) {
 		t.Errorf("config_sample.json declares %q, which this build (%q) would reject",
 			sample.Release.Version, version1)
+	}
+}
+
+// --- Regression tests for the config panic and the file-platform directory count ---
+
+// TestNormalizePlatformConfigFillsMissingKeys covers the crash this function exists to
+// prevent: a config that simply omits an optional key used to reach an unchecked
+// assertion such as platformConfig["FileLoad"].(string) and panic with
+// "interface conversion: interface {} is nil, not string".
+func TestNormalizePlatformConfigFillsMissingKeys(t *testing.T) {
+	cfg := map[string]interface{}{"DevOps": "file", "Directory": "/tmp"}
+
+	if mistyped := normalizePlatformConfig(cfg); len(mistyped) != 0 {
+		t.Fatalf("absent keys must be filled silently, got mistyped=%v", mistyped)
+	}
+
+	// The assertions the analysis actually performs must now all succeed.
+	for _, key := range []string{"FileLoad", "FileExclusion", "Organization", "Protocol"} {
+		if _, ok := cfg[key].(string); !ok {
+			t.Errorf("cfg[%q] = %#v, want a string", key, cfg[key])
+		}
+	}
+	for _, key := range []string{"ResultAll", "ResultByFile", "ScanSubDirs"} {
+		if _, ok := cfg[key].(bool); !ok {
+			t.Errorf("cfg[%q] = %#v, want a bool", key, cfg[key])
+		}
+	}
+	for _, key := range []string{"Workers", "NumberWorkerRepos"} {
+		if _, ok := cfg[key].(float64); !ok {
+			t.Errorf("cfg[%q] = %#v, want a float64", key, cfg[key])
+		}
+	}
+	if _, ok := cfg["ExtExclusion"].([]interface{}); !ok {
+		t.Errorf("cfg[\"ExtExclusion\"] = %#v, want []interface{}", cfg["ExtExclusion"])
+	}
+}
+
+func TestNormalizePlatformConfigPreservesSuppliedValues(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "github",
+		"Organization": "acme",
+		"ResultAll":    false,
+		"Workers":      float64(4),
+		"ExtExclusion": []interface{}{".css"},
+	}
+
+	normalizePlatformConfig(cfg)
+
+	if cfg["Organization"] != "acme" {
+		t.Errorf("Organization = %#v, want \"acme\"", cfg["Organization"])
+	}
+	if cfg["ResultAll"] != false {
+		t.Errorf("ResultAll = %#v, want false (a supplied false must not be overwritten)", cfg["ResultAll"])
+	}
+	if cfg["Workers"] != float64(4) {
+		t.Errorf("Workers = %#v, want 4", cfg["Workers"])
+	}
+	if got := cfg["ExtExclusion"].([]interface{}); len(got) != 1 || got[0] != ".css" {
+		t.Errorf("ExtExclusion = %#v, want [.css]", got)
+	}
+}
+
+func TestNormalizePlatformConfigReportsMistypedKeys(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "file",
+		"Workers":      "ten",  // string where a number belongs
+		"ResultAll":    "yes",  // string where a bool belongs
+		"ExtExclusion": ".css", // string where an array belongs
+		"Organization": nil,    // explicit null: absent, not mistyped
+	}
+
+	mistyped := normalizePlatformConfig(cfg)
+
+	want := []string{"ExtExclusion", "ResultAll", "Workers"} // sorted, and no "Organization"
+	if len(mistyped) != len(want) {
+		t.Fatalf("mistyped = %v, want %v", mistyped, want)
+	}
+	for i := range want {
+		if mistyped[i] != want[i] {
+			t.Fatalf("mistyped = %v, want %v", mistyped, want)
+		}
+	}
+	if _, ok := cfg["Workers"].(float64); !ok {
+		t.Errorf("a mistyped key must be replaced by its default, got %#v", cfg["Workers"])
+	}
+	if _, ok := cfg["Organization"].(string); !ok {
+		t.Errorf("an explicit null must be replaced by its default, got %#v", cfg["Organization"])
+	}
+}
+
+func TestNormalizePlatformConfigNilMap(t *testing.T) {
+	if got := normalizePlatformConfig(nil); got != nil {
+		t.Errorf("normalizePlatformConfig(nil) = %v, want nil", got)
+	}
+}
+
+// writeResultFile writes one per-repository result file of the shape the analysis
+// phase produces.
+func writeResultFile(t *testing.T, dir, name string, totalCodeLines, jsonCodeLines int) {
+	t.Helper()
+	payload := map[string]interface{}{
+		"TotalCodeLines": totalCodeLines,
+		"Results": []map[string]interface{}{
+			{"Language": "Java", "CodeLines": totalCodeLines - jsonCodeLines},
+			{"Language": utils.LanguageExcludedFromTotalLOC, "CodeLines": jsonCodeLines},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// TestAggregateResultFilesCountsEveryRepository is the regression test for the
+// directory count. Repository counting used to live inside the largest-repository
+// branch, so it reported how many times the running maximum changed. These sizes
+// ascend, which would have hidden the bug, then descend, which exposes it: a
+// 5-directory scan reported 2.
+func TestAggregateResultFilesCountsEveryRepository(t *testing.T) {
+	dir := t.TempDir()
+	writeResultFile(t, dir, "Result_alpha.json", 100, 0)
+	writeResultFile(t, dir, "Result_bravo.json", 900, 0) // new maximum
+	writeResultFile(t, dir, "Result_charlie.json", 50, 0)
+	writeResultFile(t, dir, "Result_delta.json", 20, 0)
+	writeResultFile(t, dir, "Result_echo.json", 10, 0)
+
+	aggregate, err := aggregateResultFiles(dir, true)
+	if err != nil {
+		t.Fatalf("aggregateResultFiles: %v", err)
+	}
+
+	if aggregate.Repositories != 5 {
+		t.Errorf("Repositories = %d, want 5 (one per result file, not per new maximum)",
+			aggregate.Repositories)
+	}
+	if aggregate.TotalCodeLines != 1080 {
+		t.Errorf("TotalCodeLines = %d, want 1080", aggregate.TotalCodeLines)
+	}
+	if aggregate.MaxRepo != "bravo" || aggregate.MaxCodeLines != 900 {
+		t.Errorf("largest = %q/%d, want bravo/900", aggregate.MaxRepo, aggregate.MaxCodeLines)
+	}
+}
+
+func TestAggregateResultFilesExcludesJSONFromTotals(t *testing.T) {
+	dir := t.TempDir()
+	writeResultFile(t, dir, "Result_alpha.json", 1000, 400)
+
+	aggregate, err := aggregateResultFiles(dir, true)
+	if err != nil {
+		t.Fatalf("aggregateResultFiles: %v", err)
+	}
+	if aggregate.TotalCodeLines != 600 {
+		t.Errorf("TotalCodeLines = %d, want 600 (1000 less the 400 excluded)", aggregate.TotalCodeLines)
+	}
+}
+
+func TestAggregateResultFilesSkipsUnreadableAndNonResultFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeResultFile(t, dir, "Result_alpha.json", 100, 0)
+	if err := os.WriteFile(filepath.Join(dir, "Result_broken.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "csv-report"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	aggregate, err := aggregateResultFiles(dir, true)
+	if err != nil {
+		t.Fatalf("aggregateResultFiles: %v", err)
+	}
+	if aggregate.Repositories != 1 {
+		t.Errorf("Repositories = %d, want 1 (undecodable, non-JSON and directories all skipped)",
+			aggregate.Repositories)
+	}
+}
+
+func TestAggregateResultFilesMissingDirectory(t *testing.T) {
+	if _, err := aggregateResultFiles(filepath.Join(t.TempDir(), "absent"), true); err == nil {
+		t.Error("expected an error for a missing directory")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -455,6 +456,179 @@ func getExcludePaths(configValue interface{}) []string {
 
 func getStringSliceConfig(platformConfig map[string]interface{}, key string) []string {
 	return getExcludePaths(platformConfig[key])
+}
+
+// platformConfigDefaults is every key the analysis reads back out of a platform's
+// configuration block with an unchecked type assertion, paired with the value to
+// fall back on. The types are the ones encoding/json produces — numbers decode to
+// float64 and arrays to []interface{} — because the readers assert those directly.
+//
+// Keys that already have a defensive accessor (WorkDir, CloneTimeout) are absent on
+// purpose: those readers handle a missing or mistyped value themselves, so there is
+// nothing here to protect and no reason to alter their behaviour.
+var platformConfigDefaults = map[string]interface{}{
+	"AccessToken":       "",
+	"Apiver":            "",
+	"Baseapi":           "",
+	"Branch":            "",
+	"DevOps":            "",
+	"Directory":         "",
+	"FileExclusion":     "",
+	"FileLoad":          "",
+	"Organization":      "",
+	"Project":           "",
+	"Protocol":          "",
+	"Repos":             "",
+	"Url":               "",
+	"Users":             "",
+	"Workspace":         "",
+	"DefaultBranch":     true,
+	"Multithreading":    true,
+	"Org":               true,
+	"ResultAll":         true,
+	"ResultByFile":      true,
+	"ScanSubDirs":       true,
+	"ExcludeTests":      false,
+	"ExcludeVendor":     false,
+	"Stats":             false,
+	"Factor":            float64(33),
+	"NumberWorkerRepos": float64(10),
+	"Period":            float64(-1),
+	"Workers":           float64(10),
+	"ExcludePaths":      []interface{}{},
+	"ExtExclusion":      []interface{}{},
+	"FileNamePatterns":  []interface{}{},
+	"FolderKeywords":    []interface{}{},
+}
+
+// resultAggregate is the cross-repository tally computed from the per-repository
+// result files written by the analysis phase.
+type resultAggregate struct {
+	TotalCodeLines int    // sum across repositories, excluding the language left out of totals
+	MaxCodeLines   int    // code lines in the largest repository
+	MaxProject     string // project/organisation owning the largest repository
+	MaxRepo        string // name of the largest repository
+	Repositories   int    // result files parsed: one per analysed repository or directory
+}
+
+// aggregateResultFiles reads the per-repository result files in dir and tallies them.
+//
+// Repositories is counted once per successfully parsed file, deliberately separate
+// from the largest-repository comparison further down: that branch only runs when a
+// new maximum is found, so incrementing there counts how many times the running
+// maximum changed rather than how many repositories were analysed.
+//
+// Only canonically-named result files are accepted. A file whose name cannot be
+// parsed, or whose contents cannot be read or decoded, is skipped and contributes
+// nothing to the totals, the repository count, or largest-repository candidacy.
+func aggregateResultFiles(dir string, isFilePlatform bool) (resultAggregate, error) {
+	var aggregate resultAggregate
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return aggregate, err
+	}
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		var parsedOrg, parsedRepo string
+		if isFilePlatform {
+			// The file platform writes single-component Result_<Repo>.json names.
+			parsedRepo = strings.TrimSuffix(strings.TrimPrefix(file.Name(), "Result_"), ".json")
+		} else {
+			org, repo, _, ok := utils.ParseResultFileName(file.Name())
+			if !ok {
+				logger.Warnf("⚠️  Skipping unparsable result file: %s", file.Name())
+				continue
+			}
+			parsedOrg, parsedRepo = org, repo
+		}
+
+		jsonData, err := os.ReadFile(filepath.Join(dir, file.Name()))
+		if err != nil {
+			logger.Errorf("❌ Error reading file %s: %v\n", file.Name(), err)
+			continue
+		}
+
+		var result Result
+		if err := json.Unmarshal(jsonData, &result); err != nil {
+			logger.Errorf("❌ Error parsing JSON contents of file %s: %v\n", file.Name(), err)
+			continue
+		}
+
+		aggregate.Repositories++
+
+		// Exclude JSON LOC from the total to match SonarQube's behaviour.
+		jsonLOC := 0
+		for _, r := range result.Results {
+			if strings.TrimSpace(r.Language) == utils.LanguageExcludedFromTotalLOC {
+				jsonLOC += r.CodeLines
+				break
+			}
+		}
+		codeLinesForTotal := result.TotalCodeLines - jsonLOC
+		aggregate.TotalCodeLines += codeLinesForTotal
+
+		// Update the (max, project, repo) triple together — the name was validated
+		// above, so a new maximum always carries a usable repository identity.
+		if codeLinesForTotal > aggregate.MaxCodeLines {
+			aggregate.MaxCodeLines = codeLinesForTotal
+			aggregate.MaxProject = parsedOrg
+			aggregate.MaxRepo = parsedRepo
+		}
+	}
+
+	return aggregate, nil
+}
+
+// normalizePlatformConfig substitutes a usable default for every key in
+// platformConfigDefaults that the configuration omits, sets to null, or gives a type
+// the readers do not expect.
+//
+// Without it those values reach unchecked assertions such as
+// platformConfig["FileLoad"].(string), and a config file that simply omits an
+// optional key crashes the run with "interface conversion: interface {} is nil, not
+// string" instead of reporting anything actionable. Normalising once here keeps every
+// downstream reader — including the ones in pkg/devops — safe.
+//
+// A missing key is expected and silent. A key present with the wrong type is a
+// genuine mistake in the config file, so those names are returned for the caller to
+// report.
+func normalizePlatformConfig(platformConfig map[string]interface{}) []string {
+	if platformConfig == nil {
+		return nil
+	}
+
+	var mistyped []string
+	for key, fallback := range platformConfigDefaults {
+		value, present := platformConfig[key]
+		if !present || value == nil {
+			platformConfig[key] = fallback
+			continue
+		}
+
+		var matches bool
+		switch fallback.(type) {
+		case string:
+			_, matches = value.(string)
+		case bool:
+			_, matches = value.(bool)
+		case float64:
+			_, matches = value.(float64)
+		case []interface{}:
+			_, matches = value.([]interface{})
+		}
+		if !matches {
+			mistyped = append(mistyped, key)
+			platformConfig[key] = fallback
+		}
+	}
+
+	sort.Strings(mistyped) // map iteration order is random; keep the message stable
+	return mistyped
 }
 
 // getWorkDir returns the optional per-platform "WorkDir" setting (base directory for
@@ -1255,6 +1429,13 @@ func runGolcInProcess(platform string) {
 		exitGolc(1)
 	}
 
+	// Fill in anything the config omits before the readers below assert on it, so a
+	// missing optional key reports a problem instead of panicking mid-run.
+	if mistyped := normalizePlatformConfig(platformConfig); len(mistyped) > 0 {
+		logger.Warnf("⚠️  Config key(s) with an unexpected type, using defaults instead: %s",
+			strings.Join(mistyped, ", "))
+	}
+
 	var maxTotalCodeLines int
 	var maxProject, maxRepo string
 	var NumberRepos int
@@ -1498,83 +1679,23 @@ func runGolcInProcess(platform string) {
 		DestinationResult = DestinationResult + "/bylanguage-report/"
 	}
 
-	// List files in the directory
-	files, err := os.ReadDir(DestinationResult)
+	isFilePlatform := platformConfig["DevOps"].(string) == "file"
+	aggregate, err := aggregateResultFiles(DestinationResult, isFilePlatform)
 	if err != nil {
 		logger.Errorf("❌ Error listing files:%v", err)
 		exitGolc(1)
 	}
 
-	// Initialize the sum of TotalCodeLines (excluding JSON to match SonarQube behavior)
-	totalCodeLinesSum := 0
-
-	// Analyse All file
-	for _, file := range files {
-		// Check if the file is a JSON file
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".json") {
-			// Hard-cutover: only accept canonically-named result files. Legacy
-			// single-`_` names and other malformed names contribute neither LOC
-			// nor LargestRepository candidacy — their identity is not
-			// authoritative and they will be regenerated on the next analysis
-			// run. Parsing happens before the JSON body is read so an unparsable
-			// file has zero side-effects on totals or largest-tracking.
-			isFilePlatform := platformConfig["DevOps"].(string) == "file"
-			var parsedOrg, parsedRepo string
-			if isFilePlatform {
-				// File platform writes single-component Result_<Repo>.json.
-				parsedRepo = strings.TrimSuffix(strings.TrimPrefix(file.Name(), "Result_"), ".json")
-			} else {
-				org, repo, _, ok := utils.ParseResultFileName(file.Name())
-				if !ok {
-					logger.Warnf("⚠️  Skipping unparsable result file: %s", file.Name())
-					continue
-				}
-				parsedOrg = org
-				parsedRepo = repo
-			}
-
-			// Read contents of JSON file
-			filePath := filepath.Join(DestinationResult, file.Name())
-			jsonData, err := os.ReadFile(filePath)
-			if err != nil {
-				logger.Errorf("❌ Error reading file %s: %v\n", file.Name(), err)
-				continue
-			}
-
-			// Parse JSON content into a Result structure
-			var result Result
-			err = json.Unmarshal(jsonData, &result)
-			if err != nil {
-				logger.Errorf("❌ Error parsing JSON contents of file %s: %v\n", file.Name(), err)
-				continue
-			}
-
-			// Exclude JSON LOC from total to match SonarQube standard behavior
-			jsonLOC := 0
-			for _, r := range result.Results {
-				if strings.TrimSpace(r.Language) == utils.LanguageExcludedFromTotalLOC {
-					jsonLOC += r.CodeLines
-					break
-				}
-			}
-			codeLinesForTotal := result.TotalCodeLines - jsonLOC
-
-			totalCodeLinesSum += codeLinesForTotal
-
-			// Update the (max, project, repo) triple atomically — the name was
-			// already validated at the top of this iteration, so a new maximum
-			// always carries a usable repo identity.
-			if codeLinesForTotal > maxTotalCodeLines {
-				maxTotalCodeLines = codeLinesForTotal
-				maxProject = parsedOrg
-				maxRepo = parsedRepo
-				if isFilePlatform {
-					NumberRepos++
-				}
-			}
-		}
-
+	totalCodeLinesSum := aggregate.TotalCodeLines
+	maxTotalCodeLines = aggregate.MaxCodeLines
+	maxProject = aggregate.MaxProject
+	maxRepo = aggregate.MaxRepo
+	// Every other platform already knows its repository count from the analysis
+	// phase; the file platform only learns it here, from the result files.
+	if isFilePlatform {
+		NumberRepos = aggregate.Repositories
 	}
+
 	maxTotalCodeLines1 := utils.FormatCodeLines(float64(maxTotalCodeLines))
 	totalCodeLinesSum1 := utils.FormatCodeLines(float64(totalCodeLinesSum))
 
