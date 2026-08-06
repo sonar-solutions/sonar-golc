@@ -631,6 +631,61 @@ func normalizePlatformConfig(platformConfig map[string]interface{}) []string {
 	return mistyped
 }
 
+// requiredPlatformKeys returns the settings a run of this platform cannot proceed
+// without, given the rest of its configuration.
+//
+// Defaulting an absent key (see normalizePlatformConfig) removes the panic, but on
+// its own it would let a genuinely incomplete config run to a confusing end: an empty
+// Organization reaching Azure DevOps surfaces only "The resource cannot be found."
+// with nothing pointing at the config file. These keys are therefore reported
+// explicitly instead.
+//
+// The list is deliberately narrow — only keys with no fallback anywhere else:
+//   - GitHub resolves an empty Organization from the authenticated user when
+//     analysing a personal account, so it is required only for an organisation.
+//   - GitLab takes its groups from the group field and runs with Organization empty.
+//   - The file platform already reports a missing directory itself, with a message
+//     that also covers the FileLoad alternative.
+func requiredPlatformKeys(platformConfig map[string]interface{}) []string {
+	devops, _ := platformConfig["DevOps"].(string)
+
+	switch devops {
+	case "github":
+		keys := []string{"Url", "AccessToken"}
+		if isOrg, _ := platformConfig["Org"].(bool); isOrg {
+			keys = append(keys, "Organization")
+		}
+		return keys
+	case "gitlab":
+		return []string{"Url", "AccessToken"}
+	case "azure":
+		return []string{"Url", "AccessToken", "Organization"}
+	case "bitbucket":
+		return []string{"Url", "AccessToken", "Workspace"}
+	case "bitbucket_dc":
+		return []string{"Url", "AccessToken"}
+	default:
+		return nil
+	}
+}
+
+// missingRequiredKeys names the required settings that are absent or blank. Run it
+// after normalizePlatformConfig, which guarantees these keys hold a string.
+func missingRequiredKeys(platformConfig map[string]interface{}) []string {
+	if platformConfig == nil {
+		return nil
+	}
+
+	var missing []string
+	for _, key := range requiredPlatformKeys(platformConfig) {
+		value, _ := platformConfig[key].(string)
+		if strings.TrimSpace(value) == "" {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
 // getWorkDir returns the optional per-platform "WorkDir" setting (base directory for
 // temporary clones). Absent or non-string => "", which makes goloc fall back to the
 // GOLC_WORKDIR env var and then os.TempDir() (historical default).
@@ -1434,6 +1489,14 @@ func runGolcInProcess(platform string) {
 	if mistyped := normalizePlatformConfig(platformConfig); len(mistyped) > 0 {
 		logger.Warnf("⚠️  Config key(s) with an unexpected type, using defaults instead: %s",
 			strings.Join(mistyped, ", "))
+	}
+
+	// Defaulting absent keys must not turn an incomplete config into a run that fails
+	// somewhere far away with an unrelated-looking message, so say so here instead.
+	if missing := missingRequiredKeys(platformConfig); len(missing) > 0 {
+		logger.Errorf("❌ Configuration for platform '%s' is missing required setting(s): %s",
+			platform, strings.Join(missing, ", "))
+		exitGolc(1)
 	}
 
 	var maxTotalCodeLines int

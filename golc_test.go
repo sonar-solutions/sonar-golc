@@ -911,3 +911,128 @@ func TestAggregateResultFilesMissingDirectory(t *testing.T) {
 		t.Error("expected an error for a missing directory")
 	}
 }
+
+// TestMissingRequiredKeysReportsIncompleteConfig covers the other half of
+// normalizePlatformConfig: defaulting an absent key removes the panic, but a config
+// that is genuinely incomplete must still say so rather than failing later with an
+// unrelated-looking message ("The resource cannot be found.").
+func TestMissingRequiredKeysReportsIncompleteConfig(t *testing.T) {
+	cfg := map[string]interface{}{"DevOps": "azure"}
+	normalizePlatformConfig(cfg)
+
+	missing := missingRequiredKeys(cfg)
+	want := map[string]bool{"Url": true, "AccessToken": true, "Organization": true}
+	if len(missing) != len(want) {
+		t.Fatalf("missing = %v, want %v", missing, want)
+	}
+	for _, key := range missing {
+		if !want[key] {
+			t.Errorf("unexpected key reported as required: %q", key)
+		}
+	}
+}
+
+func TestMissingRequiredKeysSatisfiedConfig(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "azure",
+		"Url":          "https://dev.azure.com/",
+		"AccessToken":  "token",
+		"Organization": "acme",
+	}
+	normalizePlatformConfig(cfg)
+
+	if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
+	}
+}
+
+// TestMissingRequiredKeysBlankIsMissing guards against a whitespace-only value
+// passing as supplied.
+func TestMissingRequiredKeysBlankIsMissing(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps":       "azure",
+		"Url":          "https://dev.azure.com/",
+		"AccessToken":  "   ",
+		"Organization": "acme",
+	}
+	normalizePlatformConfig(cfg)
+
+	missing := missingRequiredKeys(cfg)
+	if len(missing) != 1 || missing[0] != "AccessToken" {
+		t.Errorf("missing = %v, want [AccessToken]", missing)
+	}
+}
+
+// TestMissingRequiredKeysGitHubPersonalAccount pins the exemption that makes this
+// list safe to enforce: getgithub resolves an empty Organization from the
+// authenticated user for a personal account, so requiring it unconditionally would
+// reject a configuration that works today.
+func TestMissingRequiredKeysGitHubPersonalAccount(t *testing.T) {
+	personal := map[string]interface{}{
+		"DevOps": "github", "Url": "https://api.github.com/", "AccessToken": "token",
+		"Org": false, "Organization": "",
+	}
+	normalizePlatformConfig(personal)
+	if missing := missingRequiredKeys(personal); len(missing) != 0 {
+		t.Errorf("personal account: missing = %v, want none (Organization is derived)", missing)
+	}
+
+	org := map[string]interface{}{
+		"DevOps": "github", "Url": "https://api.github.com/", "AccessToken": "token",
+		"Org": true, "Organization": "",
+	}
+	normalizePlatformConfig(org)
+	if missing := missingRequiredKeys(org); len(missing) != 1 || missing[0] != "Organization" {
+		t.Errorf("organisation: missing = %v, want [Organization]", missing)
+	}
+}
+
+// TestMissingRequiredKeysGitLabRunsWithoutOrganization pins the second exemption: a
+// real working GitLab config leaves Organization empty and takes its groups from the
+// group field.
+func TestMissingRequiredKeysGitLabRunsWithoutOrganization(t *testing.T) {
+	cfg := map[string]interface{}{
+		"DevOps": "gitlab", "Url": "https://gitlab.com/", "AccessToken": "token",
+		"Organization": "",
+	}
+	normalizePlatformConfig(cfg)
+	if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+		t.Errorf("missing = %v, want none (GitLab runs with Organization empty)", missing)
+	}
+}
+
+// TestMissingRequiredKeysFilePlatform confirms the file platform is left to its own
+// check, which already reports the Directory/FileLoad alternatives.
+func TestMissingRequiredKeysFilePlatform(t *testing.T) {
+	cfg := map[string]interface{}{"DevOps": "file"}
+	normalizePlatformConfig(cfg)
+	if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
+	}
+}
+
+// TestShippedSampleConfigSatisfiesRequiredKeys guards the enforcement against the
+// configuration the project ships: every platform block in config_sample.json must
+// pass, or the sample would be rejected by its own scanner.
+func TestShippedSampleConfigSatisfiesRequiredKeys(t *testing.T) {
+	data, err := os.ReadFile("config_sample.json")
+	if err != nil {
+		t.Skipf("config_sample.json not readable: %v", err)
+	}
+	var sample struct {
+		Platforms map[string]interface{} `json:"platforms"`
+	}
+	if err := json.Unmarshal(data, &sample); err != nil {
+		t.Fatalf("config_sample.json is not valid JSON: %v", err)
+	}
+	for name, raw := range sample.Platforms {
+		cfg, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		normalizePlatformConfig(cfg)
+		if missing := missingRequiredKeys(cfg); len(missing) != 0 {
+			t.Errorf("config_sample.json platform %q would be rejected, missing %v", name, missing)
+		}
+	}
+}
