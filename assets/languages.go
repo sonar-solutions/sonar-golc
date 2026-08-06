@@ -51,7 +51,7 @@ var Languages = language.Languages{
 	"CSS": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".css", ".less", ".sass"},
+		Extensions:        []string{".css"},
 	},
 	"Dart": {
 		LineComments:      []string{"//"},
@@ -90,7 +90,7 @@ var Languages = language.Languages{
 	"HTML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
-		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp", ".twig"},
+		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp"},
 	},
 	"JCL": {
 		LineComments:      []string{"//*"},
@@ -120,6 +120,14 @@ var Languages = language.Languages{
 		LineComments:      []string{},
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".json"},
+	},
+	// SonarQube reports Less and Sass under its css language, but they cannot share
+	// GoLC's CSS entry: both support "//" line comments, which plain CSS does not, so
+	// folding them in would count every such comment as code. Same tokens as Scss.
+	"Less": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".less"},
 	},
 	"Kotlin": {
 		LineComments:      []string{"//"},
@@ -182,6 +190,11 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".scala"},
 	},
+	"Sass": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".sass"},
+	},
 	"Scss": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
@@ -211,6 +224,14 @@ var Languages = language.Languages{
 		LineComments:      []string{"--"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".tsql"},
+	},
+	// SonarQube reports Twig under its html language, but a Twig comment is {# #}, which
+	// the HTML entry does not know. Template files also contain markup, so both forms are
+	// recognised here.
+	"Twig": {
+		LineComments:      []string{},
+		MultiLineComments: [][]string{{"{#", "#}"}, {"<!--", "-->"}},
+		Extensions:        []string{".twig"},
 	},
 	"TypeScript": {
 		LineComments:      []string{"//"},

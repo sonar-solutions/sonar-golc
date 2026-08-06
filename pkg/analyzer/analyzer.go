@@ -116,24 +116,23 @@ func (a *Analyzer) canAdd(path string, extension string) bool {
 		}
 	}
 
+	// Resolve the extension rules first. They are pure string work, whereas the minified
+	// check below opens and samples the file, so a .js the caller has already excluded by
+	// extension should never be read at all.
+	if len(a.includeExtensions) > 0 {
+		if _, ok := a.includeExtensions[a.getFileExtension(path)]; !ok {
+			return false
+		}
+	} else if _, ok := a.excludeExtensions[a.getFileExtension(path)]; ok {
+		return false
+	} else if _, ok := a.SupportedExtensions[extension]; !ok {
+		return false
+	}
+
 	// Minified JavaScript and CSS never reach SonarQube's ncloc, so counting them would
 	// over-estimate - a single committed bundle can be tens of thousands of lines. The
 	// test is SonarJS's own, name and average line length both; see minified.go.
-	if looksMinified(path) {
-		return false
-	}
-
-	if len(a.includeExtensions) > 0 {
-		_, ok := a.includeExtensions[a.getFileExtension(path)]
-		return ok
-	}
-
-	if _, ok := a.excludeExtensions[a.getFileExtension(path)]; ok {
-		return false
-	}
-
-	_, ok := a.SupportedExtensions[extension]
-	return ok
+	return !looksMinified(path)
 }
 
 // folderSegmentContainsKeyword returns true if kw is a whole word within segment.

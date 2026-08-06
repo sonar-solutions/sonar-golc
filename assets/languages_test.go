@@ -37,8 +37,10 @@ func TestLanguagesCoverSonarQubeDefaults(t *testing.T) {
 		"C#":            {".cs", ".razor"},
 		"C++":           {".cpp", ".cc", ".cxx", ".c++", ".ipp", ".ixx", ".mxx", ".cppm", ".ccm", ".cxxm", ".c++m"},
 		"C++ Header":    {".hh", ".hpp", ".hxx", ".h++"},
-		"CSS":           {".css", ".less", ".sass"},
-		"HTML":          {".twig"},
+		"CSS":           {".css"},
+		"Less":          {".less"},
+		"Sass":          {".sass"},
+		"Twig":          {".twig"},
 		"JavaScript":    {".js", ".jsx", ".cjs", ".mjs"},
 		"TypeScript":    {".ts", ".tsx", ".cts", ".mts"},
 		"Oracle PL/SQL": {".pkb", ".pks"},
@@ -165,5 +167,38 @@ func TestPHPDeclaresItsMarkupDelimiters(t *testing.T) {
 		if !found {
 			t.Errorf("PHP should declare %q as a non-code delimiter", d)
 		}
+	}
+}
+
+// Less, Sass and Twig are reported by SonarQube under css and html, but they cannot share
+// GoLC's CSS or HTML entry: Less and Sass support "//" line comments that plain CSS does
+// not, and a Twig comment is {# #}. Folding them in would count their comments as code -
+// over-counting, which is the opposite of what aligning with ncloc is for.
+func TestTemplateAndPreprocessorCommentSyntax(t *testing.T) {
+	for _, lang := range []string{"Less", "Sass"} {
+		info, ok := Languages[lang]
+		if !ok {
+			t.Errorf("%q is missing", lang)
+			continue
+		}
+		if len(info.LineComments) != 1 || info.LineComments[0] != "//" {
+			t.Errorf("%q must treat // as a line comment, got %v", lang, info.LineComments)
+		}
+	}
+
+	// Plain CSS has no line comment syntax, so it must not have acquired one.
+	if len(Languages["CSS"].LineComments) != 0 {
+		t.Errorf("CSS has no line comments, got %v", Languages["CSS"].LineComments)
+	}
+
+	var hasTwigComment bool
+	for _, pair := range Languages["Twig"].MultiLineComments {
+		if len(pair) == 2 && pair[0] == "{#" && pair[1] == "#}" {
+			hasTwigComment = true
+		}
+	}
+	if !hasTwigComment {
+		t.Errorf("Twig should recognise {# #} comments, got %v",
+			Languages["Twig"].MultiLineComments)
 	}
 }

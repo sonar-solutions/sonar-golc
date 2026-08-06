@@ -246,7 +246,7 @@ C++                | .cpp, .cc, .cxx, .c++, .ipp, .ixx, ...   | //              
 C++ Header         | .hh, .hpp, .hxx, .h++                    | //              | /* */
 C#                 | .cs, .razor                              | //              | /* */
 COBOL              | .cbl, .ccp, .cob, .cobol, .cpy           | *               |
-CSS                | .css, .less, .sass                       |                 | /* */
+CSS                | .css                                     |                 | /* */
 Dart               | .dart                                    | //              | /* */
 Docker             | Dockerfile, dockerfile                   | #               |
 Golang             | .go                                      | //              | /* */
@@ -256,6 +256,7 @@ HTML               | .html, .htm, .cshtml, .vbhtml, ...       |                 
 Java               | .java, .jav                              | //              | /* */
 JavaScript         | .js, .jsx, .cjs, .mjs                    | //              | /* */
 JCL                | .jcl, .JCL                               | //*             |
+Less               | .less                                    | //              | /* */
 JSON               | .json                                    |                 |
 JSP                | .jsp, .jspf, .jspx                       |                 | <%-- --%>, <!-- -->
 Kotlin             | .kt, .kts                                | //              | /* */
@@ -267,6 +268,7 @@ PowerShell         | .ps1, .psm1, .psd1                       | #               
 Python             | .py                                      | #               | """ """, ''' '''
 RPG                | .rpg, .rpgle, .sqlrpgle (+ uppercase)    | *               |
 Ruby               | .rb                                      | #               | =begin =end
+Sass               | .sass                                    | //              | /* */
 Rust               | .rs                                      | //              | /* */
 Scala              | .scala                                   | //              | /* */
 Scss               | .scss                                    | //              | /* */
@@ -275,6 +277,7 @@ SQL                | .sql                                     | --              
 Swift              | .swift                                   | //              | /* */
 Terraform          | .tf                                      | #, //           | /* */
 T-SQL              | .tsql                                    | --              | /* */
+Twig               | .twig                                    |                 | {# #}, <!-- -->
 TypeScript         | .ts, .tsx, .cts, .mts                    | //              | /* */
 VB6                | .bas, .frm, .cls, .ctl                   | '               |
 Visual Basic .NET  | .vb                                      | '               |
