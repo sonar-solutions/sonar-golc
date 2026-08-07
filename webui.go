@@ -1506,7 +1506,7 @@ const basicFields = {
   Azure:            [{id:'AccessToken',label:'Personal Access Token <small class="text-muted">— requires <strong>Code: Read</strong> &amp; <strong>Project and Team: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'}],
   AzureServer:      [{id:'AccessToken',label:'Personal Access Token <small class="text-muted">— requires <strong>Code: Read</strong> &amp; <strong>Project and Team: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
-                     {id:'Organization',label:'Collection <small class="text-muted">— the path segment right before the project: https://server:8080/<strong>DefaultCollection</strong>/my-project</small>',ph:'DefaultCollection',defaultValue:'DefaultCollection',html:true},
+                     {id:'Organization',label:'Collection <small class="text-muted">— the path segment right before the project: https://azuredevops.yourcompany.com/<strong>DefaultCollection</strong>/my-project</small>',ph:'DefaultCollection',defaultValue:'DefaultCollection',html:true},
                      {id:'Url',label:'Server URL',ph:'https://azuredevops.yourcompany.com/',onchange:'syncAzureServerProtocol()'}],
   File:             [{id:'Organization',label:'Organization / Label',ph:'my-org'}],
 };
