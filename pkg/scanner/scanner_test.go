@@ -215,3 +215,112 @@ func TestScanCountsDelimiterLikeLinesForOtherLanguages(t *testing.T) {
 		t.Errorf("CodeLines = %d, want 2 (no NonCodeLines configured)", got.CodeLines)
 	}
 }
+
+// A file that does not end in a newline still has a final line. ReadString returns that
+// chunk together with io.EOF, and breaking on the error used to discard it, losing one
+// line from every such file.
+func TestScanCountsFinalLineWithoutTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+
+	sc := NewScanner(language.Languages{
+		"Go": {
+			LineComments:      []string{"//"},
+			MultiLineComments: [][]string{{"/*", "*/"}},
+			Extensions:        []string{".go"},
+		},
+	})
+
+	cases := []struct {
+		name                         string
+		content                      string
+		code, comments, blank, lines int
+	}{
+		{
+			name:    "code on the final line, no newline",
+			content: "a := 1\nb := 2",
+			code:    2, lines: 2,
+		},
+		{
+			name:    "same file with a trailing newline counts the same",
+			content: "a := 1\nb := 2\n",
+			code:    2, lines: 2,
+		},
+		{
+			name:    "a comment on the final line, no newline",
+			content: "a := 1\n// trailing note",
+			code:    1, comments: 1, lines: 2,
+		},
+		{
+			name:    "whitespace-only final line is blank, not code",
+			content: "a := 1\n   ",
+			code:    1, blank: 1, lines: 2,
+		},
+		{
+			name:    "a single line with no newline at all",
+			content: "only := 1",
+			code:    1, lines: 1,
+		},
+		{
+			name:    "empty file",
+			content: "",
+			lines:   0,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(dir, "f.go")
+			if err := os.WriteFile(path, []byte(c.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := sc.scanFile(analyzer.FileMetadata{
+				FilePath: path, Extension: ".go", Language: "Go",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.CodeLines != c.code {
+				t.Errorf("CodeLines = %d, want %d", got.CodeLines, c.code)
+			}
+			if got.Comments != c.comments {
+				t.Errorf("Comments = %d, want %d", got.Comments, c.comments)
+			}
+			if got.BlankLines != c.blank {
+				t.Errorf("BlankLines = %d, want %d", got.BlankLines, c.blank)
+			}
+			if got.Lines != c.lines {
+				t.Errorf("Lines = %d, want %d", got.Lines, c.lines)
+			}
+		})
+	}
+}
+
+// An unterminated block comment that runs to the end of the file must still have its final
+// line counted as a comment.
+func TestScanCountsFinalLineInsideBlockComment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.go")
+	if err := os.WriteFile(path, []byte("a := 1\n/* open\nstill open"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := NewScanner(language.Languages{
+		"Go": {
+			LineComments:      []string{"//"},
+			MultiLineComments: [][]string{{"/*", "*/"}},
+			Extensions:        []string{".go"},
+		},
+	})
+
+	got, err := sc.scanFile(analyzer.FileMetadata{
+		FilePath: path, Extension: ".go", Language: "Go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CodeLines != 1 || got.Comments != 2 {
+		t.Errorf("got code=%d comments=%d, want code=1 comments=2",
+			got.CodeLines, got.Comments)
+	}
+}
