@@ -83,6 +83,23 @@ upper bound: newer servers keep accepting older `api-version` values.
 2019 RTM is the edge case — 5.1 specifically shipped in 2019 Update 1, so quote that as
 the floor.
 
+#### Windows / NTLM authentication
+
+Azure DevOps Server is often deployed behind Windows authentication, where personal access
+tokens are disabled and the server answers with `WWW-Authenticate: NTLM`. To use it, fill in
+the **Username** field (`DOMAIN\\username`) alongside the token, which is then treated as
+the account password.
+
+Leaving Username empty keeps the PAT behaviour exactly as it was, so this cannot affect an
+existing configuration. Even with it set, the negotiator only performs an NTLM handshake if
+the server actually asks for one — a server that accepts basic authentication never sees a
+difference.
+
+> **Not yet verified against a live Windows-authenticated server.** The handshake is covered
+> by tests against a mock that behaves like IIS, and the PAT path is verified end to end,
+> but no NTLM-enabled Azure DevOps Server was available to test interoperability. Treat the
+> first real use as a trial.
+
 > The `Apiver` field in an Azure configuration has no effect. The connector builds an SDK
 > client rather than composing URLs itself, so the SDK's own version is what gets sent.
 > This is equally true of Azure DevOps Services and predates Server support.

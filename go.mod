@@ -3,10 +3,12 @@ module github.com/SonarSource-Demos/sonar-golc
 go 1.25.8
 
 require (
+	github.com/Azure/go-ntlmssp v0.1.1
 	github.com/briandowns/spinner v1.23.0
 	github.com/fatih/color v1.18.0
 	github.com/go-git/go-git/v5 v5.18.0
 	github.com/google/go-github/v82 v82.0.0
+	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-getter v1.8.6
 	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/ktrysmt/go-bitbucket v0.9.80
@@ -68,7 +70,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.72 // indirect

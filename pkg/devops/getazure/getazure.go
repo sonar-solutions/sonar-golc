@@ -13,7 +13,6 @@ import (
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/briandowns/spinner"
-	"github.com/microsoft/azure-devops-go-api/azuredevops"
 	"github.com/microsoft/azure-devops-go-api/azuredevops/core"
 	"github.com/microsoft/azure-devops-go-api/azuredevops/git"
 )
@@ -233,8 +232,11 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 		return nil, err
 	}
 
-	// Create a connection to your organization
-	connection := azuredevops.NewPatConnection(ApiURL, platformConfig["AccessToken"].(string))
+	// Create a connection to your organization. A configured username switches the
+	// credentials to user:token basic auth and turns on the NTLM negotiator, which is what
+	// an Azure DevOps Server behind Windows authentication needs; see ntlm.go.
+	username, _ := platformConfig["Users"].(string)
+	connection := azureConnection(ApiURL, username, platformConfig["AccessToken"].(string))
 	ctx := context.Background()
 
 	// Create a client to interact with the Core area
@@ -697,6 +699,7 @@ func analyzeRepoBranches(parms ParamsProjectAzure, projectKey string, repo strin
 	return largestRepoBranch, nbrbranch, brsize, nil
 
 }
+
 // defaultBranchName safely extracts a repository's default branch name, with
 // the "refs/heads/" prefix stripped. The Azure DevOps API marks DefaultBranch
 // as omitempty, so GetRepository can legitimately return it as nil — for
