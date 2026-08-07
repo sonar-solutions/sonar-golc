@@ -129,3 +129,88 @@ func TestAnalyseReposListCountsWithMultithreadingOff(t *testing.T) {
 		t.Errorf("count = %d, want 3", got)
 	}
 }
+
+// A skipped repository reports on the channel like any other - the skip path sends before it
+// returns. Counting messages therefore counts skips as analysed, which is how a run that
+// skipped two of thirty still announced "30 analyzed" while printing a two-repository skip
+// warning directly above it. The lines of a skipped repository are absent from the totals just
+// as surely as those of one that vanished, so it must not appear in the headline.
+func TestAnalyseReposListExcludesSkippedRepositories(t *testing.T) {
+	out := captureLog(t)
+
+	// Two of five fail: they report, but as skips.
+	analyse := func(project interface{}, _ string, _ map[string]interface{},
+		_ *spinner.Spinner, results chan int, _ *atomic.Int64) {
+		if project.(int) < 2 {
+			results <- repoSkipped
+			return
+		}
+		results <- repoAnalysed
+	}
+
+	got := AnalyseReposList(t.TempDir(), testPlatformConfig(true), testRepos(5), analyse)
+
+	if got != 3 {
+		t.Errorf("count = %d, want 3: two repositories were skipped, so their lines are not in "+
+			"the totals and they cannot be part of the analyzed headline", got)
+	}
+	if !strings.Contains(out.String(), "5 repositories found: 3 analyzed, 2 skipped") {
+		t.Errorf("the shortfall was not accounted for in the log; got:\n%s", out.String())
+	}
+}
+
+// A skip is a reported outcome, not a disappearance. Raising the "did not complete ... with no
+// error of their own" alarm for it would be false: the repository did fail, visibly, and is
+// already in the skip report. Crying wolf here devalues the alarm for the case that has no
+// other signal at all.
+func TestAnalyseReposListDoesNotCallASkipAVanishedRepository(t *testing.T) {
+	out := captureLog(t)
+
+	analyse := func(project interface{}, _ string, _ map[string]interface{},
+		_ *spinner.Spinner, results chan int, _ *atomic.Int64) {
+		if project.(int) == 0 {
+			results <- repoSkipped
+			return
+		}
+		results <- repoAnalysed
+	}
+
+	AnalyseReposList(t.TempDir(), testPlatformConfig(true), testRepos(3), analyse)
+
+	if strings.Contains(out.String(), "did not complete") {
+		t.Errorf("a skipped repository was reported as having vanished:\n%s", out.String())
+	}
+}
+
+// The two failure modes are independent and can happen in the same run, so the report has to
+// keep them apart: one repository skipped and one gone must not be summed into "two of
+// something" - they need different actions from whoever reads it.
+func TestAnalyseReposListSeparatesSkippedFromVanished(t *testing.T) {
+	out := captureLog(t)
+
+	analyse := func(project interface{}, _ string, _ map[string]interface{},
+		_ *spinner.Spinner, results chan int, _ *atomic.Int64) {
+		switch project.(int) {
+		case 0:
+			results <- repoSkipped
+		case 1:
+			return // vanishes: no report at all
+		default:
+			results <- repoAnalysed
+		}
+	}
+
+	got := AnalyseReposList(t.TempDir(), testPlatformConfig(true), testRepos(4), analyse)
+
+	if got != 2 {
+		t.Errorf("count = %d, want 2 (4 found, 1 skipped, 1 vanished)", got)
+	}
+
+	logged := out.String()
+	if !strings.Contains(logged, "4 repositories found: 2 analyzed, 2 skipped") {
+		t.Errorf("the shortfall total is wrong; got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "1 of 4 repositories did not complete") {
+		t.Errorf("the vanished repository was not called out separately; got:\n%s", logged)
+	}
+}

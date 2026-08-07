@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	ntlmssp "github.com/Azure/go-ntlmssp"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/microsoft/azure-devops-go-api/azuredevops"
 )
@@ -134,12 +133,12 @@ func challengeMessage() []byte {
 func TestEnableNTLMAlsoWrapsTheSharedClient(t *testing.T) {
 	EnableNTLM()
 
-	if _, ok := utils.HTTPClient.Transport.(ntlmssp.Negotiator); !ok {
-		t.Errorf("utils.HTTPClient.Transport is %T, want it wrapped in ntlmssp.Negotiator; "+
+	if _, ok := utils.HTTPClient.Transport.(ntlmTransport); !ok {
+		t.Errorf("utils.HTTPClient.Transport is %T, want it wrapped in ntlmTransport; "+
 			"disabled-repo detection would silently fail and inflate the line count",
 			utils.HTTPClient.Transport)
 	}
-	if _, ok := http.DefaultTransport.(ntlmssp.Negotiator); !ok {
+	if _, ok := http.DefaultTransport.(ntlmTransport); !ok {
 		t.Errorf("http.DefaultTransport is %T, want it wrapped", http.DefaultTransport)
 	}
 }
