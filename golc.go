@@ -468,6 +468,17 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 	wg.Wait()
 	close(results)
 
+	// Every worker reports exactly once, on success and on each error path alike, so a
+	// missing report means one neither finished nor failed - it disappeared. Counting
+	// them is what turns that into a visible number: returning `total` here would report
+	// repositories *found* under a heading that says *analyzed*, so a repository that
+	// vanished would be counted in the summary and its absence never mentioned. Silent
+	// omission is the worst failure mode for a tool used to size a licence.
+	analysed := 0
+	for range results {
+		analysed++
+	}
+
 	// Persist the skipped repositories so the ResultsAll web page and the PDF report
 	// can surface them. DestinationResult is the base Results directory at this point.
 	skippedList := skipped.snapshot()
@@ -477,8 +488,13 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 	if len(skippedList) > 0 {
 		logger.Warnf("⚠️  %d repository(ies) were skipped during analysis (see report for details)", len(skippedList))
 	}
+	if analysed < total {
+		logger.Errorf("❌ %d of %d repositories did not complete analysis and are missing from the "+
+			"totals, with no error of their own. The reported lines of code are therefore an "+
+			"under-count - re-run before relying on them.", total-analysed, total)
+	}
 
-	return total
+	return analysed
 }
 
 func getExcludePaths(configValue interface{}) []string {

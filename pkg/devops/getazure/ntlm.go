@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	ntlmssp "github.com/Azure/go-ntlmssp"
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/microsoft/azure-devops-go-api/azuredevops"
@@ -38,6 +39,14 @@ func EnableNTLM() {
 	installNTLMOnce.Do(func() {
 		http.DefaultTransport = ntlmssp.Negotiator{RoundTripper: http.DefaultTransport}
 
+		// utils.HTTPClient carries its own Transport for connection pooling, so replacing
+		// http.DefaultTransport does not reach it. fetchDisabledRepoIDs uses that client,
+		// and without this its request is the one call in the whole Azure path that cannot
+		// authenticate - it fails, is swallowed as "no repos disabled", and every disabled
+		// repository is then counted. In a licence-sizing tool that silently inflates the
+		// total, which is the worst possible way for it to break.
+		utils.HTTPClient.Transport = ntlmssp.Negotiator{RoundTripper: utils.HTTPClient.Transport}
+
 		// go-git builds its own client, so it needs the negotiator installed separately.
 		client.InstallProtocol("https", githttp.NewClient(
 			&http.Client{Transport: ntlmssp.Negotiator{RoundTripper: &http.Transport{}}}))
@@ -64,4 +73,11 @@ func azureConnection(apiURL, username, token string) *azuredevops.Connection {
 		BaseUrl:                 strings.ToLower(strings.TrimRight(apiURL, "/")),
 		SuppressFedAuthRedirect: true,
 	}
+}
+
+// stringOrEmpty reads an optional string out of a platform configuration.
+func stringOrEmpty(v interface{}) string {
+	s, _ := v.(string)
+
+	return s
 }

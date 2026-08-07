@@ -67,10 +67,28 @@ func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 	return results, nil
 }
 
+// isTerminal reports whether f is attached to a terminal. A character device is the
+// portable signal for that, so no dependency is needed to ask.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 func (sc *Scanner) createProgressbar(max int) *progressbar.ProgressBar {
-	return progressbar.NewOptions(
-		max,
+	options := []progressbar.Option{
 		progressbar.OptionSetDescription("Scanning files..."),
+	}
+
+	// A progress bar animates by repainting the same line, which only makes sense on a
+	// terminal. Redirected to a file or a CI log every repaint is kept, and the bar
+	// becomes the bulk of the output - megabytes of it on a large scan, burying the
+	// messages someone is actually reading. Off the terminal, draw nothing.
+	if !isTerminal(os.Stdout) {
+		options = append(options, progressbar.OptionSetWriter(io.Discard))
+	}
+
+	options = append(options,
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionShowCount(),
 		progressbar.OptionClearOnFinish(),
@@ -82,6 +100,8 @@ func (sc *Scanner) createProgressbar(max int) *progressbar.ProgressBar {
 			BarEnd:        "]",
 		}),
 	)
+
+	return progressbar.NewOptions(max, options...)
 }
 
 // Old Function using bufio.Scanner Now use bufio.Reader which does not limit the line size.

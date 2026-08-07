@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	ntlmssp "github.com/Azure/go-ntlmssp"
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/microsoft/azure-devops-go-api/azuredevops"
 )
 
@@ -122,4 +124,33 @@ func challengeMessage() []byte {
 	copy(msg[24:32], []byte{1, 2, 3, 4, 5, 6, 7, 8}) // server challenge
 
 	return msg
+}
+
+// utils.HTTPClient has its own Transport for connection pooling, so replacing
+// http.DefaultTransport does not reach it. fetchDisabledRepoIDs uses that client, and if it
+// is left unwrapped its request is the one call in the Azure path that cannot authenticate
+// against a Windows-authenticated server. The failure is swallowed as "no repos disabled",
+// so every disabled repository gets counted and the reported total silently inflates.
+func TestEnableNTLMAlsoWrapsTheSharedClient(t *testing.T) {
+	EnableNTLM()
+
+	if _, ok := utils.HTTPClient.Transport.(ntlmssp.Negotiator); !ok {
+		t.Errorf("utils.HTTPClient.Transport is %T, want it wrapped in ntlmssp.Negotiator; "+
+			"disabled-repo detection would silently fail and inflate the line count",
+			utils.HTTPClient.Transport)
+	}
+	if _, ok := http.DefaultTransport.(ntlmssp.Negotiator); !ok {
+		t.Errorf("http.DefaultTransport is %T, want it wrapped", http.DefaultTransport)
+	}
+}
+
+// Repeated calls must not stack negotiators on top of each other.
+func TestEnableNTLMIsIdempotent(t *testing.T) {
+	EnableNTLM()
+	first := utils.HTTPClient.Transport
+	EnableNTLM()
+
+	if utils.HTTPClient.Transport != first {
+		t.Error("a second EnableNTLM wrapped the transport again")
+	}
 }

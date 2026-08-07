@@ -65,6 +65,7 @@ type ParamsProjectAzure struct {
 	Projects       []core.TeamProjectReference
 	URL            string
 	AccessToken    string
+	Username       string
 	ApiURL         string
 	Organization   string
 	Exclusionlist  *utils.ExclusionList
@@ -139,7 +140,7 @@ func isRepoEmpty(ctx context.Context, gitClient git.Client, projectID string, re
 	//return len(*items) == 0, nil
 }
 
-func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *utils.ExclusionList) ([]core.TeamProjectReference, int, error) {
+func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *utils.ExclusionList, apiURL, username string) ([]core.TeamProjectReference, int, error) {
 	var allProjects []core.TeamProjectReference
 	var excludedCount int
 	var continuationToken string
@@ -150,7 +151,7 @@ func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *
 			ContinuationToken: &continuationToken,
 		})
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, describeAzureError(err, apiURL, username)
 		}
 
 		for _, project := range responseValue.Value {
@@ -175,7 +176,7 @@ func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *
 	return allProjects, excludedCount, nil
 }
 
-func getProjectByName(ctx context.Context, coreClient core.Client, projectName string, exclusionList *utils.ExclusionList) ([]core.TeamProjectReference, int, error) {
+func getProjectByName(ctx context.Context, coreClient core.Client, projectName string, exclusionList *utils.ExclusionList, apiURL, username string) ([]core.TeamProjectReference, int, error) {
 
 	var excludedCount int
 
@@ -190,7 +191,7 @@ func getProjectByName(ctx context.Context, coreClient core.Client, projectName s
 		ProjectId: &projectName,
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, describeAzureError(err, apiURL, username)
 	}
 
 	// Create a core.TeamProjectReference from core.TeamProject
@@ -259,7 +260,7 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 	if platformConfig["Project"].(string) == "" {
 
 		// Get All Project
-		projects, exludedprojects, err := getAllProjects(ctx, coreClient, exclusionList)
+		projects, exludedprojects, err := getAllProjects(ctx, coreClient, exclusionList, ApiURL, username)
 
 		if err != nil {
 			spin.Stop()
@@ -281,7 +282,7 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 		}
 
 	} else {
-		projects, exludedprojects, err := getProjectByName(ctx, coreClient, platformConfig["Project"].(string), exclusionList)
+		projects, exludedprojects, err := getProjectByName(ctx, coreClient, platformConfig["Project"].(string), exclusionList, ApiURL, username)
 		if err != nil {
 			spin.Stop()
 			log.Fatalf(MessageErro2, platformConfig["Organization"].(string), err)
@@ -358,6 +359,7 @@ func getCommonParams(azureConnect AzureConnect, platformConfig map[string]interf
 
 		URL:            platformConfig["Url"].(string),
 		AccessToken:    platformConfig["AccessToken"].(string),
+		Username:       stringOrEmpty(platformConfig["Users"]),
 		ApiURL:         apiURL,
 		Organization:   platformConfig["Organization"].(string),
 		Exclusionlist:  exclusionList,
@@ -560,7 +562,10 @@ func fetchDisabledRepoIDs(parms ParamsProjectAzure, projectKey string) map[strin
 		warn("%v", err)
 		return disabled
 	}
-	req.SetBasicAuth("", parms.AccessToken)
+	// The username matters here: an empty one is rejected outright by a
+	// Windows-authenticated server, and leaves the NTLM negotiator with no account to
+	// answer the challenge with.
+	req.SetBasicAuth(parms.Username, parms.AccessToken)
 
 	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
@@ -620,7 +625,8 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 		Project: &projectKey,
 	})
 	if err != nil {
-		loggers.Errorf("Error get GetRepositories ")
+		err = describeAzureError(err, parms.URL, parms.Username)
+		loggers.Errorf("❌ Error listing repositories for project %s: %v", projectKey, err)
 		return 0, 0, 0, nil, err
 	}
 	loggers.Debugf("→ project %s: API returned %d repos", projectKey, len(*repos))
