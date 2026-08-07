@@ -66,38 +66,43 @@ including `FolderKeywords` and `FileNamePatterns` as the page would send them �
 `/api/status` until `running` is false. If a scripted run must write `config.json`
 directly, copy those two lists from `webui.go` first and say so in the write-up.
 
-## The optional test corpus
+## The optional OSS test bed
 
-A generator for a synthetic multi-repo corpus may exist outside the repo (ask the user for
-the location; it is deliberately not version-controlled because it embeds their platform
-identifiers). It answers three different questions — do not confuse them:
+A local toolset may exist outside the repo that mirrors ~30 real open-source projects onto
+all five platforms (ask the user for the location; it is deliberately not version-controlled
+because it embeds their platform identifiers). It replaced a synthetic corpus, because
+generated code does not parse and SonarQube therefore reported 0 ncloc for whole languages —
+noise that reads as catastrophic GoLC defects.
 
-| Script | Question | Use when |
-|---|---|---|
-| `verify.py` | Did GoLC count what was generated? | Changing the scanner, the language map, or exclusions |
-| `sqscan.py` + `sqcompare.py` | Does GoLC predict SonarQube's `ncloc`? | Changing anything that affects the estimate customers act on |
-| the feature probes | Does the tool behave on awkward repos? | Branch selection, exclusion decoys, archived/empty repos, Top-30 truncation |
+| Script | Question |
+|---|---|
+| `mirror.py` | Clone the sources and re-originate them into `build/golc-*` |
+| `publish.py` | Push them to one platform |
+| `sqscan.py` + `sqcompare.py` | Does GoLC predict SonarQube's `ncloc`? |
+| `baseline.py` | Did any count move since last time? |
 
-**Its oracle mirrors GoLC's logic in Python, so a GoLC counting change must be mirrored
-there or `verify.py` reports false failures.** Currently mirrored: the scanner's line
-classification, `NonCodeLines`, `looksMinified`, and `RefineLanguage`. After touching
-`assets/languages.go`, regenerate the corpus's language snapshot (`extract_languages.py`)
-— a stale snapshot silently marks new languages as uncounted.
+**There is no oracle.** Nobody knows the true line count of real code, so nothing mirrors
+GoLC's logic in Python and nothing has to be kept in step with a scanner change. Use
+`baseline.py --save` before a change and `--check` after; it reports only what moved.
 
-Two traps:
+Three things worth knowing:
 
-- **`verify.py` needs exclusions OFF.** The oracle models the scanner and analyzer but not
-  config-driven exclusions, so scan with empty `FolderKeywords`/`FileNamePatterns`. That is
-  the one place the web-UI-defaults rule above does not apply. Use the UI defaults for the
-  SonarQube comparison and for anything customer-representative.
-- **`sonar-scanner` writes a 40 MB+ `.scannerwork/` into the directory it scans**, mutating
-  the fixtures. Force `sonar.working.directory` outside the corpus and check
-  `find <build> -name .scannerwork` is empty afterwards.
+- **GoLC's default exclusions and a stock SonarQube are far apart.** Measured over 30 real
+  repos: GoLC with its UI defaults reported 1.47M lines against SonarQube's 3.63M — a 2.5x
+  under-count, entirely from the test/vendor/build folder presets. With exclusions off the
+  two agree to 3.8%. Neither number is wrong; they answer different questions. Say which
+  configuration produced any figure you report.
+- **On content SonarQube can parse, GoLC is accurate.** Objective-C, Swift and Terraform
+  matched exactly; ABAP, C, C++, Dart, Java, Ruby, Rust, HTML and XML within 1%.
+- **`sonar-scanner` writes a 40 MB+ `.scannerwork/` into the directory it scans.** Force
+  `sonar.working.directory` elsewhere and check `find <build> -name .scannerwork` is empty.
 
-For SonarQube parity, three analyzers count nothing under a stock configuration:
-`sonar.yaml.activate` and `sonar.json.activate` default to **false**, and
-`sonar.cobol.file.suffixes` defaults to **empty**. C# and VB.NET need SonarScanner for
-.NET, which builds the project, so they can only be compared against source that compiles.
+Two SonarQube-side gotchas when comparing: `sonar.yaml.activate` and `sonar.json.activate`
+default to **false** and `sonar.cobol.file.suffixes` defaults to **empty**, so those
+analyzers count nothing until switched on (`sqscan.py --activate-optin`). C# and VB.NET need
+SonarScanner for .NET, which builds the project. A mirrored project may also ship its own
+`sonar-project.properties`, which the scanner will read and which can gut the scan —
+`sqscan.py` neutralises it.
 
 ## Drive the dashboard
 
