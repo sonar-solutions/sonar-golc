@@ -70,6 +70,24 @@ Credentials are entered in the browser and saved automatically — no config fil
 | Azure DevOps | Code: Read · Project and Team: Read |
 | Azure DevOps Server | Code: Read · Project and Team: Read |
 
+#### Azure DevOps Server versions
+
+**Azure DevOps Server 2019 Update 1 and later.** TFS 2018 and older are not supported.
+
+GoLC talks to Azure through the `azure-devops-go-api` SDK, which sends `api-version=5.1`
+on every call, so the server has to support the 5.x API set. Per Microsoft's
+[REST API versioning table](https://learn.microsoft.com/en-us/azure/devops/integrate/concepts/rest-api-versioning),
+API 5.0 arrived with Azure DevOps Server 2019 and TFS 2018 tops out at 4.0. There is no
+upper bound: newer servers keep accepting older `api-version` values.
+
+2019 RTM is the edge case — 5.1 specifically shipped in 2019 Update 1, so quote that as
+the floor.
+
+> The `Apiver` field in an Azure configuration has no effect. The connector builds an SDK
+> client rather than composing URLs itself, so the SDK's own version is what gets sent.
+> This is equally true of Azure DevOps Services and predates Server support.
+
+
 ---
 
 ### Optional Parameters
