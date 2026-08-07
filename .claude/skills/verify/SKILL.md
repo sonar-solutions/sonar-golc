@@ -21,7 +21,8 @@ go build -tags=resultsall -o "$WS/ResultsAll" .                  # dashboard
 The scanner has no CLI flags — the analysis entrypoint is a hidden subcommand:
 
 ```bash
-./golc --internal-run Github     # platform key from config.json: Github, Gitlab, Azure, BitBucket, BitBucketSRV, File
+./golc --internal-run Github     # platform key from config.json: Github, GithubEnterprise,
+                                 # Gitlab, Azure, BitBucket, BitBucketSRV, File
 ```
 
 Both binaries `chdir` to their own directory, so `Results/` and `config.json` must sit
@@ -69,10 +70,15 @@ directly, copy those two lists from `webui.go` first and say so in the write-up.
 ## The optional OSS test bed
 
 A local toolset may exist outside the repo that mirrors ~30 real open-source projects onto
-all five platforms (ask the user for the location; it is deliberately not version-controlled
-because it embeds their platform identifiers). It replaced a synthetic corpus, because
-generated code does not parse and SonarQube therefore reported 0 ncloc for whole languages —
-noise that reads as catastrophic GoLC defects.
+six platforms — Azure DevOps cloud and Server, Bitbucket Cloud, GitHub Enterprise, and
+GitLab cloud and self-managed (ask the user for the location; it is deliberately not
+version-controlled because it embeds their platform identifiers). It replaced a synthetic
+corpus, because generated code does not parse and SonarQube therefore reported 0 ncloc for
+whole languages — noise that reads as catastrophic GoLC defects.
+
+**Azure DevOps Server is populated but cannot be scanned: GoLC has no connector for it**, so
+there is no `config.json` platform key to point at it. The mirrors are there for whenever
+one is written; until then, verify Azure against the hosted service.
 
 | Script | Question |
 |---|---|
