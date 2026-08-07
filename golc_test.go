@@ -1096,3 +1096,43 @@ func TestSampleConfigHasAzureServerBlock(t *testing.T) {
 			srv["Baseapi"], sample.Platforms["Azure"]["Baseapi"])
 	}
 }
+
+// Asserts the string the analyser actually builds, not a re-implementation of it. An
+// earlier revision added azureCloneHost, tested it in isolation, and left the clone URL
+// calling extractDomain - the helper was dead code and its test passed regardless. This
+// goes through azureCloneURL, the same function the analyser uses.
+func TestAzureCloneURL(t *testing.T) {
+	cfg := func(url, org string) map[string]interface{} {
+		return map[string]interface{}{
+			"Protocol": "https", "AccessToken": "TOKEN", "Url": url, "Organization": org,
+		}
+	}
+
+	cases := []struct {
+		name, url, org, want string
+	}{
+		{
+			name: "hosted service is byte-for-byte what the hard-coded host produced",
+			url:  "https://dev.azure.com/", org: "my-org",
+			want: "https://TOKEN@dev.azure.com/my-org/proj/_git/repo",
+		},
+		{
+			name: "server under a virtual directory keeps the path",
+			url:  "https://tfs.corp.example/tfs/", org: "DefaultCollection",
+			want: "https://TOKEN@tfs.corp.example/tfs/DefaultCollection/proj/_git/repo",
+		},
+		{
+			name: "server at the root",
+			url:  "https://azuredevops.corp.example/", org: "DefaultCollection",
+			want: "https://TOKEN@azuredevops.corp.example/DefaultCollection/proj/_git/repo",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := azureCloneURL(cfg(c.url, c.org), "proj", "repo"); got != c.want {
+				t.Errorf("azureCloneURL:\n got %s\nwant %s", got, c.want)
+			}
+		})
+	}
+}

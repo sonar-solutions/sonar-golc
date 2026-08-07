@@ -250,6 +250,18 @@ func azureCloneHost(rawURL string) string {
 	return strings.Trim(trimmed, "/")
 }
 
+// azureCloneURL builds the authenticated clone URL for an Azure repository. It exists as a
+// function so the exact string can be asserted: testing azureCloneHost alone is not enough,
+// because a caller can simply not use it.
+func azureCloneURL(platformConfig map[string]interface{}, projectKey, repoSlug string) string {
+	return fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s",
+		platformConfig["Protocol"].(string),
+		platformConfig["AccessToken"].(string),
+		azureCloneHost(platformConfig["Url"].(string)),
+		platformConfig["Organization"].(string),
+		projectKey, "_git", repoSlug)
+}
+
 func extractDomain(url string) string {
 	// Remove the "http://" or "https://" prefix
 	url = strings.TrimPrefix(url, "https://")
@@ -947,7 +959,7 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 		// The host comes from the configured Url rather than a literal, so the same code
 		// path serves Azure DevOps Server. For the hosted service Url is
 		// https://dev.azure.com/ and this resolves to exactly what it did before.
-		PathToScan:   fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), extractDomain(platformConfig["Url"].(string)), platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
+		PathToScan:   azureCloneURL(platformConfig, p.ProjectKey, p.RepoSlug),
 		WorkDir:      getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
