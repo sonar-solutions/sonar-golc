@@ -156,12 +156,19 @@ func (sc *Scanner) scanFile(file analyzer.FileMetadata) (scanResult, error) {
 	reader := bufio.NewReader(f)
 	for {
 		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
+		if err != nil && err != io.EOF {
 			return result, err
 		}
+
+		// ReadString returns the final chunk together with io.EOF when a file does not end
+		// in a newline. Breaking on the error discarded that chunk, losing one line from
+		// every such file. An empty chunk means the file did end in a newline and there is
+		// genuinely nothing left.
+		lastLine := err == io.EOF
+		if lastLine && line == "" {
+			break
+		}
+
 		line = strings.TrimSpace(line)
 
 		if isInBlockComment {
