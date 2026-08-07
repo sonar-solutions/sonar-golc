@@ -198,6 +198,19 @@ var platformDefaults = map[string]map[string]interface{}{
 	},
 }
 
+// Azure DevOps Server reuses the hosted service's connector and every one of its
+// settings; the only difference is that the user supplies the server address, so there is
+// no default Url. Deriving it keeps the two from drifting apart - a copy would have to be
+// updated twice every time an Azure default changes.
+func init() {
+	server := make(map[string]interface{}, len(platformDefaults["Azure"]))
+	for k, v := range platformDefaults["Azure"] {
+		server[k] = v
+	}
+	delete(server, "Url")
+	platformDefaults["AzureServer"] = server
+}
+
 // sanitizePlatformKey maps a user-supplied platform name to a compile-time
 // string literal, ensuring no tainted value ever reaches exec.Command.
 func sanitizePlatformKey(key string) (string, bool) {
@@ -214,6 +227,8 @@ func sanitizePlatformKey(key string) (string, bool) {
 		return "BitBucketSRV", true
 	case "Azure":
 		return "Azure", true
+	case "AzureServer":
+		return "AzureServer", true
 	case "File":
 		return "File", true
 	default:
@@ -1209,6 +1224,10 @@ const htmlTemplate = `<!DOCTYPE html>
         <div class="icon"><i class="fab fa-microsoft"></i></div>
         <div class="name">Azure DevOps<br><small style="color:#64748b;font-weight:400;">Cloud</small></div>
       </div>
+      <div class="platform-card" data-platform="AzureServer">
+        <div class="icon"><i class="fab fa-microsoft"></i></div>
+        <div class="name">Azure DevOps Server<br><small style="color:#64748b;font-weight:400;">On-premises</small></div>
+      </div>
       <div class="platform-card" data-platform="File">
         <div class="icon"><i class="fas fa-folder-open"></i></div>
         <div class="name">File Mode<br><small style="color:#64748b;font-weight:400;">Local directories</small></div>
@@ -1459,6 +1478,7 @@ const platforms = {
   BitBucket:        { icon:'fab fa-bitbucket',  label:'Bitbucket Cloud',   sub:'Cloud' },
   BitBucketSRV:     { icon:'fab fa-bitbucket',  label:'Bitbucket DC',      sub:'On-premises' },
   Azure:            { icon:'fab fa-microsoft',  label:'Azure DevOps',      sub:'Cloud' },
+  AzureServer:      { icon:'fab fa-microsoft',  label:'Azure DevOps Server', sub:'On-premises' },
   File:             { icon:'fas fa-folder-open',label:'File Mode',         sub:'Local directories' },
 };
 
@@ -1485,6 +1505,9 @@ const basicFields = {
                      {id:'Protocol',label:'Protocol',ph:'https'}],
   Azure:            [{id:'AccessToken',label:'Personal Access Token <small class="text-muted">— requires <strong>Code: Read</strong> &amp; <strong>Project and Team: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'}],
+  AzureServer:      [{id:'AccessToken',label:'Personal Access Token <small class="text-muted">— requires <strong>Code: Read</strong> &amp; <strong>Project and Team: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
+                     {id:'Organization',label:'Collection <small class="text-muted">— the path segment right before the project: https://azuredevops.yourcompany.com/<strong>DefaultCollection</strong>/my-project</small>',ph:'DefaultCollection',defaultValue:'DefaultCollection',html:true},
+                     {id:'Url',label:'Server URL',ph:'https://azuredevops.yourcompany.com/',onchange:'syncAzureServerProtocol()'}],
   File:             [{id:'Organization',label:'Organization / Label',ph:'my-org'}],
 };
 
@@ -1698,6 +1721,7 @@ const reposDescriptions = {
   BitBucket:        'Analyse only these repositories. Enter slugs as they appear in Bitbucket Cloud (e.g. <code>my-repo</code>). Leave empty to analyse all repositories in the workspace.',
   BitBucketSRV:     'Analyse only these repositories. Enter slugs as they appear in Bitbucket Data Center (e.g. <code>my-repo</code>). Leave empty to analyse all repositories in the organization.',
   Azure:            'Enter <strong>repository names</strong> as they appear in Azure DevOps (e.g. <code>my-service</code>, <code>backend-api</code>). Note: this is the repository name, not the project name — use the <em>Specific project key</em> field above to scope by project. Leave empty to analyse all repositories.',
+  AzureServer:      'Enter <strong>repository names</strong> as they appear in Azure DevOps (e.g. <code>my-service</code>, <code>backend-api</code>). Note: this is the repository name, not the project name — use the <em>Specific project key</em> field above to scope by project. Leave empty to analyse all repositories.',
 };
 
 const reposHints = {
@@ -1707,6 +1731,7 @@ const reposHints = {
   BitBucket:        '(comma-separated slugs)',
   BitBucketSRV:     '(comma-separated slugs)',
   Azure:            '(comma-separated repository names)',
+  AzureServer:      '(comma-separated repository names)',
 };
 
 const reposPlaceholders = {
@@ -1716,6 +1741,7 @@ const reposPlaceholders = {
   BitBucket:        'my-repo, another-repo',
   BitBucketSRV:     'my-repo, another-repo',
   Azure:            'my-service, backend-api',
+  AzureServer:      'my-service, backend-api',
 };
 
 // 'doc', 'docs' and the singular 'mock' are here to match SonarQube, which classifies a
@@ -1822,6 +1848,18 @@ function syncGitlabProtocol() {
   setHidden('f-Protocol', protocol);
 }
 
+// Derive Protocol from the Azure DevOps Server Url field. Unlike GitHub Enterprise there
+// is no Baseapi to set: for Azure it is the fixed path "_apis/git/", and the host is taken
+// from Url by the analyser itself.
+function syncAzureServerProtocol() {
+  const urlEl = document.getElementById('f-Url');
+  if (!urlEl) return;
+  const m = urlEl.value.trim().match(/^(https?):\/\//i);
+  let el = document.getElementById('f-Protocol');
+  if (!el) { el = document.createElement('input'); el.type = 'hidden'; el.id = 'f-Protocol'; document.body.appendChild(el); }
+  el.value = m ? m[1].toLowerCase() : 'https';
+}
+
 // Derive Baseapi (hostname) and Protocol from the GithubEnterprise Url field.
 function syncGHEBaseapi() {
   const urlEl = document.getElementById('f-Url');
@@ -1862,6 +1900,11 @@ function gatherConfig() {
     syncGHEBaseapi();
     cfg.Baseapi   = (document.getElementById('f-Baseapi')   || {}).value || '';
     cfg.Protocol  = (document.getElementById('f-Protocol')  || {}).value || 'https';
+  }
+  // Auto-derive Protocol for Azure DevOps Server from the Url field
+  if (currentPlatform === 'AzureServer') {
+    syncAzureServerProtocol();
+    cfg.Protocol = (document.getElementById('f-Protocol') || {}).value || 'https';
   }
   // Auto-derive Protocol for GitLab from the Url field (only when a custom URL is set)
   if (currentPlatform === 'Gitlab' && cfg.Url) {
