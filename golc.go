@@ -506,16 +506,36 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 
 	// Spell out the arithmetic whenever the headline is not the whole story. "28 analyzed"
 	// on its own invites the reading that 28 is all there was; saying what became of the
-	// other two is the difference between a number and an accounted-for number.
+	// others is the difference between a number and an accounted-for number.
+	//
+	// Both shortfalls are counted from the channel rather than one from the channel and one
+	// from skippedList, so the three figures are guaranteed to add up to the total: they come
+	// from the same messages. Deriving them from two mechanisms would let the line disagree
+	// with itself the moment they ever diverged.
+	//
+	// They are also named separately. A repository that failed and one that disappeared need
+	// different responses, and reporting their sum as "skipped" would say that the one with
+	// no error had an error - undoing the separation this exists to make.
+	skippedCount := completed - analysed
+	vanished := total - completed
+
 	if analysed < total {
-		logger.Warnf("⚠️  %d repositories found: %d analyzed, %d skipped. The totals below cover "+
-			"the %d analyzed only.", total, analysed, total-analysed, analysed)
+		outcomes := []string{fmt.Sprintf("%d analyzed", analysed)}
+		if skippedCount > 0 {
+			outcomes = append(outcomes, fmt.Sprintf("%d skipped", skippedCount))
+		}
+		if vanished > 0 {
+			outcomes = append(outcomes, fmt.Sprintf("%d did not report", vanished))
+		}
+
+		logger.Warnf("⚠️  %d repositories found: %s. The totals below cover the %d analyzed only.",
+			total, strings.Join(outcomes, ", "), analysed)
 	}
 
 	// A repository that reported nothing at all is the worse case: it did not fail, so it
 	// contributes no skip entry and no error message anywhere. Without this it would leave
 	// the totals quietly short with nothing to point at.
-	if vanished := total - completed; vanished > 0 {
+	if vanished > 0 {
 		logger.Errorf("❌ %d of %d repositories did not complete analysis and are missing from the "+
 			"totals, with no error of their own. The reported lines of code are therefore an "+
 			"under-count - re-run before relying on them.", vanished, total)

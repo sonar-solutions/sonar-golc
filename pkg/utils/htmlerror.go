@@ -24,8 +24,13 @@ var (
 	htmlErrorCode   = regexp.MustCompile(`0x[0-9A-Fa-f]{8}`)
 )
 
-// condensedHTMLLimit caps the extracted text. Enough for a heading and an error code, which is
-// what these pages carry that is worth reading; anything longer is boilerplate.
+// condensedHTMLLimit caps the extracted text, in characters. Enough for a heading and an
+// error code, which is what these pages carry that is worth reading; anything longer is
+// boilerplate.
+//
+// Characters rather than bytes because the cap exists for readability, and because a
+// Windows server localised to German or Japanese returns a localised error page - cutting
+// those at a byte offset lands mid-character and ends the reason with a broken rune.
 const condensedHTMLLimit = 200
 
 // CondenseHTMLError rewrites an error message that carries an embedded HTML page, keeping the
@@ -78,11 +83,13 @@ func condenseHTML(page string) string {
 	page = htmlTag.ReplaceAllString(page, " ")
 
 	text := strings.TrimSpace(htmlWhitespace.ReplaceAllString(html.UnescapeString(page), " "))
-	if len(text) <= condensedHTMLLimit {
+
+	head := truncateRunes(text, condensedHTMLLimit)
+	if head == text {
 		return text
 	}
 
-	truncated := strings.TrimSpace(text[:condensedHTMLLimit]) + "..."
+	truncated := strings.TrimSpace(head) + "..."
 
 	// These pages put the status code in the heading and the actual status *code* far down in
 	// a details table, so a length cap reliably keeps the vague half and discards the precise
@@ -94,4 +101,24 @@ func condenseHTML(page string) string {
 	}
 
 	return truncated
+}
+
+// truncateRunes returns at most limit characters of s, always cutting on a character
+// boundary. Slicing by byte offset instead can split a multi-byte character in half, which
+// leaves an invalid sequence at the end of the reason - rendered as a replacement character,
+// and no longer valid UTF-8 for whatever reads the report afterwards.
+//
+// Ranging over a string yields the byte offset of each character's first byte, so the offset
+// reached after limit characters is exactly where the cut belongs. No allocation, and the
+// string is walked once.
+func truncateRunes(s string, limit int) string {
+	count := 0
+	for offset := range s {
+		if count == limit {
+			return s[:offset]
+		}
+		count++
+	}
+
+	return s
 }

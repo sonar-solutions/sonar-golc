@@ -207,8 +207,15 @@ func TestAnalyseReposListSeparatesSkippedFromVanished(t *testing.T) {
 	}
 
 	logged := out.String()
-	if !strings.Contains(logged, "4 repositories found: 2 analyzed, 2 skipped") {
-		t.Errorf("the shortfall total is wrong; got:\n%s", logged)
+
+	// One of each. Summing them into "2 skipped" would say the repository that reported
+	// nothing had reported a failure, which is exactly the conflation this test exists to
+	// prevent - and it would contradict the "did not complete" line printed just below it.
+	if !strings.Contains(logged, "4 repositories found: 2 analyzed, 1 skipped, 1 did not report") {
+		t.Errorf("the two shortfalls were not named separately; got:\n%s", logged)
+	}
+	if strings.Contains(logged, "2 skipped") {
+		t.Errorf("the vanished repository was counted as skipped; got:\n%s", logged)
 	}
 	if !strings.Contains(logged, "1 of 4 repositories did not complete") {
 		t.Errorf("the vanished repository was not called out separately; got:\n%s", logged)

@@ -3,6 +3,7 @@ package utils
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // iisUnauthorizedPage is the shape of what an IIS 401.1 response actually carries: a long
@@ -153,5 +154,81 @@ func TestCondenseHTMLErrorKeepsTheErrorCodePastTheCap(t *testing.T) {
 	if !strings.Contains(got, "0x80090308") {
 		t.Errorf("the error code was truncated away, leaving nothing to distinguish a broken "+
 			"handshake from a rejected password:\n%s", got)
+	}
+}
+
+// A Windows server localised to German or Japanese returns a localised IIS error page, so the
+// text being cut is not ASCII. Slicing at a byte offset then lands in the middle of a
+// character and leaves a fragment of one at the end - invalid UTF-8, which renders as a
+// replacement character and corrupts analysis_skipped.json for anything reading it afterwards.
+func TestCondenseHTMLErrorTruncatesOnCharacterBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+	}{
+		// Two-byte characters, offset by one ASCII character so byte 200 falls mid-character.
+		{"german", "x" + strings.Repeat("ü", 400)},
+		// Three-byte characters: 200 is not a multiple of 3, so a split is guaranteed.
+		{"japanese", strings.Repeat("認", 400)},
+		// Four-byte characters.
+		{"emoji", strings.Repeat("🔒", 400)},
+		// Mixed, so the boundary lands somewhere different again.
+		{"mixed", strings.Repeat("aé漢🔒", 200)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CondenseHTMLError("<html><body><h3>" + tc.text + "</h3></body></html>")
+
+			if !utf8.ValidString(got) {
+				t.Errorf("condensed reason is not valid UTF-8; a character was cut in half:\n%q",
+					got[max(0, len(got)-16):])
+			}
+			if strings.ContainsRune(got, utf8.RuneError) {
+				t.Errorf("condensed reason contains a replacement character:\n%q",
+					got[max(0, len(got)-16):])
+			}
+		})
+	}
+}
+
+// The cap counts characters, so a page of three-byte characters is allowed more bytes than a
+// page of ASCII. That is the point - the limit exists to bound what someone reads, and 200
+// Japanese characters is 200 characters however many bytes it takes to store them.
+func TestCondenseHTMLErrorCapsByCharactersNotBytes(t *testing.T) {
+	got := CondenseHTMLError("<html><body>" + strings.Repeat("認", 400) + "</body></html>")
+
+	characters := utf8.RuneCountInString(strings.TrimSuffix(got, "..."))
+	if characters > condensedHTMLLimit {
+		t.Errorf("kept %d characters, want at most %d", characters, condensedHTMLLimit)
+	}
+	if characters < condensedHTMLLimit-1 {
+		t.Errorf("kept only %d characters; a byte-based cap would cut a multi-byte page this "+
+			"short, losing text the limit allows", characters)
+	}
+}
+
+// truncateRunes is the boundary-safe cut on its own, including the cases the callers above
+// never reach: an empty string, a limit past the end, and a limit of zero.
+func TestTruncateRunes(t *testing.T) {
+	tests := []struct {
+		in    string
+		limit int
+		want  string
+	}{
+		{"", 5, ""},
+		{"abc", 0, ""},
+		{"abc", 3, "abc"},
+		{"abc", 10, "abc"},
+		{"abcdef", 3, "abc"},
+		{"認識認識", 2, "認識"},
+		{"a認b", 2, "a認"},
+		{"🔒🔒🔒", 2, "🔒🔒"},
+	}
+
+	for _, tc := range tests {
+		if got := truncateRunes(tc.in, tc.limit); got != tc.want {
+			t.Errorf("truncateRunes(%q, %d) = %q, want %q", tc.in, tc.limit, got, tc.want)
+		}
 	}
 }
