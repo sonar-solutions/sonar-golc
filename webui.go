@@ -191,23 +191,24 @@ var platformDefaults = map[string]map[string]interface{}{
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
 	},
-	// Azure DevOps Server. Same connector as the hosted service (DevOps: "azure"); what
-	// differs is that the user supplies the server URL and that Organization holds a
-	// collection name such as DefaultCollection rather than an organisation.
-	"AzureServer": {
-		"DevOps": "azure", "Apiver": "7.1",
-		"Baseapi": "_apis/git/", "Protocol": "https", "FileExclusion": "",
-		"Multithreading": true, "Workers": float64(10), "NumberWorkerRepos": float64(10),
-		"ResultAll": true, "Org": true, "Period": float64(-1), "Factor": float64(33),
-		"DefaultBranch": true, "Stats": false, "ResultByFile": true,
-		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
-		"WorkDir": "", "Repos": "", "Project": "", "Branch": "", "CloneTimeout": float64(15),
-	},
 	"File": {
 		"DevOps": "file", "FileExclusion": "", "FileLoad": ".cloc_file_load",
 		"ResultAll": true, "ResultByFile": true, "ScanSubDirs": true,
 		"FolderKeywords": []interface{}{}, "FileNamePatterns": []interface{}{},
 	},
+}
+
+// Azure DevOps Server reuses the hosted service's connector and every one of its
+// settings; the only difference is that the user supplies the server address, so there is
+// no default Url. Deriving it keeps the two from drifting apart - a copy would have to be
+// updated twice every time an Azure default changes.
+func init() {
+	server := make(map[string]interface{}, len(platformDefaults["Azure"]))
+	for k, v := range platformDefaults["Azure"] {
+		server[k] = v
+	}
+	delete(server, "Url")
+	platformDefaults["AzureServer"] = server
 }
 
 // sanitizePlatformKey maps a user-supplied platform name to a compile-time
