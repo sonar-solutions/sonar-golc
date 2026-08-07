@@ -1047,17 +1047,20 @@ func TestAzureCloneHostComesFromConfiguredURL(t *testing.T) {
 		name, url, want string
 	}{
 		{"hosted service is unchanged", "https://dev.azure.com/", "dev.azure.com"},
-		{"server url", "https://azuredevops.corp.example/", "azuredevops.corp.example"},
-		{"server url with a port", "https://tfs.corp.example:8080/", "tfs.corp.example:8080"},
-		{"trailing path is dropped", "https://tfs.corp.example/tfs/", "tfs.corp.example"},
+		{"server at the root", "https://azuredevops.corp.example/", "azuredevops.corp.example"},
+		{"server on a port", "https://tfs.corp.example:8080/", "tfs.corp.example:8080"},
+		// IIS installs Azure DevOps Server under /tfs by default. Dropping that segment
+		// sends the clone to the wrong URL and it fails, so it must be kept.
+		{"virtual directory is preserved", "https://tfs.corp.example/tfs/", "tfs.corp.example/tfs"},
+		{"virtual directory on a port", "https://tfs.corp.example:8080/tfs/", "tfs.corp.example:8080/tfs"},
 		{"no trailing slash", "https://tfs.corp.example", "tfs.corp.example"},
 		{"http is accepted", "http://tfs.corp.example/", "tfs.corp.example"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := extractDomain(c.url); got != c.want {
-				t.Errorf("extractDomain(%q) = %q, want %q", c.url, got, c.want)
+			if got := azureCloneHost(c.url); got != c.want {
+				t.Errorf("azureCloneHost(%q) = %q, want %q", c.url, got, c.want)
 			}
 		})
 	}

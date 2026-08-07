@@ -237,6 +237,19 @@ func convertToSliceString(in []interface{}) []string {
 }
 
 // Extract url domain
+// azureCloneHost returns the authority and any virtual-directory path from a configured
+// Azure URL, with the scheme and surrounding slashes removed.
+//
+// It is not extractDomain: that stops at the first "/", which is right for GitLab but
+// wrong here. Azure DevOps Server is routinely installed under a virtual directory - IIS
+// defaults to https://server/tfs/ - and dropping that segment makes every clone fail.
+// The hosted service has no path, so it resolves to the bare host exactly as before.
+func azureCloneHost(rawURL string) string {
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(rawURL, "https://"), "http://")
+
+	return strings.Trim(trimmed, "/")
+}
+
 func extractDomain(url string) string {
 	// Remove the "http://" or "https://" prefix
 	url = strings.TrimPrefix(url, "https://")
