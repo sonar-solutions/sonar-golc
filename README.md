@@ -20,7 +20,9 @@ It connects to your DevOps platform, counts one branch per repository, and prese
 
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
-  - [Optional Parameters](#optional-parameters)
+  - [Required token permissions](#required-token-permissions)
+  - [Azure DevOps Server](#azure-devops-server)
+  - [Advanced options](#advanced-options)
   - [Which branch is counted](#which-branch-is-counted)
 - [Reports](#reports)
   - [Languages per repository](#languages-per-repository)
@@ -70,63 +72,85 @@ Credentials are entered in the browser and saved automatically — no config fil
 | Azure DevOps | Code: Read · Project and Team: Read |
 | Azure DevOps Server | Code: Read · Project and Team: Read |
 
-#### Azure DevOps Server versions
+#### Azure DevOps Server
 
-**Azure DevOps Server 2019 Update 1 and later.** TFS 2018 and older are not supported.
+**Requires Azure DevOps Server 2019 Update 1 or later.** TFS 2018 and older are not
+supported. There is no upper bound — newer versions work.
 
-GoLC talks to Azure through the `azure-devops-go-api` SDK, which sends `api-version=5.1`
-on every call, so the server has to support the 5.x API set. Per Microsoft's
-[REST API versioning table](https://learn.microsoft.com/en-us/azure/devops/integrate/concepts/rest-api-versioning),
-API 5.0 arrived with Azure DevOps Server 2019 and TFS 2018 tops out at 4.0. There is no
-upper bound: newer servers keep accepting older `api-version` values.
+Two fields differ from Azure DevOps Services:
 
-2019 RTM is the edge case — 5.1 specifically shipped in 2019 Update 1, so quote that as
-the floor.
+| Field | What to enter |
+|-------|---------------|
+| **Collection** | The path segment before the project in your URL — usually `DefaultCollection`. In `https://azuredevops.company.com/DefaultCollection/my-project`, that is `DefaultCollection`. |
+| **Server URL** | Your server address, e.g. `https://azuredevops.company.com/`. Repositories are cloned from this host. |
 
 #### Windows / NTLM authentication
 
 Azure DevOps Server is often deployed behind Windows authentication, where personal access
-tokens are disabled and the server answers with `WWW-Authenticate: NTLM`. To use it, fill in
-the **Username** field (`DOMAIN\\username`) alongside the token, which is then treated as
-the account password.
+tokens are disabled. To use it, fill in the **Username** field as `DOMAIN\username`; the
+token field is then treated as that account's password.
 
-Leaving Username empty keeps the PAT behaviour exactly as it was, so this cannot affect an
-existing configuration. Even with it set, the negotiator only performs an NTLM handshake if
-the server actually asks for one — a server that accepts basic authentication never sees a
-difference.
-
-> **Not yet verified against a live Windows-authenticated server.** The handshake is covered
-> by tests against a mock that behaves like IIS, and the PAT path is verified end to end,
-> but no NTLM-enabled Azure DevOps Server was available to test interoperability. Treat the
-> first real use as a trial.
-
-> The `Apiver` field in an Azure configuration has no effect. The connector builds an SDK
-> client rather than composing URLs itself, so the SDK's own version is what gets sent.
-> This is equally true of Azure DevOps Services and predates Server support.
-
+Leave **Username** empty if your server accepts a personal access token — that is the
+default behaviour and is unaffected.
 
 ---
 
-### Optional Parameters
+### Advanced options
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `DefaultBranch` | bool | `true` (default) = count each repository's default branch. `false` = count its most recently active branch instead. See [Which branch is counted](#which-branch-is-counted). |
-| `Branch` | string | Count this branch name in every repository instead. Requires `DefaultBranch: false`. |
-| `Period` | int | How far back to look when deciding which branch is most active, in months (e.g. `-1` = the last month). Only used when `DefaultBranch: false` and `Branch` is empty. Default `-1`; Bitbucket Data Center `-5`. |
-| `Multithreading` | bool | Enable parallel analysis. Default: `true`. |
-| `Workers` | int | Concurrent workers. Default: `10`. |
-| `FolderKeywords` | array | Exclude folders whose name contains the keyword as a whole word at any depth. Word boundaries are delimiters `-`, `_`, `.` — so `"test"` matches `integration-test/` and `test_helpers/` but not `protest/` or `latest/`. |
-| `FileNamePatterns` | array | Exclude files whose name matches a glob pattern (e.g. `["*_test.go", "*.min.js", "*.spec.ts"]`). The `*` wildcard is matched against the file name only, not the full path. |
-| `ExtExclusion` | array | Exclude all files with these extensions, regardless of language (e.g. `[".css", ".html"]`). |
-| `ExcludeTests` | bool | Shortcut that adds common test-directory keywords to `FolderKeywords`: `test`, `tests`, `spec`, `specs`, `e2e`, `testdata`, `fixtures`, `mock`, `mocks`, `integration`, `doc`, `docs`. The last three match SonarQube, which treats a file as a test — and so leaves it out of `ncloc` — when any directory on its path is named `doc`, `docs`, `test`, `tests`, `mock` or `mocks`. |
-| `ExcludeVendor` | bool | Shortcut that adds common vendor-directory keywords to `FolderKeywords`: `vendor`, `node_modules`, `bower_components`, `third_party`, `external`. |
-| `Project` | string | Limit to a specific project key (Bitbucket, Azure DevOps, Azure DevOps Server). |
-| `Repos` | string | Limit to specific repositories (comma-separated). GitHub/GHE: repository name. Bitbucket: repository slug. Azure DevOps and Azure DevOps Server: repository name. Not applicable for GitLab — use the Group URL slug field instead. |
-| `Org` | bool | `true` = analyze an organization account, `false` = analyze a personal account. GitHub and GitHub Enterprise only. Default: `true`. |
-| `Organization` | string | The organization (Azure DevOps Services) or the **collection** (Azure DevOps Server, e.g. `DefaultCollection`). For Azure DevOps Server also set `Url` to your server address; the clone host is taken from it. |
-| `WorkDir` | string | Base directory where repositories are cloned before counting, then deleted. Leave blank to use the system temp directory (the default). Set this to a path on a disk with enough free space when `/tmp` is small or RAM-backed and large/many repos fail with `no space left on device`. The directory is created if missing and must be writable. Can also be set globally with the `GOLC_WORKDIR` environment variable; the per-platform `WorkDir` value takes precedence over the environment variable. |
+Click **Show advanced options** on the configuration screen. Everything below is optional;
+the defaults are appropriate for most scans.
 
+Fields that do not apply to the platform you picked are hidden automatically.
+
+#### Branch
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| **Analyze default branch only** | On | Counts each repository's default branch. Turn it off to count the most recently active branch instead — see [Which branch is counted](#which-branch-is-counted). |
+| **Specific branch name** | empty | Counts this exact branch in every repository (e.g. `develop`). Only available when *Analyze default branch only* is off. |
+
+#### Performance
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| **Enable multithreading** | On | Analyses several repositories at once. |
+| **Number of workers** | 10 | How many repositories are analysed simultaneously. Lower it if your server rate-limits you. |
+| **Clone timeout (min)** | 15 | Per-repository deadline. A repository that takes longer is skipped and listed in the report rather than stalling the whole scan. `0` disables the deadline. |
+| **Working directory for clones** | empty | Where repositories are cloned before counting, then deleted. Leave blank to use the system temp directory. Set it to a disk with free space if large scans fail with `no space left on device`. |
+
+#### Scope
+
+| Option | Shown for | What it does |
+|--------|-----------|--------------|
+| **Analyze as organization** | GitHub, GitHub Enterprise | On for an organization account, off for a personal account. |
+| **Specific project key** | Bitbucket Cloud, Bitbucket Data Center, Azure DevOps, Azure DevOps Server | Limits the scan to one project. |
+| **Specific repositories** | all except GitLab and File mode | Limits the scan to a comma-separated list. GitHub, Azure DevOps: repository names. Bitbucket: repository slugs. For GitLab, use the **Group URL slug(s)** field on the main form instead. |
+
+#### Exclusions
+
+Three presets add sets of folder names in one click:
+
+| Preset | Folders excluded |
+|--------|------------------|
+| **Test directories** | `test`, `tests`, `spec`, `specs`, `e2e`, `testdata`, `fixtures`, `mock`, `mocks`, `integration`, `doc`, `docs` |
+| **Vendor & modules** | `vendor`, `node_modules`, `bower_components`, `third_party`, `external` |
+| **Build output** | `dist`, `build`, `out`, `target`, `bin`, `coverage` |
+
+> **Test directories** matches SonarQube, which treats a file as test code — and so leaves
+> it out of `ncloc` — when any folder on its path is named `doc`, `docs`, `test`, `tests`,
+> `mock` or `mocks`.
+
+And three fields for anything else:
+
+| Field | What it does |
+|-------|--------------|
+| **Exclude folder keywords** | Skips folders whose name contains the keyword as a whole word, at any depth. Words are split on `-`, `_` and `.`, so `test` matches `integration-test/` and `test_helpers/` but not `protest/` or `latest/`. |
+| **Exclude file name patterns** | Skips files whose name matches a glob, e.g. `*_test.go, *.min.js, *.spec.ts`. Matched against the file name only, not the full path. |
+| **Exclude extensions** | Skips every file with these extensions regardless of language, e.g. `.css, .html`. |
+
+> Exclusions apply while counting, so excluded files never reach the totals. To drop a
+> repository *after* a scan instead, use the checkboxes on the results dashboard — see
+> [Excluding repositories from the totals](#excluding-repositories-from-the-totals).
 
 ---
 
@@ -143,18 +167,17 @@ Which one depends on the **Analyze default branch only** switch in the UI:
 | **Off** | the **most recently active** branch | Your main line of work is not the default branch. |
 | **Off** + *Specific branch name* | that **exact branch**, in every repository | You size a named branch such as `develop` or `release/2025`. |
 
-"Most recently active" means the branch with the most commits in the last `Period`
-months (`-1` by default, so the last month).
+"Most recently active" means the branch with the most commits in the last month.
 
 > **If no branch has commits in that window, GoLC falls back to the default branch.** For
-> repositories that have been quiet, turning the switch off therefore changes nothing.
-> Widen `Period` (for example `-12`) if you want a longer history taken into account.
+> repositories that have been quiet, turning the switch off therefore changes nothing —
+> use *Specific branch name* if you need a particular branch counted regardless of activity.
 
 ---
 
 ## Reports
 
-After each run, GoLC writes all reports to a `Results/` folder next to the binary. This is always the case regardless of how the binary was launched (double-click, terminal, or PATH). Click **View Results** in the browser to open the interactive dashboard, or navigate to the folder directly.
+After each run, GoLC writes all reports to a `Results/` folder next to the binary. Click **View Results** in the browser to open the interactive dashboard, or open the folder directly.
 
 ### File tree view
 
@@ -214,11 +237,11 @@ The same information reaches the reports:
 | Report | Languages shown |
 |--------|-----------------|
 | `repository_summary.csv` / `.json` | all three, in fixed columns so a spreadsheet can sort or pivot on them |
-| `repository_summary.pdf` | the main language (the table has no room for three) |
+| `repository_summary.pdf` | the main language |
 | `GlobalReport.pdf` | the main language of each of the Top 30 repositories |
 
 > JSON is excluded from these rankings, exactly as it is excluded from the code-line
-> totals they sit beside. A repository whose by-language results are missing shows `—`.
+> totals they sit beside.
 
 ### Excluding repositories from the totals
 
@@ -228,10 +251,8 @@ dashboard, the **Lines of Code by Repository** table has a checkbox per reposito
 Uncheck the ones to leave out and click **Apply selection** — the totals, language
 breakdown, and chart update immediately.
 
-This works on every platform (GitHub, GitHub Enterprise, GitLab, Bitbucket
-Cloud/Data Center, Azure DevOps, and local directories), because it operates on the
-analysis results rather than on any platform API. **No re-scan is needed** — the
-repositories were already counted, and only the totals are recomputed.
+This works on every platform, and **no re-scan is needed** — the repositories were
+already counted, so only the totals are recomputed.
 
 #### Original and customized reports
 
@@ -246,26 +267,22 @@ The original is never overwritten, so it is always available for comparison. Dow
 are named `..._full-scan.pdf` and `..._selection.pdf` so the two cannot be confused
 once detached from the dashboard.
 
-Reports are generated **when you click them**, not when you change the selection, so
-applying a selection is instant and no PDF is ever served stale. The first click after
-a change takes a moment while the report is built. (GoLC also rebuilds them in the
-background after a change, so anything reading `Results/` directly — a script, a CI
-job — finds current files too.)
+Reports are generated **when you click them**, so applying a selection is instant and no
+PDF is ever served stale. The first click after a change takes a moment while the report
+is built.
 
 Both PDFs and the CSV state what was excluded and what the unfiltered total was, and
 the customized report's headline figures are explicitly labelled *(filtered)*, so a
 filtered report can be handed to a customer without misleading them.
 
-**It is always reversible.** The per-repository result files are never modified and
-`GlobalReport.json` keeps the figures as scanned, so **Reset to full scan** restores
-the original figures exactly. The selection is stored in
-`Results/config/deselected_repos.json` and survives a dashboard restart. At least one
-repository must remain selected.
+**It is always reversible.** **Reset to full scan** restores the original figures
+exactly. The selection survives a dashboard restart, and at least one repository must
+remain selected.
 
 > A new analysis run clears the selection: it rediscovers repositories from scratch,
 > so a selection made against the previous run could silently drop repositories from
-> the new totals. To exclude repositories *before* a scan instead, so they are never
-> cloned, use the platform's `FileExclusion` file in `config.json`.
+> the new totals. To limit a scan *before* it runs, use **Specific repositories** or
+> **Specific project key** under [Advanced options](#advanced-options).
 
 ---
 
@@ -326,15 +343,12 @@ YAML               | .yaml, .yml                              | #               
 
 ### Infrastructure-as-code, detected by content
 
-A Kubernetes manifest, an Ansible playbook and an arbitrary settings file are all
-`.yaml`, so extension alone cannot tell them apart — and the difference changes the
-count. SonarQube analyses every IaC dialect **by default**, while plain YAML and JSON
-analysis are **off** by default (`sonar.yaml.activate` and `sonar.json.activate`). A
-stock SonarQube therefore counts a Kubernetes manifest and ignores the plain YAML beside
-it, so reporting all `.yaml` under one label cannot match it either way.
+A Kubernetes manifest, an Ansible playbook and an ordinary settings file are all `.yaml`,
+so the extension alone cannot tell them apart — and the difference matters, because a
+stock SonarQube counts infrastructure-as-code but not plain YAML or JSON.
 
-These are recognised from file content (or, for GitHub Actions, from its path) and
-reported as their own language. Comment syntax is inherited from the host format:
+GoLC recognises these from the file's content (or, for GitHub Actions, its path) and
+reports each as its own language, so the breakdown lines up with SonarQube:
 
 Language               | Recognised by
 -----------------------+--------------------------------------------------------------
@@ -345,22 +359,19 @@ Azure Pipelines        | `stages:`/`jobs:`/`steps:` together with `pool:`/`trigg
 GitHub Actions         | any file under `.github/workflows/`
 Azure Resource Manager | JSON whose `$schema` names a `deploymentTemplate`
 
-Anything unrecognised stays `YAML` or `JSON`. Only those two languages are ever
-inspected; every other file is classified from its extension without being opened.
+Anything unrecognised stays `YAML` or `JSON`.
 
 ### Minified JavaScript and CSS are never counted
 
-SonarQube excludes minified files from analysis, so they never reach `ncloc`. GoLC applies
-the same test, ported from SonarJS so the two agree by construction
-([`filter-minified.ts`](https://github.com/SonarSource/SonarJS/blob/master/packages/analysis/src/common/filter/filter-minified.ts)):
+SonarQube excludes minified files, so they never reach `ncloc`. GoLC applies the same
+test — a file is treated as minified when:
 
 - the name ends in `.min.js`, `-min.js`, `.min.css` or `-min.css`; **or**
-- the file is `.js` or `.css` **and** its average line length exceeds **200** characters.
+- it is a `.js` or `.css` file whose average line length exceeds **200** characters.
 
-The second test is what catches a bundle committed under an ordinary name such as
-`vendor.js`. Note it applies only to `.js` and `.css` — a long-lined `.ts` file is still
-counted, because SonarQube counts it too. A file that cannot be read is counted rather
-than dropped.
+The second rule catches a bundle committed under an ordinary name such as `vendor.js`. It
+applies only to `.js` and `.css` — a long-lined `.ts` file is still counted, because
+SonarQube counts it too.
 
 ### PHP open and close tags
 

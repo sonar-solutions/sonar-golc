@@ -1355,7 +1355,7 @@ const htmlTemplate = `<!DOCTYPE html>
                   <input class="form-check-input" type="checkbox" id="adv-excludeTests" onchange="syncPresetKeywords()">
                   <label class="form-check-label form-label mb-0" for="adv-excludeTests">
                     <i class="fas fa-vial me-1" style="color:#60a5fa;"></i>Test directories
-                    <small class="text-muted d-block" style="font-size:.72rem;">test, tests, spec, specs, e2e, testdata, fixtures, mocks, integration</small>
+                    <small class="text-muted d-block" style="font-size:.72rem;">test, tests, spec, specs, e2e, testdata, fixtures, mock, mocks, integration, doc, docs</small>
                   </label>
                 </div>
                 <div class="form-check">
@@ -1513,7 +1513,7 @@ const basicFields = {
 };
 
 // platforms that support Project & Repos fields in advanced
-const supportsProject = new Set(['BitBucket','BitBucketSRV','Azure']);
+const supportsProject = new Set(['BitBucket','BitBucketSRV','Azure','AzureServer']);
 
 let currentPlatform = null;
 let currentStep = 1;
