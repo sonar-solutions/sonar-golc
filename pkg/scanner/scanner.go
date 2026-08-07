@@ -69,23 +69,42 @@ func (sc *Scanner) Scan(files []analyzer.FileMetadata) ([]scanResult, error) {
 
 // isTerminal reports whether f is attached to a terminal. A character device is the
 // portable signal for that, so no dependency is needed to ask.
+//
+// /dev/null and /dev/zero are character devices too and so are read as terminals. That is
+// harmless here - the only consequence is drawing a progress bar into a sink that discards
+// it - and avoiding it would mean taking on a dependency to answer a question whose wrong
+// answer costs nothing.
 func isTerminal(f *os.File) bool {
 	info, err := f.Stat()
 
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
+// progressWriter decides where the progress bar draws.
+//
+// A progress bar animates by repainting the same line, which only makes sense on a terminal.
+// Redirected to a file or a CI log every repaint is kept, and the bar becomes the bulk of the
+// output - 117 KB around 3 KB of log on a 300-file scan, burying the messages someone is
+// actually reading. Off the terminal, draw nothing.
+//
+// The stream that is tested and the stream that is written to are the same argument, so they
+// cannot drift apart. Relying on the library's default writer would leave that agreement
+// resting on another module's constructor: progressbar's Default and DefaultBytes write to
+// stderr while NewOptions writes to stdout, so a change of constructor or an upgrade could
+// silently move the bar to a stream this never guarded - reinstating the flooding while the
+// check still looks correct.
+func progressWriter(out *os.File) io.Writer {
+	if !isTerminal(out) {
+		return io.Discard
+	}
+
+	return out
+}
+
 func (sc *Scanner) createProgressbar(max int) *progressbar.ProgressBar {
 	options := []progressbar.Option{
 		progressbar.OptionSetDescription("Scanning files..."),
-	}
-
-	// A progress bar animates by repainting the same line, which only makes sense on a
-	// terminal. Redirected to a file or a CI log every repaint is kept, and the bar
-	// becomes the bulk of the output - megabytes of it on a large scan, burying the
-	// messages someone is actually reading. Off the terminal, draw nothing.
-	if !isTerminal(os.Stdout) {
-		options = append(options, progressbar.OptionSetWriter(io.Discard))
+		progressbar.OptionSetWriter(progressWriter(os.Stdout)),
 	}
 
 	options = append(options,
