@@ -1036,3 +1036,60 @@ func TestShippedSampleConfigSatisfiesRequiredKeys(t *testing.T) {
 		}
 	}
 }
+
+// Azure DevOps Server reuses the hosted service's connector (DevOps: "azure") and differs
+// only in the host and in Organization holding a collection. The clone URL used to hard-code
+// dev.azure.com, which would have sent every Server clone to the wrong host; it now comes
+// from the configured Url. This pins both halves: the hosted service must keep resolving to
+// exactly what it did before, and a Server URL must resolve to the Server.
+func TestAzureCloneHostComesFromConfiguredURL(t *testing.T) {
+	cases := []struct {
+		name, url, want string
+	}{
+		{"hosted service is unchanged", "https://dev.azure.com/", "dev.azure.com"},
+		{"server url", "https://azuredevops.corp.example/", "azuredevops.corp.example"},
+		{"server url with a port", "https://tfs.corp.example:8080/", "tfs.corp.example:8080"},
+		{"trailing path is dropped", "https://tfs.corp.example/tfs/", "tfs.corp.example"},
+		{"no trailing slash", "https://tfs.corp.example", "tfs.corp.example"},
+		{"http is accepted", "http://tfs.corp.example/", "tfs.corp.example"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := extractDomain(c.url); got != c.want {
+				t.Errorf("extractDomain(%q) = %q, want %q", c.url, got, c.want)
+			}
+		})
+	}
+}
+
+// The sample config is what a user copies, so the Server block must be a working starting
+// point: the same connector as the hosted service, but pointing at their own server.
+func TestSampleConfigHasAzureServerBlock(t *testing.T) {
+	data, err := os.ReadFile("config_sample.json")
+	if err != nil {
+		t.Skipf("config_sample.json not readable: %v", err)
+	}
+	var sample struct {
+		Platforms map[string]map[string]interface{} `json:"platforms"`
+	}
+	if err := json.Unmarshal(data, &sample); err != nil {
+		t.Fatalf("config_sample.json is not valid JSON: %v", err)
+	}
+
+	srv, ok := sample.Platforms["AzureServer"]
+	if !ok {
+		t.Fatal("config_sample.json has no AzureServer platform")
+	}
+	if srv["DevOps"] != "azure" {
+		t.Errorf("AzureServer must reuse the azure connector, got DevOps=%v", srv["DevOps"])
+	}
+	if url, _ := srv["Url"].(string); url == "" || strings.Contains(url, "dev.azure.com") {
+		t.Errorf("AzureServer Url should point at a self-hosted server, got %q", url)
+	}
+	// Azure's Baseapi is a fixed API path, not a hostname, so it must match the hosted block.
+	if srv["Baseapi"] != sample.Platforms["Azure"]["Baseapi"] {
+		t.Errorf("AzureServer Baseapi = %v, want the same as Azure (%v)",
+			srv["Baseapi"], sample.Platforms["Azure"]["Baseapi"])
+	}
+}

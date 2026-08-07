@@ -10,7 +10,7 @@
 
 It connects to your DevOps platform, counts one branch per repository, and presents the results in an interactive web dashboard with PDF, JSON, and CSV exports.
 
-**Supported platforms:** GitHub.com · GitHub Enterprise Server · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Local files/directories
+**Supported platforms:** GitHub.com · GitHub Enterprise Server · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Azure DevOps Server · Local files/directories
 
 > Current version: **v2.1**
 
@@ -68,6 +68,7 @@ Credentials are entered in the browser and saved automatically — no config fil
 | Bitbucket Cloud | Repositories: Read · Projects: Read · Account: Read |
 | Bitbucket Data Center | Repo read, pull |
 | Azure DevOps | Code: Read · Project and Team: Read |
+| Azure DevOps Server | Code: Read · Project and Team: Read |
 
 ---
 
@@ -85,9 +86,10 @@ Credentials are entered in the browser and saved automatically — no config fil
 | `ExtExclusion` | array | Exclude all files with these extensions, regardless of language (e.g. `[".css", ".html"]`). |
 | `ExcludeTests` | bool | Shortcut that adds common test-directory keywords to `FolderKeywords`: `test`, `tests`, `spec`, `specs`, `e2e`, `testdata`, `fixtures`, `mock`, `mocks`, `integration`, `doc`, `docs`. The last three match SonarQube, which treats a file as a test — and so leaves it out of `ncloc` — when any directory on its path is named `doc`, `docs`, `test`, `tests`, `mock` or `mocks`. |
 | `ExcludeVendor` | bool | Shortcut that adds common vendor-directory keywords to `FolderKeywords`: `vendor`, `node_modules`, `bower_components`, `third_party`, `external`. |
-| `Project` | string | Limit to a specific project key (Bitbucket, Azure DevOps). |
-| `Repos` | string | Limit to specific repositories (comma-separated). GitHub/GHE: repository name. Bitbucket: repository slug. Azure DevOps: repository name. Not applicable for GitLab — use the Group URL slug field instead. |
+| `Project` | string | Limit to a specific project key (Bitbucket, Azure DevOps, Azure DevOps Server). |
+| `Repos` | string | Limit to specific repositories (comma-separated). GitHub/GHE: repository name. Bitbucket: repository slug. Azure DevOps and Azure DevOps Server: repository name. Not applicable for GitLab — use the Group URL slug field instead. |
 | `Org` | bool | `true` = analyze an organization account, `false` = analyze a personal account. GitHub and GitHub Enterprise only. Default: `true`. |
+| `Organization` | string | The organization (Azure DevOps Services) or the **collection** (Azure DevOps Server, e.g. `DefaultCollection`). For Azure DevOps Server also set `Url` to your server address; the clone host is taken from it. |
 | `WorkDir` | string | Base directory where repositories are cloned before counting, then deleted. Leave blank to use the system temp directory (the default). Set this to a path on a disk with enough free space when `/tmp` is small or RAM-backed and large/many repos fail with `no space left on device`. The directory is created if missing and must be writable. Can also be set globally with the `GOLC_WORKDIR` environment variable; the per-platform `WorkDir` value takes precedence over the environment variable. |
 
 

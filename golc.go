@@ -927,11 +927,14 @@ func analyseAzurebRepo(project interface{}, DestinationResult string, platformCo
 	fileNamePatterns := getStringSliceConfig(platformConfig, "FileNamePatterns")
 
 	params := RepoParams{
-		ProjectKey:   p.ProjectKey,
-		Namespace:    "",
-		RepoSlug:     p.RepoSlug,
-		MainBranch:   p.MainBranch,
-		PathToScan:   fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), "dev.azure.com", platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
+		ProjectKey: p.ProjectKey,
+		Namespace:  "",
+		RepoSlug:   p.RepoSlug,
+		MainBranch: p.MainBranch,
+		// The host comes from the configured Url rather than a literal, so the same code
+		// path serves Azure DevOps Server. For the hosted service Url is
+		// https://dev.azure.com/ and this resolves to exactly what it did before.
+		PathToScan:   fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), extractDomain(platformConfig["Url"].(string)), platformConfig["Organization"].(string), p.ProjectKey, "_git", p.RepoSlug),
 		WorkDir:      getWorkDir(platformConfig),
 		CloneTimeout: getCloneTimeout(platformConfig),
 	}
