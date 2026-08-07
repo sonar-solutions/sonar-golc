@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -253,10 +254,21 @@ func azureCloneHost(rawURL string) string {
 // azureCloneURL builds the authenticated clone URL for an Azure repository. It exists as a
 // function so the exact string can be asserted: testing azureCloneHost alone is not enough,
 // because a caller can simply not use it.
+//
+// A configured username produces user:token credentials instead of a bare token, and turns
+// on the NTLM negotiator. That is what an Azure DevOps Server behind Windows authentication
+// needs: go-git sends the pair as Basic, and the negotiator upgrades it to NTLM only if the
+// server answers with an NTLM challenge. Without a username nothing changes.
 func azureCloneURL(platformConfig map[string]interface{}, projectKey, repoSlug string) string {
+	credentials := platformConfig["AccessToken"].(string)
+	if username, _ := platformConfig["Users"].(string); username != "" {
+		getazure.EnableNTLM()
+		credentials = url.UserPassword(username, credentials).String()
+	}
+
 	return fmt.Sprintf("%s://%s@%s/%s/%s/%s/%s",
 		platformConfig["Protocol"].(string),
-		platformConfig["AccessToken"].(string),
+		credentials,
 		azureCloneHost(platformConfig["Url"].(string)),
 		platformConfig["Organization"].(string),
 		projectKey, "_git", repoSlug)
