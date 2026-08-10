@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Build GoLC, run a real scan against a DevOps platform, and drive the ResultsAll dashboard to observe changes at their surface. Use when verifying changes to golc.go, webui.go, ResultsAll.go, or pkg/utils report generation.
+description: Build GoLC, run a real scan against a DevOps platform, and drive the ResultsAll dashboard to observe changes at their surface. Use when verifying changes to golc.go, golc-launcher.go, ResultsAll.go, or pkg/utils report generation.
 ---
 
 # Verifying GoLC
@@ -14,14 +14,14 @@ the dashboard against the output.
 Three binaries from one module, selected by build tag:
 
 ```bash
-go build -tags=webui      -o "$WS/golc"       webui.go golc.go   # scanner + config UI
+go build -tags=launcher   -o "$WS/golc-launcher" golc-launcher.go golc.go   # scanner + config UI
 go build -tags=resultsall -o "$WS/ResultsAll" .                  # dashboard
 ```
 
 The scanner has no CLI flags — the analysis entrypoint is a hidden subcommand:
 
 ```bash
-./golc --internal-run Github     # platform key from config.json: Github, GithubEnterprise,
+./golc-launcher --internal-run Github     # platform key from config.json: Github, GithubEnterprise,
                                  # Gitlab, Azure, BitBucket, BitBucketSRV, File
 ```
 
@@ -52,7 +52,7 @@ workspace afterwards.
 
 ## Configure through the web UI, not a hand-written config.json
 
-The UI applies defaults a hand-written config does not. `webui.go` ships three exclusion
+The UI applies defaults a hand-written config does not. `golc-launcher.go` ships three exclusion
 presets **on by default** (test / vendor / build folder keywords) plus
 `DEFAULT_FILE_PATTERNS` (`*_test.*`, `*.spec.*`, `*.min.*`, …). A `config.json` copied from
 `config_sample.json` has these empty, so it measures GoLC **with its defaults switched
@@ -65,7 +65,7 @@ The bug was in the harness.
 Drive the same path the browser does — `POST /api/run` with `{"Platform":…,"Config":…}`,
 including `FolderKeywords` and `FileNamePatterns` as the page would send them — then poll
 `/api/status` until `running` is false. If a scripted run must write `config.json`
-directly, copy those two lists from `webui.go` first and say so in the write-up.
+directly, copy those two lists from `golc-launcher.go` first and say so in the write-up.
 
 ## The optional OSS test bed
 
@@ -196,7 +196,7 @@ text = text.replace('\\(','(').replace('\\)',')')
   selection *and* the scan identity. To prove regeneration, delete the artifact and
   request it.
 - `sonar.coverage.exclusions` in `sonar-project.properties` excludes `ResultsAll.go`,
-  `golc.go` and `webui.go` from coverage, so code reachable only from those files
+  `golc.go` and `golc-launcher.go` from coverage, so code reachable only from those files
   contributes nothing to the new-code coverage gate. Test report logic in `pkg/utils`.
 - The `sonar` CLI and the SonarQube MCP server authenticate separately; the CLI may
   report "Project not found" while MCP works (different org).

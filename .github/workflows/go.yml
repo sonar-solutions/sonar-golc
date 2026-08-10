@@ -38,7 +38,7 @@ jobs:
 
       - name: Build Go apps
         run: |
-          go build -trimpath -tags=webui -o golc webui.go golc.go
+          go build -trimpath -tags=launcher -o golc-launcher golc-launcher.go golc.go
           go build -trimpath -tags=resultsall -o ResultsAll ./ResultsAll.go
 
       - name: Generate test coverage reports
@@ -49,7 +49,7 @@ jobs:
           go test -coverprofile=coverage-pkg.out ./pkg/...
 
           echo "Testing golc application..."
-          go test -tags=golc -coverprofile=coverage-golc.out .
+          go test -tags=engine -coverprofile=coverage-golc.out .
 
           echo "Testing resultsall application..."
           go test -tags=resultsall -coverprofile=coverage-resultsall.out .

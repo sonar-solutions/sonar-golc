@@ -1,5 +1,5 @@
-//go:build golc
-// +build golc
+//go:build engine
+// +build engine
 
 package main
 

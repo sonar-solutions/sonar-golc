@@ -21,7 +21,7 @@ go test -coverprofile=coverage-pkg.out ./pkg/...
 
 # 2. Test golc application (with build tag)  
 echo "🔧 Testing golc application..."
-go test -tags=golc -coverprofile=coverage-golc.out .
+go test -tags=engine -coverprofile=coverage-golc.out .
 
 # 3. Test resultsall application (with build tag)
 echo "🌐 Testing resultsall application..."
