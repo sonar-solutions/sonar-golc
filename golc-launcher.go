@@ -633,6 +633,27 @@ func killPort(port int) {
 	}
 }
 
+// windowsSystem32 returns the absolute path to a System32 executable, so the
+// command is never resolved through a caller-controlled PATH.
+func windowsSystem32(exe string) string {
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" {
+		systemRoot = `C:\Windows`
+	}
+	return filepath.Join(systemRoot, "System32", exe)
+}
+
+// firstExistingPath returns the first absolute path that exists, or "" if none
+// of them do. Used to address a helper binary without searching PATH.
+func firstExistingPath(paths ...string) string {
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 // pidsByPortUnix uses lsof to find PIDs bound to a TCP port on macOS/Linux.
 func pidsByPortUnix(port int) []int {
 	portArg := fmt.Sprintf(":%d", port)
@@ -649,11 +670,7 @@ func pidsByPortUnix(port int) []int {
 
 // pidsByPortWindows uses netstat -ano to find PIDs bound to a TCP port on Windows.
 func pidsByPortWindows(port int) []int {
-	systemRoot := os.Getenv("SystemRoot")
-	if systemRoot == "" {
-		systemRoot = `C:\Windows`
-	}
-	netstatPath := filepath.Join(systemRoot, "System32", "netstat.exe")
+	netstatPath := windowsSystem32("netstat.exe")
 	out, err := exec.Command(netstatPath, "-ano").Output()
 	if err != nil {
 		return nil
@@ -1041,16 +1058,24 @@ func handleStatic(w http.ResponseWriter, r *http.Request) {
 }
 
 // openBrowser launches the default browser to url on macOS, Windows, and Linux.
+// Each handler is addressed by absolute path rather than searched for on PATH, so
+// the URL opener cannot be shadowed by a writeable directory earlier in it.
+// Failing to open is not fatal: main prints the URL for the user to copy.
 func openBrowser(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("/usr/bin/open", url)
 	case "windows":
 		// empty second argument avoids issues with URLs containing '&'
-		cmd = exec.Command("cmd", "/c", "start", "", url)
+		cmd = exec.Command(windowsSystem32("cmd.exe"), "/c", "start", "", url)
 	default:
-		cmd = exec.Command("xdg-open", url)
+		// xdg-open's location varies by distribution.
+		opener := firstExistingPath("/usr/bin/xdg-open", "/bin/xdg-open", "/usr/local/bin/xdg-open")
+		if opener == "" {
+			return
+		}
+		cmd = exec.Command(opener, url)
 	}
 	_ = cmd.Start()
 }
