@@ -41,10 +41,10 @@ Each archive contains two binaries:
 
 | Binary | Purpose |
 |--------|---------|
-| `webui` / `webui.exe` | Browser-based launcher — start here |
-| `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `webui`) |
+| `golc` / `golc.exe` | Browser-based launcher — start here |
+| `ResultsAll` / `ResultsAll.exe` | Results dashboard (launched automatically by `golc`) |
 
-Run `webui` / `webui.exe`. The browser opens automatically to the GoLC UI (default: `http://localhost:8091`).
+Run `golc` / `golc.exe`. The browser opens automatically to the GoLC UI (default: `http://localhost:8091`).
 
 If it doesn't open, copy the URL printed in the terminal. Then:
 
@@ -390,9 +390,9 @@ GoLC writes a detailed log to `Logs/Logs.log` next to the binary. The file is re
 ## Troubleshooting
 
 ### "Apple could not verify" message
-When starting the app on MacOS you may get `Apple could not verify webui is free of malware that may harm your Mac or compromise your privacy."` message. To go around it, run:
+When starting the app on MacOS you may get `Apple could not verify golc is free of malware that may harm your Mac or compromise your privacy."` message. To go around it, run:
 
 ```
-xattr -cr /path/to/webui
+xattr -cr /path/to/golc
 xattr -cr /path/to/ResultsAll
 ```

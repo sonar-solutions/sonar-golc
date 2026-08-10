@@ -1061,7 +1061,7 @@ func main() {
 	// When invoked as an internal analysis subprocess, run the GoLC engine and exit.
 	if len(os.Args) > 1 && os.Args[1] == "--internal-run" {
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: webui --internal-run <platform>")
+			fmt.Fprintln(os.Stderr, "usage: golc --internal-run <platform>")
 			os.Exit(1)
 		}
 		runGolcInProcess(os.Args[2])
