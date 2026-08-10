@@ -48,6 +48,17 @@ type SummaryStats struct {
 	TotalExclude      int
 	TotalArchiv       int
 	TotalBranches     int
+
+	// Analyzed is how many repositories will actually be analyzed - one important
+	// branch each. It is deliberately not derived as NbRepos minus the filtered
+	// categories: a repository can also be dropped for having no branch matching the
+	// configured one, which belongs to none of those categories.
+	Analyzed int
+
+	// DiscoverySkipped counts repositories discovered but dropped before analysis
+	// without landing in any filtered category. Their lines are missing from the
+	// totals, so the figure has to be reported and not merely recorded.
+	DiscoverySkipped int
 }
 
 type AnalyzeProject struct {
@@ -65,6 +76,7 @@ type ParamsProjectAzure struct {
 	Projects       []core.TeamProjectReference
 	URL            string
 	AccessToken    string
+	Username       string
 	ApiURL         string
 	Organization   string
 	Exclusionlist  *utils.ExclusionList
@@ -139,7 +151,7 @@ func isRepoEmpty(ctx context.Context, gitClient git.Client, projectID string, re
 	//return len(*items) == 0, nil
 }
 
-func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *utils.ExclusionList) ([]core.TeamProjectReference, int, error) {
+func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *utils.ExclusionList, apiURL, username string) ([]core.TeamProjectReference, int, error) {
 	var allProjects []core.TeamProjectReference
 	var excludedCount int
 	var continuationToken string
@@ -150,7 +162,7 @@ func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *
 			ContinuationToken: &continuationToken,
 		})
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, describeAzureError(err, apiURL, username)
 		}
 
 		for _, project := range responseValue.Value {
@@ -175,7 +187,7 @@ func getAllProjects(ctx context.Context, coreClient core.Client, exclusionList *
 	return allProjects, excludedCount, nil
 }
 
-func getProjectByName(ctx context.Context, coreClient core.Client, projectName string, exclusionList *utils.ExclusionList) ([]core.TeamProjectReference, int, error) {
+func getProjectByName(ctx context.Context, coreClient core.Client, projectName string, exclusionList *utils.ExclusionList, apiURL, username string) ([]core.TeamProjectReference, int, error) {
 
 	var excludedCount int
 
@@ -190,7 +202,7 @@ func getProjectByName(ctx context.Context, coreClient core.Client, projectName s
 		ProjectId: &projectName,
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, describeAzureError(err, apiURL, username)
 	}
 
 	// Create a core.TeamProjectReference from core.TeamProject
@@ -259,7 +271,7 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 	if platformConfig["Project"].(string) == "" {
 
 		// Get All Project
-		projects, exludedprojects, err := getAllProjects(ctx, coreClient, exclusionList)
+		projects, exludedprojects, err := getAllProjects(ctx, coreClient, exclusionList, ApiURL, username)
 
 		if err != nil {
 			spin.Stop()
@@ -281,7 +293,7 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 		}
 
 	} else {
-		projects, exludedprojects, err := getProjectByName(ctx, coreClient, platformConfig["Project"].(string), exclusionList)
+		projects, exludedprojects, err := getProjectByName(ctx, coreClient, platformConfig["Project"].(string), exclusionList, ApiURL, username)
 		if err != nil {
 			spin.Stop()
 			log.Fatalf(MessageErro2, platformConfig["Organization"].(string), err)
@@ -324,6 +336,12 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 		os.Exit(1)
 	}
 
+	// nbRepos is the true count of discovered repos (analyzed + filtered), so any
+	// repo discovered but dropped inside the analysis loop (no usable default
+	// branch, or filtered out by single-branch selection) without landing in a
+	// category is surfaced as Skipped, keeping Scanned equal to the real total.
+	discoverySkipped := azureDiscoverySkipped(nbRepos, emptyRepo, totalExclude, totalArchiv, len(importantBranches))
+
 	stats := SummaryStats{
 		LargestRepo:       largesRepo,
 		LargestRepoBranch: largestRepoBranch,
@@ -332,17 +350,13 @@ func GetRepoAzureList(platformConfig map[string]interface{}, exclusionFile strin
 		TotalExclude:      totalExclude,
 		TotalArchiv:       totalArchiv,
 		TotalBranches:     TotalBranches,
+		Analyzed:          len(importantBranches),
+		DiscoverySkipped:  discoverySkipped,
 	}
 
 	// Persist the per-run repository breakdown for the ResultsAll page and the
 	// global PDF report. Analyzed is the number of repos that will actually be
 	// analyzed (one important branch per repo); Scanned is derived from the sum.
-	//
-	// nbRepos is the true count of discovered repos (analyzed + filtered), so any
-	// repo discovered but dropped inside the analysis loop (no usable default
-	// branch, or filtered out by single-branch selection) without landing in a
-	// category is surfaced as Skipped, keeping Scanned equal to the real total.
-	discoverySkipped := azureDiscoverySkipped(nbRepos, emptyRepo, totalExclude, totalArchiv, len(importantBranches))
 	utils.PersistScanSummary("Results", utils.NewScanSummary("azure", len(importantBranches), totalArchiv, emptyRepo, totalExclude, discoverySkipped))
 
 	printSummary(platformConfig["Organization"].(string), stats)
@@ -358,6 +372,7 @@ func getCommonParams(azureConnect AzureConnect, platformConfig map[string]interf
 
 		URL:            platformConfig["Url"].(string),
 		AccessToken:    platformConfig["AccessToken"].(string),
+		Username:       stringOrEmpty(platformConfig["Users"]),
 		ApiURL:         apiURL,
 		Organization:   platformConfig["Organization"].(string),
 		Exclusionlist:  exclusionList,
@@ -393,8 +408,20 @@ func printSummary(Org string, stats SummaryStats) {
 	loggers := utils.SharedLogger()
 
 	loggers.Infof("✅ The largest Repository is <%s> in the organization <%s> with the branch <%s> ", stats.LargestRepo, Org, stats.LargestRepoBranch)
-	loggers.Infof("✅ Total Repositories that will be analyzed: %d - Find empty : %d - Excluded : %d - Archived : %d", stats.NbRepos-stats.EmptyRepo-stats.TotalExclude-stats.TotalArchiv, stats.EmptyRepo, stats.TotalExclude, stats.TotalArchiv)
+
+	// Analyzed, rather than NbRepos minus the filtered categories. The two agree until
+	// a repository is dropped for having no matching branch, and then the arithmetic
+	// version overstates what is about to be counted - under a heading reading "will be
+	// analyzed", which is exactly where an operator looks for the scope of the scan.
+	loggers.Infof("✅ Total Repositories that will be analyzed: %d - Find empty : %d - Excluded : %d - Archived : %d", stats.Analyzed, stats.EmptyRepo, stats.TotalExclude, stats.TotalArchiv)
 	loggers.Infof("✅ Total Branches that will be analyzed: %d\n", stats.TotalBranches)
+
+	// These repositories appear in none of the counters above, so without this line the
+	// only trace of them is the gap between the number discovered and the number
+	// analyzed - which reads as a coincidence rather than as missing lines of code.
+	if stats.DiscoverySkipped > 0 {
+		loggers.Warnf("⚠️  %d of %d discovered repository(ies) will not be analyzed and are absent from the totals - see the reasons logged above", stats.DiscoverySkipped, stats.NbRepos)
+	}
 }
 
 func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectBranch, int, int, int, int, int, error) {
@@ -467,7 +494,11 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 
 			if err != nil {
 				if params.SingleBranch != "" {
-					// Skip this repository if SingleBranch is set but not found
+					// The configured Branch does not exist here, so this repository
+					// contributes nothing to the totals. Name it: an organisation that
+					// pins "main" across a mix of "main" and "master" repositories would
+					// otherwise under-count its licence with nothing at all to point at.
+					loggers.Warnf("⚠️  Skipping repo %s/%s: no branch <%s> found - its lines are absent from the totals", *project.Name, *repo.Name, params.SingleBranch)
 					continue
 				}
 				branchName, ok := defaultBranchName(&repo)
@@ -482,7 +513,10 @@ func getRepoAnalyse(params ParamsProjectAzure, gitClient git.Client) ([]ProjectB
 			} else {
 				// Check if SingleBranch is set and the returned branch is not SingleBranch
 				if params.SingleBranch != "" && !params.DefaultB && largestRepoBranch != params.SingleBranch {
-					// Skip this repository if the most important branch is not the SingleBranch
+					// Its largest branch is not the configured one, so again nothing here
+					// will be counted. Same reasoning as above: say which repository went
+					// missing rather than leaving a hole in the total.
+					loggers.Warnf("⚠️  Skipping repo %s/%s: largest branch is <%s>, not the configured <%s> - its lines are absent from the totals", *project.Name, *repo.Name, largestRepoBranch, params.SingleBranch)
 					continue
 				}
 			}
@@ -560,7 +594,10 @@ func fetchDisabledRepoIDs(parms ParamsProjectAzure, projectKey string) map[strin
 		warn("%v", err)
 		return disabled
 	}
-	req.SetBasicAuth("", parms.AccessToken)
+	// The username matters here: an empty one is rejected outright by a
+	// Windows-authenticated server, and leaves the NTLM negotiator with no account to
+	// answer the challenge with.
+	req.SetBasicAuth(parms.Username, parms.AccessToken)
 
 	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
@@ -620,7 +657,8 @@ func listReposForProject(parms ParamsProjectAzure, projectKey string, gitClient 
 		Project: &projectKey,
 	})
 	if err != nil {
-		loggers.Errorf("Error get GetRepositories ")
+		err = describeAzureError(err, parms.URL, parms.Username)
+		loggers.Errorf("❌ Error listing repositories for project %s: %v", projectKey, err)
 		return 0, 0, 0, nil, err
 	}
 	loggers.Debugf("→ project %s: API returned %d repos", projectKey, len(*repos))

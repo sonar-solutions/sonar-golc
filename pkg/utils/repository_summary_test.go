@@ -246,9 +246,14 @@ func TestCreateReportFilePaths(t *testing.T) {
 
 	csvPath, jsonPath, pdfPath := createReportFilePaths(directory)
 
-	expectedCsvPath := "/test/directory/byfile-report/csv-report"
-	expectedJsonPath := "/test/directory/byfile-report"
-	expectedPdfPath := "/test/directory/byfile-report/pdf-report"
+	// Built with filepath.Join rather than written as literals because the function
+	// under test joins with the OS separator: hard-coded forward slashes assert Unix
+	// output and fail on Windows, where the same correct result comes back with
+	// backslashes. Joining here keeps the assertion about the layout - which
+	// directories, nested how - which is the part that is actually specified.
+	expectedCsvPath := filepath.Join(directory, "byfile-report", "csv-report")
+	expectedJsonPath := filepath.Join(directory, "byfile-report")
+	expectedPdfPath := filepath.Join(directory, "byfile-report", "pdf-report")
 
 	if csvPath != expectedCsvPath {
 		t.Errorf("createReportFilePaths() csvPath = %q, want %q", csvPath, expectedCsvPath)

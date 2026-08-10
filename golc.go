@@ -413,6 +413,14 @@ func addFileToZip(filePath, relPath string, fileInfo os.FileInfo, zipWriter *zip
 }
 
 // Generic function to analyze repositories
+// Outcomes a worker reports on the results channel. The value distinguishes a repository
+// whose lines are in the totals from one whose are not; the message itself only says the
+// worker reached an exit, which every failure path does too.
+const (
+	repoAnalysed = 1
+	repoSkipped  = 0
+)
+
 func AnalyseReposList(DestinationResult string, platformConfig map[string]interface{}, repolist interface{}, analyseRepoFunc func(project interface{}, DestinationResult string, platformConfig map[string]interface{}, spin *spinner.Spinner, results chan int, count *atomic.Int64)) (cpt int) {
 	//fmt.Print("\n🔎 Analysis of Repos ...\n")
 	logger.Infof("🔎 Analysis of Repos ...\n")
@@ -468,6 +476,24 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 	wg.Wait()
 	close(results)
 
+	// Every worker reports exactly once, on success and on each error path alike, so there
+	// are two distinct ways for the headline to be wrong and both have to be separated out.
+	//
+	// A repository that reports nothing at all neither finished nor failed - it disappeared,
+	// and `total` would count it under a heading that says *analyzed*.
+	//
+	// A repository that reports a skip did fail, loudly, and its lines are just as absent
+	// from the totals - so counting reports rather than successes would put it in the
+	// headline too. That is the narrower mistake and the easier one to miss, because the
+	// skip warning is printed either way and looks like the whole story.
+	//
+	// Hence the outcome travels on the channel instead of a bare tally.
+	analysed, completed := 0, 0
+	for outcome := range results {
+		completed++
+		analysed += outcome
+	}
+
 	// Persist the skipped repositories so the ResultsAll web page and the PDF report
 	// can surface them. DestinationResult is the base Results directory at this point.
 	skippedList := skipped.snapshot()
@@ -478,7 +504,44 @@ func AnalyseReposList(DestinationResult string, platformConfig map[string]interf
 		logger.Warnf("⚠️  %d repository(ies) were skipped during analysis (see report for details)", len(skippedList))
 	}
 
-	return total
+	// Spell out the arithmetic whenever the headline is not the whole story. "28 analyzed"
+	// on its own invites the reading that 28 is all there was; saying what became of the
+	// others is the difference between a number and an accounted-for number.
+	//
+	// Both shortfalls are counted from the channel rather than one from the channel and one
+	// from skippedList, so the three figures are guaranteed to add up to the total: they come
+	// from the same messages. Deriving them from two mechanisms would let the line disagree
+	// with itself the moment they ever diverged.
+	//
+	// They are also named separately. A repository that failed and one that disappeared need
+	// different responses, and reporting their sum as "skipped" would say that the one with
+	// no error had an error - undoing the separation this exists to make.
+	skippedCount := completed - analysed
+	vanished := total - completed
+
+	if analysed < total {
+		outcomes := []string{fmt.Sprintf("%d analyzed", analysed)}
+		if skippedCount > 0 {
+			outcomes = append(outcomes, fmt.Sprintf("%d skipped", skippedCount))
+		}
+		if vanished > 0 {
+			outcomes = append(outcomes, fmt.Sprintf("%d did not report", vanished))
+		}
+
+		logger.Warnf("⚠️  %d repositories found: %s. The totals below cover the %d analyzed only.",
+			total, strings.Join(outcomes, ", "), analysed)
+	}
+
+	// A repository that reported nothing at all is the worse case: it did not fail, so it
+	// contributes no skip entry and no error message anywhere. Without this it would leave
+	// the totals quietly short with nothing to point at.
+	if vanished > 0 {
+		logger.Errorf("❌ %d of %d repositories did not complete analysis and are missing from the "+
+			"totals, with no error of their own. The reported lines of code are therefore an "+
+			"under-count - re-run before relying on them.", vanished, total)
+	}
+
+	return analysed
 }
 
 func getExcludePaths(configValue interface{}) []string {
@@ -1037,12 +1100,15 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 	// recordSkip notes that this repository/branch could not be analyzed so it can be
 	// surfaced (with a reason) in the web page and PDF report instead of silently
 	// vanishing from the totals.
+	// The reason is condensed first: a clone refused by IIS arrives with the whole 401 page
+	// attached, and storing that verbatim buries the diagnosis under kilobytes of stylesheet
+	// in the very file the web page and the PDF report read to explain what went missing.
 	recordSkip := func(reason string) {
 		skipped.add(skippedRepo{
 			ProjectKey: params.ProjectKey,
 			RepoSlug:   params.RepoSlug,
 			Branch:     params.MainBranch,
-			Reason:     reason,
+			Reason:     utils.CondenseHTMLError(reason),
 		})
 	}
 
@@ -1053,10 +1119,10 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 	gc, err := goloc.NewGCloc(golocParams, assets.Languages)
 	if err != nil {
 		spin.Stop()
-		logger.Errorf(errorMessageRepo+"%v", err)
+		logger.Errorf(errorMessageRepo+"%v", utils.CondenseHTMLError(err.Error()))
 		recordSkip(err.Error())
 		count.Add(1)
-		results <- 1
+		results <- repoSkipped
 		return
 	} else {
 
@@ -1084,7 +1150,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				logger.Errorf("❌ Error during analysis with ByAll = true: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				count.Add(1)
-				results <- 1
+				results <- repoSkipped
 				return
 			}
 
@@ -1100,7 +1166,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				logger.Errorf("❌ Error initializing GCloc for ByFile = false: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				count.Add(1)
-				results <- 1
+				results <- repoSkipped
 				return
 			}
 
@@ -1109,7 +1175,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				logger.Errorf("❌ Error during analysis with ByFile = false: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				count.Add(1)
-				results <- 1
+				results <- repoSkipped
 				return
 			}
 		} else {
@@ -1119,7 +1185,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 				logger.Errorf("❌ Error during analysis: %v", err)
 				recordSkip(fmt.Sprintf("analysis error: %v", err))
 				count.Add(1)
-				results <- 1
+				results <- repoSkipped
 				return
 			}
 		}
@@ -1130,7 +1196,7 @@ func performRepoAnalysis(params RepoParams, DestinationResult string, spin *spin
 		spin.Stop()
 		logger.Infof("\r\t\t\t\t✅ %d The repository <%s> has been analyzed\n", count.Add(1), params.RepoSlug)
 		// Send result through channel
-		results <- 1
+		results <- repoAnalysed
 	}
 }
 

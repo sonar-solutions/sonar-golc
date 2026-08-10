@@ -123,10 +123,19 @@ func TestPerformRepoAnalysisLocalDir(t *testing.T) {
 	results := make(chan int, 1)
 	var count atomic.Int64
 
+	// The real flow creates the Results tree before any analysis runs; calling
+	// performRepoAnalysis directly skips that, and without it the report write fails with
+	// "no such file or directory". The test used to pass anyway, because every exit path -
+	// success and failure alike - signalled the same value, so asserting on it proved
+	// nothing. It now signals the outcome, so the setup has to be real for the assertion
+	// to mean what it says.
+	createDirectories(dest, directoriesToCreate)
+
 	performRepoAnalysis(params, dest, spin, results, &count, analysisOptions{})
 
-	if got := <-results; got != 1 {
-		t.Errorf("expected 1 result signal, got %d", got)
+	if got := <-results; got != repoAnalysed {
+		t.Errorf("expected the repository to be analysed (%d), got %d; skipped: %v",
+			repoAnalysed, got, skipped.snapshot())
 	}
 	// Non-disposable source dir must NOT be deleted by the cleanup defer.
 	if _, err := os.Stat(src); err != nil {
