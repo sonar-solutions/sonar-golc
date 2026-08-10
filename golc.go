@@ -1,5 +1,5 @@
-//go:build webui || golc
-// +build webui golc
+//go:build launcher || engine
+// +build launcher engine
 
 package main
 
@@ -1544,7 +1544,7 @@ func setupResultsDirectory(platform string) string {
 }
 
 // runGolcInProcess runs the GoLC analysis for the given platform key (e.g. "Github").
-// It is invoked by the golc binary when started with --internal-run <platform>.
+// It is invoked by the golc-launcher binary when started with --internal-run <platform>.
 func runGolcInProcess(platform string) {
 	// Sweep any temp clones still registered by failed/partial analyses on the
 	// normal completion path too. Successful repos self-clean via their own

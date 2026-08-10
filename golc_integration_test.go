@@ -1,3 +1,6 @@
+//go:build engine || resultsall
+// +build engine resultsall
+
 package main
 
 import (

@@ -1,5 +1,5 @@
-//go:build webui
-// +build webui
+//go:build launcher
+// +build launcher
 
 package main
 
@@ -30,7 +30,7 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
-var webuiPort = getEnvPort("GOLC_WEBUI_PORT", 8091)
+var launcherPort = getEnvPortWithLegacy("GOLC_PORT", "GOLC_WEBUI_PORT", 8091)
 var resultsAllPort = getEnvPort("GOLC_RESULTS_PORT", 8090)
 
 func getEnvPort(envKey string, defaultVal int) int {
@@ -40,6 +40,15 @@ func getEnvPort(envKey string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+// getEnvPortWithLegacy reads the port from envKey, falling back to legacyKey so
+// configurations written before the variable was renamed keep working.
+func getEnvPortWithLegacy(envKey, legacyKey string, defaultVal int) int {
+	if p := getEnvPort(envKey, 0); p != 0 {
+		return p
+	}
+	return getEnvPort(legacyKey, defaultVal)
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -1061,7 +1070,7 @@ func main() {
 	// When invoked as an internal analysis subprocess, run the GoLC engine and exit.
 	if len(os.Args) > 1 && os.Args[1] == "--internal-run" {
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: golc --internal-run <platform>")
+			fmt.Fprintln(os.Stderr, "usage: golc-launcher --internal-run <platform>")
 			os.Exit(1)
 		}
 		runGolcInProcess(os.Args[2])
@@ -1079,7 +1088,7 @@ func main() {
 	mux.HandleFunc("/api/download-debug", handleDownloadDebug)
 	mux.HandleFunc("/dist/", handleStatic)
 
-	port := findFreePort(webuiPort)
+	port := findFreePort(launcherPort)
 	url := fmt.Sprintf("http://localhost:%d", port)
 
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))

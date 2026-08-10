@@ -1,6 +1,7 @@
 # Build artifacts
 sonar-golc
 golc
+golc-launcher
 webui
 ResultsAll
 ResultsAll-*
