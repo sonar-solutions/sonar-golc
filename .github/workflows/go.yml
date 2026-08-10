@@ -38,7 +38,7 @@ jobs:
 
       - name: Build Go apps
         run: |
-          go build -trimpath -tags=webui -o webui webui.go golc.go
+          go build -trimpath -tags=webui -o golc webui.go golc.go
           go build -trimpath -tags=resultsall -o ResultsAll ./ResultsAll.go
 
       - name: Generate test coverage reports
