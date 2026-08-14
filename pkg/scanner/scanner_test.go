@@ -324,3 +324,105 @@ func TestScanCountsFinalLineInsideBlockComment(t *testing.T) {
 			got.CodeLines, got.Comments)
 	}
 }
+
+// A UTF-8 BOM must not hide the comment tokens on the first line. TrimSpace does not
+// remove U+FEFF - it is not Unicode whitespace - so before the fix a BOM left the line
+// as U+FEFF followed by "/*", every HasPrefix test missed, and the block comment was never entered:
+// the whole licence header was counted as code. Visual Studio writes a BOM by default,
+// which made this the dominant error on .NET repositories.
+func TestScanCountsCommentsOnBOMPrefixedFirstLine(t *testing.T) {
+	const bom = "\ufeff"
+
+	sc := NewScanner(language.Languages{
+		"C#": {
+			LineComments:      []string{"//"},
+			MultiLineComments: [][]string{{"/*", "*/"}},
+			Extensions:        []string{".cs"},
+		},
+	})
+
+	cases := []struct {
+		name                         string
+		content                      string
+		code, comments, blank, lines int
+	}{
+		{
+			name:     "BOM then a multi-line licence header",
+			content:  bom + "/*\n * Copyright\n */\nvar a = 1;\n",
+			code:     1,
+			comments: 3,
+			lines:    4,
+		},
+		{
+			name:     "same header without a BOM counts identically",
+			content:  "/*\n * Copyright\n */\nvar a = 1;\n",
+			code:     1,
+			comments: 3,
+			lines:    4,
+		},
+		{
+			name:     "BOM then a single-line comment",
+			content:  bom + "// note\nvar a = 1;\n",
+			code:     1,
+			comments: 1,
+			lines:    2,
+		},
+		{
+			name:     "BOM then a self-closing block comment",
+			content:  bom + "/* note */\nvar a = 1;\n",
+			code:     1,
+			comments: 1,
+			lines:    2,
+		},
+		{
+			name:    "BOM then code is still code",
+			content: bom + "var a = 1;\n",
+			code:    1,
+			lines:   1,
+		},
+		{
+			name:    "BOM alone is a blank line, not code",
+			content: bom + "\nvar a = 1;\n",
+			code:    1,
+			blank:   1,
+			lines:   2,
+		},
+		{
+			// Only the first line is stripped: U+FEFF later in a file is a zero-width
+			// no-break space, which is content and must not silently vanish.
+			name:     "a BOM-like rune on a later line does not open a comment",
+			content:  "var a = 1;\n" + bom + "/* note */\n",
+			code:     2,
+			comments: 0,
+			lines:    2,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "f.cs")
+			if err := os.WriteFile(path, []byte(c.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := sc.scanFile(analyzer.FileMetadata{
+				FilePath: path, Extension: ".cs", Language: "C#",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.CodeLines != c.code {
+				t.Errorf("CodeLines = %d, want %d", got.CodeLines, c.code)
+			}
+			if got.Comments != c.comments {
+				t.Errorf("Comments = %d, want %d", got.Comments, c.comments)
+			}
+			if got.BlankLines != c.blank {
+				t.Errorf("BlankLines = %d, want %d", got.BlankLines, c.blank)
+			}
+			if got.Lines != c.lines {
+				t.Errorf("Lines = %d, want %d", got.Lines, c.lines)
+			}
+		})
+	}
+}
