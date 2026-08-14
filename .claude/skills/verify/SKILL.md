@@ -139,48 +139,57 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 top-repositories table. Delete the workspace afterwards — it holds a token in
 `config.json`.
 
-## The optional OSS test bed
+## Comparing a count against SonarQube's `ncloc`
 
-A local toolset may exist outside the repo that mirrors ~30 real open-source projects onto
-six platforms — Azure DevOps cloud and Server, Bitbucket Cloud, GitHub Enterprise, and
-GitLab cloud and self-managed (ask the user for the location; it is deliberately not
-version-controlled because it embeds their platform identifiers). It replaced a synthetic
-corpus, because generated code does not parse and SonarQube therefore reported 0 ncloc for
-whole languages — noise that reads as catastrophic GoLC defects.
+**Match the scope by reading SonarQube's own file list. Never reconstruct it, and never
+build a corpus.** Given the same files the two tools agree to within a couple of percent, so
+any large gap is a scope difference until proven otherwise — and every reported "GoLC
+over-counts by 500%" has turned out to be one.
 
-| Script | Question |
-|---|---|
-| `mirror.py` | Clone the sources and re-originate them into `build/golc-*` |
-| `publish.py` | Push them to one platform |
-| `platforms.py` | Per-platform adapters, including Azure DevOps Server |
-| `sqscan.py` + `sqcompare.py` | Does GoLC predict SonarQube's `ncloc`? |
-| `baseline.py` | Did any count move since last time? |
-| `teardown.py` | Remove the mirrors — the `golc-` name prefix is its only safety filter |
+Ask the server which files it actually analysed, hard-link exactly those into a tree, and
+scan that tree with GoLC's **own exclusions off** — the scope is already SonarQube's, so
+applying the presets on top subtracts twice:
 
-Its README may still say Azure DevOps Server cannot be scanned because GoLC has no
-connector. That is out of date — `AzureServer` is a supported platform key.
+```bash
+curl -s -u "$TOKEN:" --get "$SQ/api/measures/component_tree" \
+  --data-urlencode "component=$PROJECT_KEY" --data-urlencode "metricKeys=ncloc" \
+  --data-urlencode "qualifiers=FIL" --data-urlencode "ps=500" --data-urlencode "p=$PAGE"
+```
 
-**There is no oracle.** Nobody knows the true line count of real code, so nothing mirrors
-GoLC's logic in Python and nothing has to be kept in step with a scanner change. Use
-`baseline.py --save` before a change and `--check` after; it reports only what moved.
+Measured this way on five real projects — 14,821 files, 1,998,879 lines of `ncloc` — GoLC
+lands at **+1.5%**, with 13 of 26 language comparisons exact. Reconstructing the scope from
+`sonar.sources` and `sonar.inclusions` by hand instead gave +8.4%, so the extra effort buys
+worse error bars.
 
-Three things worth knowing:
+Compare against GoLC's **headline** total, which holds JSON out to match SonarQube.
+`TotalCodeLines` in `Result_<repo>.json` is the raw figure and includes it.
 
-- **GoLC's default exclusions and a stock SonarQube are far apart.** Measured over 30 real
-  repos: GoLC with its UI defaults reported 1.47M lines against SonarQube's 3.63M — a 2.5x
-  under-count, entirely from the test/vendor/build folder presets. With exclusions off the
-  two agree to 3.8%. Neither number is wrong; they answer different questions.
-- **On content SonarQube can parse, GoLC is accurate.** Objective-C, Swift and Terraform
-  matched exactly; ABAP, C, C++, Dart, Java, Ruby, Rust, HTML and XML within 1%.
+### Traps that manufacture fake findings
+
+- **`ncloc` is not one number per repository.** Three SonarQube projects analyse the
+  `sonarcloud-webapp` repo and report 185,765 / 286,070 / 340,468 — an 83% spread from
+  scanner configuration alone. Pin the **project key**, never the repository name. Getting
+  this wrong made GoLC look 45% low when it was 0.9% high.
+- **Never benchmark against `llvm-project`.** Its `sonar.sources` is pinned to 27
+  hand-picked directories of a 30M-line monorepo, as a C++ analyzer regression corpus.
+- **Build-model scanners see a different world.** Gradle, Maven and MSBuild tell the
+  scanner what is test code and what a generator produced, so neither reaches `ncloc`.
+  GoLC has no build model and cannot infer it — this is the largest structural difference,
+  not a defect.
+- **Header buckets.** GoLC reports `C Header` / `C++ Header` separately; SonarQube folds
+  `.h` into `c`. Fold them before comparing or you invent 1.46M phantom lines.
+- **`sonar.yaml.activate` and `sonar.json.activate` default to false**, and
+  `sonar.cobol.file.suffixes` defaults to empty, so those analyzers count nothing until
+  switched on. C# and VB.NET need SonarScanner for .NET, which builds the project.
 - **`sonar-scanner` writes a 40 MB+ `.scannerwork/` into the directory it scans.** Force
-  `sonar.working.directory` elsewhere and check `find <build> -name .scannerwork` is empty.
+  `sonar.working.directory` elsewhere and check `find <dir> -name .scannerwork` is empty.
 
-Two SonarQube-side gotchas when comparing: `sonar.yaml.activate` and `sonar.json.activate`
-default to **false** and `sonar.cobol.file.suffixes` defaults to **empty**, so those
-analyzers count nothing until switched on (`sqscan.py --activate-optin`). C# and VB.NET need
-SonarScanner for .NET, which builds the project. A mirrored project may also ship its own
-`sonar-project.properties`, which the scanner will read and which can gut the scan —
-`sqscan.py` neutralises it.
+### Exercising the DevOps connectors
+
+The connectors can only be tested against a real platform — local directories cannot reach
+the Azure NTLM path, GitLab group discovery or Bitbucket DC pagination. Long-lived test
+repositories already exist in `golc-`prefixed containers on each platform; ask the user for
+the org, group or project name and point GoLC at it. Nothing local is required.
 
 ## Drive the dashboard
 
