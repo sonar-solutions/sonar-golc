@@ -140,13 +140,9 @@ Three presets add sets of folder names in one click:
 > it out of `ncloc` — when any folder on its path is named `doc`, `docs`, `test`, `tests`,
 > `mock` or `mocks`.
 >
-> **These presets are the aggressive part of GoLC, and they can remove production code.**
-> Measured against SonarQube on five real projects covering 2.0M lines of `ncloc`, they
-> discard 7% of what SonarQube counts. Two keywords do most of it: `integration` removes
-> `src/Integration/` and `src/Integration.Vsix/` from a .NET solution — 25% of that
-> project's `ncloc` — and `mocks` removes shipped mock utilities under `src/api/mocks/`
-> that SonarQube counts as production. Turn a preset off if your repository uses those
-> names for code you ship.
+> **Turn a preset off if your repository uses one of these names for code you ship.** A
+> folder called `integration/` or `mocks/` holding production code will be skipped, and
+> `integration` also matches a folder named `Integration.Something`.
 
 Files are excluded by name too, whether or not you touch the presets:
 
@@ -156,10 +152,8 @@ Files are excluded by name too, whether or not you touch the presets:
 | `*.min.*` | minified bundles |
 | `*.Designer.*`, `*.g.cs`, `*.generated.*`, `*.pb.go`, `*_pb2.py`, `*.pb.cc`, `*.pb.h` | generated code |
 
-> Generated code is excluded by name because GoLC has no build model to ask. A scanner
-> that builds the project — SonarScanner for .NET, Maven or Gradle — is told what a
-> generator produced and leaves it out of `ncloc`; GoLC has to recognise the naming
-> conventions instead. Generated code that follows no convention cannot be detected.
+> Generated code is recognised by name, so a generated file named like ordinary source is
+> still counted. Add your own pattern under **Exclude file name patterns** if you have one.
 
 And three fields for anything else:
 
@@ -188,7 +182,9 @@ Which one depends on the **Analyze default branch only** switch in the UI:
 | **Off** | the **most recently active** branch | Your main line of work is not the default branch. |
 | **Off** + *Specific branch name* | that **exact branch**, in every repository | You size a named branch such as `develop` or `release/2025`. |
 
-"Most recently active" means the branch with the most commits in the last month.
+"Most recently active" means the branch with the most commits in a recent window — the
+**last month** on every platform except **Bitbucket Data Center**, which looks back
+**five months**.
 
 > **If no branch has commits in that window, GoLC falls back to the default branch.** For
 > repositories that have been quiet, turning the switch off therefore changes nothing —
@@ -324,6 +320,7 @@ COBOL              | .cbl, .ccp, .cob, .cobol, .cpy           | *               
 CSS                | .css                                     |                 | /* */
 Dart               | .dart                                    | //              | /* */
 Docker             | Dockerfile, dockerfile                   | #               |
+Flex               | .as                                      | //              | /* */
 Golang             | .go                                      | //              | /* */
 Gosu               | .gs, .gsx, .gsp                          | //              | /* */
 Groovy             | .groovy, .gvy, .gy, .gsh, Jenkinsfile    | //              | /* */
@@ -331,10 +328,10 @@ HTML               | .html, .htm, .cshtml, .vbhtml, ...       |                 
 Java               | .java, .jav                              | //              | /* */
 JavaScript         | .js, .jsx, .cjs, .mjs                    | //              | /* */
 JCL                | .jcl, .JCL                               | //*             |
-Less               | .less                                    | //              | /* */
 JSON               | .json                                    |                 |
 JSP                | .jsp, .jspf, .jspx                       |                 | <%-- --%>, <!-- -->
 Kotlin             | .kt, .kts                                | //              | /* */
+Less               | .less                                    | //              | /* */
 Objective-C        | .m, .mm                                  | //              | /* */
 Oracle PL/SQL      | .pkb, .pks                               | --              | /* */
 PHP                | .php, .php3, .php4, .php5, .phtml, .inc  | //, #           | /* */
@@ -343,8 +340,8 @@ PowerShell         | .ps1, .psm1, .psd1                       | #               
 Python             | .py                                      | #               | """ """, ''' '''
 RPG                | .rpg, .rpgle, .sqlrpgle (+ uppercase)    | *               |
 Ruby               | .rb                                      | #               | =begin =end
-Sass               | .sass                                    | //              | /* */
 Rust               | .rs                                      | //              | /* */
+Sass               | .sass                                    | //              | /* */
 Scala              | .scala                                   | //              | /* */
 Scss               | .scss                                    | //              | /* */
 Shell              | .sh, .bash, .zsh, .ksh                   | #               |
@@ -357,10 +354,14 @@ TypeScript         | .ts, .tsx, .cts, .mts                    | //              
 VB6                | .bas, .frm, .cls, .ctl                   | '               |
 Visual Basic .NET  | .vb                                      | '               |
 Vue                | .vue                                     |                 | <!-- -->
-XML                | .xml, .XML, .xsd, .xsl, .config          |                 | <!-- -->
 XHTML              | .xhtml                                   |                 | <!-- -->
+XML                | .xml, .XML, .xsd, .xsl, .config          |                 | <!-- -->
 YAML               | .yaml, .yml                              | #               |
 ```
+
+> **ActionScript and Flex both use `.as`**, so a report shows your `.as` files under one
+> label or the other, and it may differ between runs. The line count is the same either
+> way — only the name changes.
 
 ### Infrastructure-as-code, detected by content
 
@@ -404,7 +405,14 @@ line with code (`<?php $a = 1;`) is still a line of code.
 
 ## Execution Log
 
-GoLC writes a detailed log to `Logs/Logs.log` next to the binary. The file is recreated on each run. Use it to troubleshoot authentication errors, rate limits, or unexpected results.
+GoLC writes two logs to a `Logs/` folder next to the binary. Both are recreated on each run.
+
+| File | Contains |
+|------|----------|
+| `Logs/Logs.log` | The same messages shown in the UI — authentication errors, rate limits, skipped repositories. |
+| `Logs/debug.log` | Everything above plus per-repository detail. Click **Download Debug Log** on the progress screen to save it. |
+
+Start with `Logs.log`. Send `debug.log` if you report a problem.
 
 ---
 
