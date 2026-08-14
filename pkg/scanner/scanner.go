@@ -193,6 +193,7 @@ func (sc *Scanner) scanFile(file analyzer.FileMetadata) (scanResult, error) {
 	defer f.Close()
 
 	reader := bufio.NewReader(f)
+	firstLine := true
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil && err != io.EOF {
@@ -206,6 +207,17 @@ func (sc *Scanner) scanFile(file analyzer.FileMetadata) (scanResult, error) {
 		lastLine := err == io.EOF
 		if lastLine && line == "" {
 			break
+		}
+
+		// A UTF-8 BOM is not Unicode whitespace, so TrimSpace leaves it in place and every
+		// prefix test below misses: a file opening with a BOM and then a block comment had
+		// its whole licence header counted as code. Visual Studio writes a BOM by default,
+		// so this hit 92% of the C# files in a real .NET repository and inflated its count
+		// by 50%. Strip it only on the first line - U+FEFF anywhere else is a zero-width
+		// no-break space, which is content.
+		if firstLine {
+			line = strings.TrimPrefix(line, "\ufeff")
+			firstLine = false
 		}
 
 		line = strings.TrimSpace(line)
