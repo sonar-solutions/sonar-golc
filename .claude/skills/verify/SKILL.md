@@ -1,42 +1,131 @@
 ---
 name: verify
-description: Build GoLC, run a real scan against a DevOps platform, and drive the ResultsAll dashboard to observe changes at their surface. Use when verifying changes to golc.go, golc-launcher.go, ResultsAll.go, or pkg/utils report generation.
+description: Build GoLC, drive a real scan through the web UI the way a customer does, and drive the ResultsAll dashboard to observe changes at their surface. Use when verifying changes to golc.go, golc-launcher.go, ResultsAll.go, or pkg/utils report generation.
 ---
 
 # Verifying GoLC
 
-Two surfaces: the **CLI scanner** (writes `Results/`) and the **ResultsAll dashboard**
-(HTTP + HTML, reads `Results/`). Most report changes need both — scan once, then drive
-the dashboard against the output.
+Two surfaces: the **launcher** (`golc-launcher`, config UI + scanner, writes `Results/`) and
+the **ResultsAll dashboard** (HTTP + HTML, reads `Results/`). Most report changes need both
+— scan once through the UI, then drive the dashboard against the output.
 
 ## Build
 
-Three binaries from one module, selected by build tag:
+Three binaries from one module, selected by build tag — same commands as
+`create_release_sample.sh`:
 
 ```bash
-go build -tags=launcher   -o "$WS/golc-launcher" golc-launcher.go golc.go   # scanner + config UI
-go build -tags=resultsall -o "$WS/ResultsAll" .                  # dashboard
+go build -tags=launcher   -o "$WS/golc-launcher" golc-launcher.go golc.go   # config UI + scanner
+go build -tags=resultsall -o "$WS/ResultsAll"    ResultsAll.go              # dashboard
 ```
 
-The scanner has no CLI flags — the analysis entrypoint is a hidden subcommand:
+`golc.go` carries `//go:build launcher || engine`; the `engine` tag exists so the root
+package's scanner tests can compile without the UI — `go test -tags=engine .` for
+`golc*_test.go`, `go test -tags=resultsall .` for `ResultsAll_test.go` and
+`deselection_test.go`.
 
-```bash
-./golc-launcher --internal-run Github     # platform key from config.json: Github, GithubEnterprise,
-                                 # Gitlab, Azure, BitBucket, BitBucketSRV, File
-```
-
-Both binaries `chdir` to their own directory, so `Results/` and `config.json` must sit
+Both binaries `chdir` to their own directory, so `Results/`, `Logs/` and `config.json` sit
 next to the binary. Copy the binaries into an isolated workspace and work there — never
-scan into the repo checkout.
+scan into the repo checkout. `./golc-launcher --version` reports the stamped release.
 
-## Run a real scan
+## Run a real scan — through the web UI, not a hand-written config.json
 
-`config.json` next to the binary, mirroring `config_sample.json` with one platform
-filled in. Credentials for existing test orgs live outside the repo (ask the user; e.g.
-`~/golc-env/*.env` exporting `GOLC_<PLATFORM>_TOKEN` / `_ORG` / `_USERNAME`).
+**This is the only route worth verifying**, because it is the only one customers use, and
+because a hand-written `config.json` silently measures a *different product*.
+`golc-launcher.go` ships three folder-exclusion presets **on by default** (test / vendor /
+build keywords) plus `DEFAULT_FILE_PATTERNS`. A config copied from `config_sample.json`
+leaves `FolderKeywords` and `FileNamePatterns` empty, so it measures GoLC with its defaults
+switched off.
 
-**Keep scans small and fast.** `Repos` is a comma-separated include-list — pick the
-smallest repos so cloning takes seconds, not minutes:
+That cost a real false finding once: a SonarQube comparison concluded "GoLC over-counts
+minified files and test code" and recommended exclusions that already existed and were on.
+The bug was in the harness.
+
+Start the launcher and read back the URL it prints — `GOLC_PORT` (legacy
+`GOLC_WEBUI_PORT`, default 8091) is a *preference*, not a promise: `findFreePort` falls back
+to any free port when it is taken. It also opens a browser tab at startup, which is
+harmless but surprising in a scripted run.
+
+```bash
+cd "$WS" && GOLC_PORT=8199 ./golc-launcher > launcher.log 2>&1 &
+until grep -q 'started on' launcher.log; do sleep 0.3; done
+PORT=$(sed -n 's#.*localhost:\([0-9]*\).*#\1#p' launcher.log)
+```
+
+Then `POST /api/run` with `{"Platform":…,"Config":…}` — exactly what the page's
+`gatherConfig()` sends. Send the two exclusion lists as the browser would, or you are back
+to measuring defaults-off:
+
+```jsonc
+{"Platform":"Github","Config":{
+  "Users":"…","AccessToken":"…","Organization":"…",
+  "Repos":"repo-a, repo-b","Project":"","Branch":"","DefaultBranch":true,
+  "Multithreading":true,"Workers":10,"NumberWorkerRepos":10,"WorkDir":"","CloneTimeout":15,
+  "FileExclusion":"","ExtExclusion":[],"ExcludePaths":[],"Org":true,
+  "ExcludeTests":true,"ExcludeVendor":true,"ExcludeBuild":true,
+  "FolderKeywords":["test","tests","spec","specs","e2e","testdata","fixtures","mock",
+    "mocks","integration","doc","docs","vendor","node_modules","bower_components",
+    "third_party","external","dist","build","out","target","bin","coverage"],
+  "FileNamePatterns":["*_test.*","test_*.*","*.test.*","*.spec.*","*_spec.*","*Test.*",
+    "*Tests.*","*.min.*"],
+  "ResultByFile":true,"ResultAll":true}}
+```
+
+Copy both lists from `PRESET_*_KEYWORDS` / `DEFAULT_FILE_PATTERNS` in `golc-launcher.go`
+rather than from here, and say in any write-up which configuration produced a figure.
+`ExcludeTests` / `ExcludeVendor` / `ExcludeBuild` are only persisted checkbox state — the
+engine reads `FolderKeywords`, `FileNamePatterns`, `ExtExclusion` and `ExcludePaths`.
+
+Then poll until it finishes:
+
+```bash
+until curl -s localhost:$PORT/api/status | grep -q '"running":false'; do sleep 3; done
+```
+
+`/api/status` returns `{running, phase, current, total, pct, error}`, with `phase` walking
+`idle → identifying → analyzing → reporting → complete` (or `error`). `/api/events` is the
+SSE stream the page consumes and replays its buffer to a late subscriber, so it is the
+better surface when the *progress reporting itself* is what changed.
+
+What the route does that a script would forget: `/api/run` merges your `Config` over
+`platformDefaults` and **writes `config.json`** (so inspect that file when a run
+misbehaves — and `chmod 600` it, it holds a live token), then deletes `Results/` before
+spawning the scanner. Other answers: 400 unknown platform, 409 already running. `POST
+/api/stop` kills the child.
+
+`--internal-run <PlatformKey>` is how the launcher spawns its own analysis subprocess. Reach
+for it directly only to reproduce an engine bug without HTTP in the way; it reads the
+`config.json` the UI last wrote (or `$GOLC_CONFIG_FILE`).
+
+### Platforms
+
+| Key | Notes |
+|---|---|
+| `Github`, `GithubEnterprise` | GHE also needs `Url`; `Baseapi` is derived from it |
+| `Gitlab` | `Organization` is a comma-separated list of group slugs, blank to auto-discover |
+| `BitBucket`, `BitBucketSRV` | Cloud takes `Workspace`; DC takes `Url` + `Protocol` |
+| `Azure`, `AzureServer` | both accept `Project` and `Repos` |
+| `File` | scans `Directory` locally — no credentials, the fastest way to check report plumbing |
+
+Dispatch inside `golc.go` is on the config's `DevOps` field, not the platform key, so
+`AzureServer` (`DevOps: "azure"`) runs the same connector as the hosted service. Its
+defaults are derived from `Azure`'s at init minus `Url`, so **`Url` must be supplied** and
+the two cannot drift apart.
+
+Two things are specific to Azure DevOps Server: `Organization` is the *collection* (the path
+segment before the project, usually `DefaultCollection`), and a non-empty `Users` switches
+the connector to `user:token` basic auth and turns on the NTLM negotiator for
+Windows-authenticated servers. Leave `Users` empty when authenticating with a PAT. NTLM
+authenticates a connection rather than a request, so each request gets its own connection
+pool — if you touch `pkg/devops/getazure/ntlm.go`, verify under concurrent workers, since
+the failure it fixes only appears there (a shared pool lost 2 of 30 repos).
+
+Credentials for existing test orgs live outside the repo — ask the user; e.g.
+`~/golc-env/*.env`, which must be **sourced**, not parsed: some tokens contain characters
+the shell expands, so a regex yields a different string from the one git sees.
+
+**Keep scans small and fast.** `Repos` is a comma-separated include-list — pick the smallest
+repos so cloning takes seconds:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -47,25 +136,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 35 small repos ≈ 35 seconds and exercises the >30 truncation in the global report's
-top-repositories table. `chmod 600 config.json` — it holds a live token. Delete the
-workspace afterwards.
-
-## Configure through the web UI, not a hand-written config.json
-
-The UI applies defaults a hand-written config does not. `golc-launcher.go` ships three exclusion
-presets **on by default** (test / vendor / build folder keywords) plus
-`DEFAULT_FILE_PATTERNS` (`*_test.*`, `*.spec.*`, `*.min.*`, …). A `config.json` copied from
-`config_sample.json` has these empty, so it measures GoLC **with its defaults switched
-off** — and the UI is the channel customers actually use.
-
-This caused a real false finding: a SonarQube comparison concluded "GoLC over-counts
-minified files and test code" and recommended exclusions that already existed and were on.
-The bug was in the harness.
-
-Drive the same path the browser does — `POST /api/run` with `{"Platform":…,"Config":…}`,
-including `FolderKeywords` and `FileNamePatterns` as the page would send them — then poll
-`/api/status` until `running` is false. If a scripted run must write `config.json`
-directly, copy those two lists from `golc-launcher.go` first and say so in the write-up.
+top-repositories table. Delete the workspace afterwards — it holds a token in
+`config.json`.
 
 ## The optional OSS test bed
 
@@ -76,16 +148,17 @@ version-controlled because it embeds their platform identifiers). It replaced a 
 corpus, because generated code does not parse and SonarQube therefore reported 0 ncloc for
 whole languages — noise that reads as catastrophic GoLC defects.
 
-**Azure DevOps Server is populated but cannot be scanned: GoLC has no connector for it**, so
-there is no `config.json` platform key to point at it. The mirrors are there for whenever
-one is written; until then, verify Azure against the hosted service.
-
 | Script | Question |
 |---|---|
 | `mirror.py` | Clone the sources and re-originate them into `build/golc-*` |
 | `publish.py` | Push them to one platform |
+| `platforms.py` | Per-platform adapters, including Azure DevOps Server |
 | `sqscan.py` + `sqcompare.py` | Does GoLC predict SonarQube's `ncloc`? |
 | `baseline.py` | Did any count move since last time? |
+| `teardown.py` | Remove the mirrors — the `golc-` name prefix is its only safety filter |
+
+Its README may still say Azure DevOps Server cannot be scanned because GoLC has no
+connector. That is out of date — `AzureServer` is a supported platform key.
 
 **There is no oracle.** Nobody knows the true line count of real code, so nothing mirrors
 GoLC's logic in Python and nothing has to be kept in step with a scanner change. Use
@@ -96,8 +169,7 @@ Three things worth knowing:
 - **GoLC's default exclusions and a stock SonarQube are far apart.** Measured over 30 real
   repos: GoLC with its UI defaults reported 1.47M lines against SonarQube's 3.63M — a 2.5x
   under-count, entirely from the test/vendor/build folder presets. With exclusions off the
-  two agree to 3.8%. Neither number is wrong; they answer different questions. Say which
-  configuration produced any figure you report.
+  two agree to 3.8%. Neither number is wrong; they answer different questions.
 - **On content SonarQube can parse, GoLC is accurate.** Objective-C, Swift and Terraform
   matched exactly; ABAP, C, C++, Dart, Java, Ruby, Rust, HTML and XML within 1%.
 - **`sonar-scanner` writes a 40 MB+ `.scannerwork/` into the directory it scans.** Force
@@ -112,26 +184,46 @@ SonarScanner for .NET, which builds the project. A mirrored project may also shi
 
 ## Drive the dashboard
 
+Ask the launcher for it, the way the "open results" button does:
+
+```bash
+curl -s -X POST localhost:$PORT/api/open-results   # → {"url":"http://localhost:8090"}
+```
+
+This route is worth preferring: it **kills any previous ResultsAll** before starting a new
+one (the dashboard caches `Results/` at startup, so a survivor would serve the old scan),
+picks a free port starting from `GOLC_RESULTS_PORT` (default 8090), and returns the URL it
+actually bound. It needs the `ResultsAll` binary beside `golc-launcher` or in the cwd —
+otherwise it answers with `"note":"ResultsAll binary not found"` and a URL that serves
+nothing.
+
+By hand, always set an explicit free port:
+
 ```bash
 GOLC_RESULTS_PORT=8087 ./ResultsAll > results.log 2>&1 &   # never the default 8090
 ```
 
-Port 8090 is frequently taken (Docker binds it here), and `handleServerStartup` then
-prompts interactively and fails in a non-TTY. Always set an explicit free port — this
-also makes `TestServerFunctions/handleServerStartup_function` pass locally.
-
-Endpoints worth driving:
+8090 is frequently taken (Docker binds it here), and `handleServerStartup` then prompts
+interactively — which exits 1 in a non-TTY. An explicit port also makes
+`TestServerFunctions/handleServerStartup_function` pass locally.
 
 | Surface | Call |
 |---|---|
 | Page | `curl -s http://localhost:PORT/` |
-| Repo table JSON | `/api/repositories`, `/api/deselected`, `/api/global-info`, `/api/scan-summary` |
-| Reports (generated on demand) | `/reports/global-report.pdf`, `-customized.pdf`, `/reports/repository-summary.{pdf,csv}` |
+| Totals and tables | `/api/global-info`, `/api/repositories`, `/api/languages`, `/api/scan-summary` |
+| What did not get counted | `/api/skipped-repositories`, `/api/deselected` |
+| One repository's detail page | `/repository/<key>` |
+| Reports (generated on demand) | `/reports/{global-report,repository-summary}.pdf`, `/reports/repository-summary.csv`, and a `-customized` variant of each |
 | Everything zipped | `/download` |
 | Change selection | `POST /api/deselected` with `{"Keys":["<org>__<repo>__<branch>"]}`; `{"Keys":[]}` resets |
 
-Deselection keys are the result-file stem: `<org-or-projectkey>__<repo>__<branch>`, with
-`/` in any component replaced by `_`.
+Deselection keys are the result-file stem: `<org-or-projectkey>__<repo>__<branch>`, with `/`
+in any component replaced by `_` — except the `File` platform, whose results carry no org or
+branch, so the key is the bare repo name. `POST` answers with
+`{DeselectedCount, CountedRepositories, TotalLinesOfCode, RawTotalLinesOfCode, Ignored}`,
+and refuses to deselect everything with 422. While nothing is deselected the `-customized`
+routes deliberately serve the full-scan report rather than 404, so **compare bytes, not
+status codes**, when checking that a selection reached the PDF.
 
 ## Screenshots
 
@@ -161,9 +253,9 @@ Instead, proxy the real page and inject a probe, rewriting `/dist/` to absolute 
 the real server so vendor scripts load and the inline script runs normally:
 
 ```python
-body = urllib.request.urlopen("http://localhost:8086/").read().decode()
-body = body.replace('src="/dist/', 'src="http://localhost:8086/dist/')
-body = body.replace('href="/dist/', 'href="http://localhost:8086/dist/')
+body = urllib.request.urlopen("http://localhost:8087/").read().decode()
+body = body.replace('src="/dist/', 'src="http://localhost:8087/dist/')
+body = body.replace('href="/dist/', 'href="http://localhost:8087/dist/')
 body = body.replace('</body>', PROBE + '</body>')   # PROBE dispatches clicks, writes results into <pre id="probe">
 ```
 
@@ -175,7 +267,7 @@ and read the `<pre>` back. Dispatch clicks with
 
 Assert on content, not just file size. Streams are zlib-deflated, and PDF **escapes
 parentheses** — a naive `\((.*?)\)` stops at `\)` and silently truncates labels like
-`Total LOC (filtered)`:
+`JSON (excl.)`:
 
 ```python
 import re, zlib
@@ -189,12 +281,15 @@ text = text.replace('\\(','(').replace('\\)',')')
 
 ## Gotchas
 
-- A stale `ResultsAll` keeps the port and silently serves the **old binary** — a rebuild
-  appears to have no effect. `pkill -f ResultsAll` between runs and confirm the port is
-  free.
+- A stale `ResultsAll` started by hand keeps the port and silently serves the **old
+  binary** — a rebuild appears to have no effect. `pkill -f ResultsAll` between runs and
+  confirm the port is free. Going through `/api/open-results` avoids this.
 - Reports are generated lazily on first request and cached against a stamp covering the
   selection *and* the scan identity. To prove regeneration, delete the artifact and
   request it.
+- `Results/config/` holds the scan's own account of itself — the platform inventory,
+  `analysis_summary.json` (scanned / analyzed / archived / empty / excluded / skipped) and
+  `analysis_skipped.json`. Read it before believing a repository "went missing".
 - `sonar.coverage.exclusions` in `sonar-project.properties` excludes `ResultsAll.go`,
   `golc.go` and `golc-launcher.go` from coverage, so code reachable only from those files
   contributes nothing to the new-code coverage gate. Test report logic in `pkg/utils`.
