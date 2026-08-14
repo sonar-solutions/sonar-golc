@@ -139,6 +139,27 @@ Three presets add sets of folder names in one click:
 > **Test directories** matches SonarQube, which treats a file as test code — and so leaves
 > it out of `ncloc` — when any folder on its path is named `doc`, `docs`, `test`, `tests`,
 > `mock` or `mocks`.
+>
+> **These presets are the aggressive part of GoLC, and they can remove production code.**
+> Measured against SonarQube on five real projects covering 2.0M lines of `ncloc`, they
+> discard 7% of what SonarQube counts. Two keywords do most of it: `integration` removes
+> `src/Integration/` and `src/Integration.Vsix/` from a .NET solution — 25% of that
+> project's `ncloc` — and `mocks` removes shipped mock utilities under `src/api/mocks/`
+> that SonarQube counts as production. Turn a preset off if your repository uses those
+> names for code you ship.
+
+Files are excluded by name too, whether or not you touch the presets:
+
+| Default file name patterns | Excludes |
+|----------------------------|----------|
+| `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*_spec.*`, `*Test.*`, `*Tests.*` | test files, across every language that shares the convention |
+| `*.min.*` | minified bundles |
+| `*.Designer.*`, `*.g.cs`, `*.generated.*`, `*.pb.go`, `*_pb2.py`, `*.pb.cc`, `*.pb.h` | generated code |
+
+> Generated code is excluded by name because GoLC has no build model to ask. A scanner
+> that builds the project — SonarScanner for .NET, Maven or Gradle — is told what a
+> generator produced and leaves it out of `ncloc`; GoLC has to recognise the naming
+> conventions instead. Generated code that follows no convention cannot be detected.
 
 And three fields for anything else:
 

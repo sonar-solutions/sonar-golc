@@ -1782,6 +1782,15 @@ const reposPlaceholders = {
 // 'doc', 'docs' and the singular 'mock' are here to match SonarQube, which classifies a
 // file as a test - and so leaves it out of ncloc - when any directory on its path is
 // named doc, docs, test, tests, mock or mocks.
+//
+// Deliberately NOT extended with the .NET suffixes ('unittests', 'integrationtests', ...)
+// even though folder matching never splits camelCase, so 'Foo.Tests' is caught by 'tests'
+// while 'Foo.UnitTests' is not. Measured over five real projects and 2.0M lines of
+// SonarQube ncloc, adding them made accuracy worse, not better: they discarded 28,598
+// lines SonarQube counts, and on sonarlint-visualstudio a whole-repo scan went from 1.04x
+// SonarQube to 0.78x - trading a 4% over-count for a 22% under-count, which is the more
+// dangerous direction for sizing a licence. This list is already the aggressive part of
+// GoLC; see pkg/analyzer/analyzer_test.go for what it costs today.
 const PRESET_TEST_KEYWORDS   = ['test','tests','spec','specs','e2e','testdata','fixtures','mock','mocks','integration','doc','docs'];
 const PRESET_VENDOR_KEYWORDS = ['vendor','node_modules','bower_components','third_party','external'];
 const PRESET_BUILD_KEYWORDS  = ['dist','build','out','target','bin','coverage'];
@@ -1789,7 +1798,18 @@ const ALL_PRESET_KEYWORDS    = [...PRESET_TEST_KEYWORDS, ...PRESET_VENDOR_KEYWOR
 
 // Default file-name patterns. Wildcards on both sides make one pattern span every
 // language that shares the convention (e.g. *_test.* = Go/Python/Rust/C++/Ruby tests).
-const DEFAULT_FILE_PATTERNS  = ['*_test.*','test_*.*','*.test.*','*.spec.*','*_spec.*','*Test.*','*Tests.*','*.min.*'];
+//
+// The second group is generated code, which every build-integrated scanner leaves out of
+// ncloc because the build model tells it what a generator produced. GoLC has no build
+// model, so it has to recognise the naming conventions instead: *.Designer.* (WinForms
+// and resx designers), *.g.cs (XAML), *.generated.* , and the protobuf outputs. Only
+// files a generator writes carry these names, so there is nothing to weigh against.
+//
+// Generated code with no naming convention stays uncatchable - SonarQube's own
+// sonar-ws module holds 13,796 lines of protobuf-generated Java under ordinary names
+// like CheckPatRequest.java, and no pattern can find those.
+const DEFAULT_FILE_PATTERNS  = ['*_test.*','test_*.*','*.test.*','*.spec.*','*_spec.*','*Test.*','*Tests.*','*.min.*',
+                                '*.Designer.*','*.g.cs','*.generated.*','*.pb.go','*_pb2.py','*.pb.cc','*.pb.h'];
 
 function syncPresetKeywords() {
   const excludeTests  = document.getElementById('adv-excludeTests').checked;
