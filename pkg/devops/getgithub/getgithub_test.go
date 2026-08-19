@@ -799,7 +799,11 @@ func TestUtilityFunctions(t *testing.T) {
 	})
 }
 
-// TestInitializeGithubClient tests GitHub client initialization
+// TestInitializeGithubClient tests GitHub client initialization, including the
+// BaseURL each of the GitHub variants ends up with — not just that a client
+// was returned. This is the behavior that distinguishes classic GitHub
+// Enterprise Server (gets "/api/v3/" appended) from GitHub Enterprise Cloud
+// with data residency (bare "api.<subdomain>.ghe.com" host, no "/api/v3/").
 func TestInitializeGithubClient(t *testing.T) {
 	t.Run("GitHub Cloud client", func(t *testing.T) {
 		platformConfig := map[string]interface{}{
@@ -812,11 +816,14 @@ func TestInitializeGithubClient(t *testing.T) {
 			t.Error("initializeGithubClient should return non-nil context")
 		}
 		if client == nil {
-			t.Error("initializeGithubClient should return non-nil client")
+			t.Fatal("initializeGithubClient should return non-nil client")
+		}
+		if got := client.BaseURL.String(); got != "https://api.github.com/" {
+			t.Errorf("BaseURL = %q, want %q", got, "https://api.github.com/")
 		}
 	})
 
-	t.Run("GitHub Enterprise client", func(t *testing.T) {
+	t.Run("GitHub Enterprise Server client gets /api/v3/ appended", func(t *testing.T) {
 		platformConfig := map[string]interface{}{
 			"AccessToken": testToken,
 			"Url":         "https://github.enterprise.com/",
@@ -827,11 +834,15 @@ func TestInitializeGithubClient(t *testing.T) {
 			t.Error("initializeGithubClient should return non-nil context for enterprise")
 		}
 		if client == nil {
-			t.Error("initializeGithubClient should return non-nil client for enterprise")
+			t.Fatal("initializeGithubClient should return non-nil client for enterprise")
+		}
+		want := "https://github.enterprise.com/api/v3/"
+		if got := client.BaseURL.String(); got != want {
+			t.Errorf("BaseURL = %q, want %q", got, want)
 		}
 	})
 
-	t.Run("GitHub Enterprise with api/v3 in URL", func(t *testing.T) {
+	t.Run("GitHub Enterprise with api/v3 already in URL is not duplicated", func(t *testing.T) {
 		platformConfig := map[string]interface{}{
 			"AccessToken": testToken,
 			"Url":         "https://github.enterprise.com/api/v3/",
@@ -842,7 +853,48 @@ func TestInitializeGithubClient(t *testing.T) {
 			t.Error("initializeGithubClient should return non-nil context")
 		}
 		if client == nil {
-			t.Error("initializeGithubClient should return non-nil client")
+			t.Fatal("initializeGithubClient should return non-nil client")
+		}
+		want := "https://github.enterprise.com/api/v3/"
+		if got := client.BaseURL.String(); got != want {
+			t.Errorf("BaseURL = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("GHE.com data residency host keeps a bare API path", func(t *testing.T) {
+		platformConfig := map[string]interface{}{
+			"AccessToken": testToken,
+			"Url":         "https://api.acme.ghe.com/",
+		}
+
+		ctx, client := initializeGithubClient(platformConfig)
+		if ctx == nil {
+			t.Error("initializeGithubClient should return non-nil context")
+		}
+		if client == nil {
+			t.Fatal("initializeGithubClient should return non-nil client")
+		}
+		// "api.<subdomain>.ghe.com" must NOT get "/api/v3/" appended — that path
+		// only exists on classic GHES. See getgithub.go: initializeGithubClient.
+		want := "https://api.acme.ghe.com/"
+		if got := client.BaseURL.String(); got != want {
+			t.Errorf("BaseURL = %q, want %q (data residency host must stay bare)", got, want)
+		}
+	})
+
+	t.Run("GHE.com data residency host without trailing slash", func(t *testing.T) {
+		platformConfig := map[string]interface{}{
+			"AccessToken": testToken,
+			"Url":         "https://api.acme.ghe.com",
+		}
+
+		_, client := initializeGithubClient(platformConfig)
+		if client == nil {
+			t.Fatal("initializeGithubClient should return non-nil client")
+		}
+		want := "https://api.acme.ghe.com/"
+		if got := client.BaseURL.String(); got != want {
+			t.Errorf("BaseURL = %q, want %q", got, want)
 		}
 	})
 }

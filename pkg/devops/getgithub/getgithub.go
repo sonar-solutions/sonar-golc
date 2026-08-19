@@ -805,22 +805,21 @@ func initializeGithubClient(platformConfig map[string]interface{}) (context.Cont
 
 	// Check if this is GitHub Enterprise Server (not GitHub cloud)
 	if url != "https://api.github.com/" && url != "https://api.github.com" {
-		// GitHub Enterprise Server - construct the proper API URLs
+		// This URL covers two distinct GitHub variants that share the same config
+		// shape: classic GitHub Enterprise Server (self-hosted, API at
+		// "<host>/api/v3/") and GitHub Enterprise Cloud with data residency
+		// (API at the bare host "https://api.<subdomain>.ghe.com/", no "/api/v3"
+		// segment). Deliberately do NOT append "/api/v3/" ourselves here:
+		// go-github's own WithEnterpriseURLs already adds it for a classic GHES
+		// host, but skips it whenever the host starts with "api." (or contains
+		// ".api.") — which is exactly the data-residency shape. Pre-appending it
+		// would defeat that check and send data-residency tenants to a 404.
 		baseURL := url
 		if !strings.HasSuffix(baseURL, "/") {
 			baseURL += "/"
 		}
-		// GitHub Enterprise Server API is typically at /api/v3/
-		// Only add /api/v3/ if it's not already present
-		if !strings.Contains(baseURL, "/api/v3/") && !strings.Contains(baseURL, "/api/v4/") {
-			if strings.HasSuffix(baseURL, "/") {
-				baseURL += "api/v3/"
-			} else {
-				baseURL += "/api/v3/"
-			}
-		}
 
-		// Create client for GitHub Enterprise Server
+		// Create client for GitHub Enterprise Server / GHE.com data residency
 		client, err := github.NewClient(nil).WithAuthToken(accessToken).WithEnterpriseURLs(baseURL, baseURL)
 		if err != nil {
 			loggers := utils.SharedLogger()
