@@ -1524,7 +1524,7 @@ const basicFields = {
   GithubEnterprise: [{id:'Users',label:'Username / Login',ph:'your-login'},
                      {id:'AccessToken',label:'Access Token <small class="text-muted">— Classic PAT: <strong>repo</strong> &nbsp;|&nbsp; Fine-grained: <strong>Contents: Read</strong> &amp; <strong>Metadata: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'},
-                     {id:'Url',label:'Server URL',ph:'https://github.yourcompany.com/',onchange:'syncGHEBaseapi()',detect:'ghe-detect'}],
+                     {id:'Url',label:'Server URL <small class="text-muted">— e.g. github.mycompany.com (self-hosted) or api.mycompany.ghe.com (GHEC data residency)</small>',ph:'https://github.yourcompany.com/',onchange:'syncGHEBaseapi()',detect:'ghe-detect',html:true}],
   Gitlab:           [{id:'Users',label:'Username / Login',ph:'your-gitlab-login'},
                      {id:'AccessToken',label:'Access Token <small class="text-muted">— requires <strong>read_api</strong> &amp; <strong>read_repository</strong> scopes</small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Group URL slug(s) <small class="text-muted">(comma-separated — leave blank to auto-discover all your accessible groups)</small>',ph:'url-slug-1,url-slug-2',html:true},
@@ -1955,7 +1955,7 @@ function syncGHEBaseapi() {
     const hasApiPrefix = /^api\./i.test(host) || /\.api\./i.test(host);
     const isGheComHost = /\.ghe\.com$/i.test(host);
     if (!host) {
-      detectEl.innerHTML = 'e.g. <code>https://github.mycompany.com</code> (self-hosted) or <code>https://api.mycompany.ghe.com</code> (GHEC data residency)';
+      detectEl.innerHTML = '';
     } else if (hasApiPrefix && isGheComHost) {
       detectEl.innerHTML = '<i class="fas fa-circle-check text-success me-1"></i>Detected: <strong>GitHub Enterprise Cloud</strong> (data residency)';
     } else if (isGheComHost) {
