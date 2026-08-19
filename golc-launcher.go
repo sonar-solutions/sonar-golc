@@ -1507,7 +1507,7 @@ const htmlTemplate = `<!DOCTYPE html>
 <script>
 const platforms = {
   Github:           { icon:'fab fa-github',     label:'GitHub.com',        sub:'Cloud' },
-  GithubEnterprise: { icon:'fab fa-github',     label:'GitHub Enterprise', sub:'Server · Cloud (data residency)' },
+  GithubEnterprise: { icon:'fab fa-github',     label:'GitHub Enterprise', sub:'On-premises or GHE.com' },
   Gitlab:           { icon:'fab fa-gitlab',     label:'GitLab',            sub:'Cloud & On-premises' },
   BitBucket:        { icon:'fab fa-bitbucket',  label:'Bitbucket Cloud',   sub:'Cloud' },
   BitBucketSRV:     { icon:'fab fa-bitbucket',  label:'Bitbucket DC',      sub:'On-premises' },
@@ -1955,7 +1955,7 @@ function syncGHEBaseapi() {
     const hasApiPrefix = /^api\./i.test(host) || /\.api\./i.test(host);
     const isGheComHost = /\.ghe\.com$/i.test(host);
     if (!host) {
-      detectEl.innerHTML = '';
+      detectEl.innerHTML = 'e.g. <code>https://github.mycompany.com</code> (self-hosted) or <code>https://api.mycompany.ghe.com</code> (GHEC data residency)';
     } else if (hasApiPrefix && isGheComHost) {
       detectEl.innerHTML = '<i class="fas fa-circle-check text-success me-1"></i>Detected: <strong>GitHub Enterprise Cloud</strong> (data residency)';
     } else if (isGheComHost) {
