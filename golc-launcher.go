@@ -1927,11 +1927,14 @@ function syncAzureServerProtocol() {
 }
 
 // Derive Baseapi (hostname) and Protocol from the GithubEnterprise Url field,
-// and show the user which GitHub variant that host resolves to. GHE.com data
-// residency tenants get a dedicated "<subdomain>.ghe.com" host and talk to a
-// bare "https://api.<subdomain>.ghe.com" API (no "/api/v3" segment) — the same
-// shape golc's own client now applies (see initializeGithubClient); everything
-// else is treated as a classic GitHub Enterprise Server host ("<host>/api/v3/").
+// and show the user which GitHub variant that host resolves to. This mirrors
+// go-github's WithEnterpriseURLs exactly (see initializeGithubClient): it only
+// skips appending "/api/v3/" when the host starts with "api." or contains
+// ".api." — GHE.com data residency tenants are reachable at such a bare
+// "https://api.<subdomain>.ghe.com" host. A ".ghe.com" host missing that
+// "api." prefix does NOT get the bare shape — go-github still appends
+// "/api/v3/" to it, which 404s against a real data-residency tenant — so that
+// case is flagged instead of misreported as a working "data residency" host.
 function syncGHEBaseapi() {
   const urlEl = document.getElementById('f-Url');
   if (!urlEl) return;
@@ -1949,10 +1952,14 @@ function syncGHEBaseapi() {
 
   const detectEl = document.getElementById('ghe-detect');
   if (detectEl) {
+    const hasApiPrefix = /^api\./i.test(host) || /\.api\./i.test(host);
+    const isGheComHost = /\.ghe\.com$/i.test(host);
     if (!host) {
       detectEl.innerHTML = '';
-    } else if (/\.ghe\.com$/i.test(host)) {
+    } else if (hasApiPrefix && isGheComHost) {
       detectEl.innerHTML = '<i class="fas fa-circle-check text-success me-1"></i>Detected: <strong>GitHub Enterprise Cloud</strong> (data residency)';
+    } else if (isGheComHost) {
+      detectEl.innerHTML = '<i class="fas fa-triangle-exclamation text-warning me-1"></i>This looks like a data-residency host, but is missing the required <strong>api.</strong> prefix — try <code>https://api.' + host + '/</code>';
     } else {
       detectEl.innerHTML = '<i class="fas fa-circle-check text-success me-1"></i>Detected: <strong>GitHub Enterprise Server</strong>';
     }
