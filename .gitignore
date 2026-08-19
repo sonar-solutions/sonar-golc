@@ -27,6 +27,12 @@ temp.json
 .DS_Store
 Thumbs.db
 
+# Local agent settings
+.claude/settings.local.json
+
+# Local test/dist workspace
+dist-local/
+
 # IDE files
 .vscode/
 .idea/
@@ -35,6 +41,8 @@ Thumbs.db
 
 # Config files
 config.json
+create_release.sh
+CLAUDE.md
 
 # Coverage files
 coverage.*
