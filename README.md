@@ -10,7 +10,7 @@
 
 It connects to your DevOps platform, counts one branch per repository, and presents the results in an interactive web dashboard with PDF, JSON, and CSV exports.
 
-**Supported platforms:** GitHub.com · GitHub Enterprise Server · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Azure DevOps Server · Local files/directories
+**Supported platforms:** GitHub.com · GitHub Enterprise Server · GitHub Enterprise Cloud (including data residency) · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Azure DevOps Server · Local files/directories
 
 > Current version: **v2.1**
 
@@ -71,6 +71,13 @@ Credentials are entered in the browser and saved automatically — no config fil
 | Bitbucket Data Center | Repo read, pull |
 | Azure DevOps | Code: Read · Project and Team: Read |
 | Azure DevOps Server | Code: Read · Project and Team: Read |
+
+#### GitHub Enterprise
+
+The **GitHub Enterprise** card covers both self-hosted GitHub Enterprise Server and
+GitHub Enterprise Cloud with data residency (a dedicated `*.ghe.com` address). Enter
+your server's URL in the **Server URL** field — GoLC detects which variant it is
+from the address and shows the result right under the field.
 
 #### Azure DevOps Server
 

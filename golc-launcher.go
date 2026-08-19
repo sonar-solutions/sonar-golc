@@ -1240,7 +1240,7 @@ const htmlTemplate = `<!DOCTYPE html>
       </div>
       <div class="platform-card" data-platform="GithubEnterprise">
         <div class="icon"><i class="fab fa-github"></i></div>
-        <div class="name">GitHub Enterprise<br><small style="color:#64748b;font-weight:400;">On-premises</small></div>
+        <div class="name">GitHub Enterprise<br><small style="color:#64748b;font-weight:400;">On-premises or GHE.com</small></div>
       </div>
       <div class="platform-card" data-platform="Gitlab">
         <div class="icon"><i class="fab fa-gitlab"></i></div>
@@ -1507,7 +1507,7 @@ const htmlTemplate = `<!DOCTYPE html>
 <script>
 const platforms = {
   Github:           { icon:'fab fa-github',     label:'GitHub.com',        sub:'Cloud' },
-  GithubEnterprise: { icon:'fab fa-github',     label:'GitHub Enterprise', sub:'On-premises' },
+  GithubEnterprise: { icon:'fab fa-github',     label:'GitHub Enterprise', sub:'On-premises or GHE.com' },
   Gitlab:           { icon:'fab fa-gitlab',     label:'GitLab',            sub:'Cloud & On-premises' },
   BitBucket:        { icon:'fab fa-bitbucket',  label:'Bitbucket Cloud',   sub:'Cloud' },
   BitBucketSRV:     { icon:'fab fa-bitbucket',  label:'Bitbucket DC',      sub:'On-premises' },
@@ -1524,7 +1524,7 @@ const basicFields = {
   GithubEnterprise: [{id:'Users',label:'Username / Login',ph:'your-login'},
                      {id:'AccessToken',label:'Access Token <small class="text-muted">— Classic PAT: <strong>repo</strong> &nbsp;|&nbsp; Fine-grained: <strong>Contents: Read</strong> &amp; <strong>Metadata: Read</strong></small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Organization',ph:'your-org'},
-                     {id:'Url',label:'Server URL',ph:'https://github.yourcompany.com/',onchange:'syncGHEBaseapi()'}],
+                     {id:'Url',label:'Server URL <small class="text-muted">— e.g. github.mycompany.com (self-hosted) or api.mycompany.ghe.com (GHEC data residency)</small>',ph:'https://github.yourcompany.com/',onchange:'syncGHEBaseapi()',detect:'ghe-detect',html:true}],
   Gitlab:           [{id:'Users',label:'Username / Login',ph:'your-gitlab-login'},
                      {id:'AccessToken',label:'Access Token <small class="text-muted">— requires <strong>read_api</strong> &amp; <strong>read_repository</strong> scopes</small>',ph:TOKEN_PH,secret:true,html:true},
                      {id:'Organization',label:'Group URL slug(s) <small class="text-muted">(comma-separated — leave blank to auto-discover all your accessible groups)</small>',ph:'url-slug-1,url-slug-2',html:true},
@@ -1660,6 +1660,13 @@ function buildBasicFields(key, saved) {
     if (f.html) label.innerHTML = f.label; else label.textContent = f.label;
     col.appendChild(label);
     col.appendChild(input);
+    if (f.detect) {
+      const detectEl = document.createElement('div');
+      detectEl.id = f.detect;
+      detectEl.className = 'form-text mt-1';
+      detectEl.style.display = 'none';
+      col.appendChild(detectEl);
+    }
     row.appendChild(col);
   });
   container.appendChild(row);
@@ -1667,6 +1674,11 @@ function buildBasicFields(key, saved) {
   // File mode: append multi-directory widget after the standard fields
   if (key === 'File') {
     buildFileDirectories(saved);
+  }
+  // GitHub Enterprise: show the live "which GitHub variant did you type" badge
+  // right away for a pre-filled/saved Url, not just after the next keystroke.
+  if (key === 'GithubEnterprise') {
+    syncGHEBaseapi();
   }
 }
 
@@ -1915,7 +1927,15 @@ function syncAzureServerProtocol() {
   el.value = m ? m[1].toLowerCase() : 'https';
 }
 
-// Derive Baseapi (hostname) and Protocol from the GithubEnterprise Url field.
+// Derive Baseapi (hostname) and Protocol from the GithubEnterprise Url field,
+// and show the user which GitHub variant that host resolves to. This mirrors
+// go-github's WithEnterpriseURLs exactly (see initializeGithubClient): it only
+// skips appending "/api/v3/" when the host starts with "api." or contains
+// ".api." — GHE.com data residency tenants are reachable at such a bare
+// "https://api.<subdomain>.ghe.com" host. A ".ghe.com" host missing that
+// "api." prefix does NOT get the bare shape — go-github still appends
+// "/api/v3/" to it, which 404s against a real data-residency tenant — so that
+// case is flagged instead of misreported as a working "data residency" host.
 function syncGHEBaseapi() {
   const urlEl = document.getElementById('f-Url');
   if (!urlEl) return;
@@ -1930,6 +1950,22 @@ function syncGHEBaseapi() {
   };
   setHidden('f-Baseapi', host);
   setHidden('f-Protocol', protocol);
+
+  const detectEl = document.getElementById('ghe-detect');
+  if (detectEl) {
+    const hasApiPrefix = /^api\./i.test(host) || /\.api\./i.test(host);
+    const isGheComHost = /\.ghe\.com$/i.test(host);
+    if (!host) {
+      detectEl.innerHTML = '';
+    } else if (hasApiPrefix && isGheComHost) {
+      detectEl.innerHTML = '<i class="fas fa-circle-check text-success me-1"></i>Detected: <strong>GitHub Enterprise Cloud</strong> (data residency)';
+    } else if (isGheComHost) {
+      detectEl.innerHTML = '<i class="fas fa-triangle-exclamation text-warning me-1"></i>This looks like a data-residency host, but is missing the required <strong>api.</strong> prefix — try <code>https://api.' + host + '/</code>';
+    } else {
+      detectEl.innerHTML = '<i class="fas fa-circle-check text-success me-1"></i>Detected: <strong>GitHub Enterprise Server</strong>';
+    }
+    detectEl.style.display = host ? '' : 'none';
+  }
 }
 
 function gatherConfig() {
