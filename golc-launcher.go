@@ -1240,7 +1240,7 @@ const htmlTemplate = `<!DOCTYPE html>
       </div>
       <div class="platform-card" data-platform="GithubEnterprise">
         <div class="icon"><i class="fab fa-github"></i></div>
-        <div class="name">GitHub Enterprise<br><small style="color:#64748b;font-weight:400;">On-premises</small></div>
+        <div class="name">GitHub Enterprise<br><small style="color:#64748b;font-weight:400;">On-premises or GHE.com</small></div>
       </div>
       <div class="platform-card" data-platform="Gitlab">
         <div class="icon"><i class="fab fa-gitlab"></i></div>
