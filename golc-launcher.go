@@ -1664,6 +1664,7 @@ function buildBasicFields(key, saved) {
       const detectEl = document.createElement('div');
       detectEl.id = f.detect;
       detectEl.className = 'form-text mt-1';
+      detectEl.style.display = 'none';
       col.appendChild(detectEl);
     }
     row.appendChild(col);
@@ -1963,6 +1964,7 @@ function syncGHEBaseapi() {
     } else {
       detectEl.innerHTML = '<i class="fas fa-circle-check text-success me-1"></i>Detected: <strong>GitHub Enterprise Server</strong>';
     }
+    detectEl.style.display = host ? '' : 'none';
   }
 }
 
