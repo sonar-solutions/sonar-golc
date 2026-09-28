@@ -940,6 +940,9 @@ func loadApplicationData() (PageData, error) {
 	countedByLanguage := utils.CountedByLanguage(repoTotals)
 	excludedIn := make(map[string]int)
 	repoExclusions := excluded.RepoExclusions()
+	// The selection as it applies to the repositories still counted: what the note, the
+	// summary line and the reports label describe.
+	counted := excluded.WithoutRepos(deselectedSet)
 	for _, rt := range repoTotals {
 		for _, lang := range repoExclusions[rt.Key] {
 			excludedIn[lang]++
@@ -1058,17 +1061,17 @@ func loadApplicationData() (PageData, error) {
 		Repositories:    repositoryData,
 		SkippedRepos:    skippedRepos,
 		ScanSummary:     scanSummary,
-		NoteLOCExcluded: excluded.Note(),
+		NoteLOCExcluded: counted.Note(),
 		Platform:        detectedPlatform,
 
 		ExcludedLanguages:          excludedPresent,
 		ExcludedLanguagesIsDefault: excluded.GlobalIsDefault(),
-		ReposWithOwnExclusions:     len(repoExclusions),
+		ReposWithOwnExclusions:     len(counted.RepoExclusions()),
 		RepoExcludedCodeLines:      utils.FormatCodeLines(float64(repoExcludedCodeLines)),
 		ExcludedLanguagesCodeLines: utils.FormatCodeLines(float64(excludedCodeLines)),
 		DefaultExcludedLanguages:   utils.DefaultLanguageExclusion().Languages(),
 		SelectionActive:            len(deselected) > 0 || !excluded.IsDefault(),
-		SelectionLabel:             selectionLabel(len(deselected), excluded, excludedPresent),
+		SelectionLabel:             selectionLabel(len(deselected), counted, excludedPresent),
 
 		TableRows:           tableRows,
 		Deselected:          deselected,
@@ -1390,6 +1393,11 @@ func generateReports(v reportVariant, deselected []utils.DeselectedRepo, exclude
 		// The original report: every repository, counted under the default languages.
 		applied = nil
 		excluded = utils.DefaultLanguageExclusion()
+	} else {
+		// Deselected repositories count nothing, so their own exclusions stay out of the
+		// report - its footer note would otherwise count repositories its per-repository
+		// section, which lists counted ones, does not show.
+		excluded = excluded.WithoutRepos(utils.DeselectionKeys(applied))
 	}
 
 	if err := utils.CreateGlobalReportWith(resultsBaseDir, utils.GlobalReportOptions{
@@ -1922,6 +1930,10 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		}
 		isDeselected := utils.LoadDeselectionSet(resultsBaseDir).Contains(req.Key)
 		switch {
+		case *req.Counted && isDeselected && !repo.CountsCode(lang):
+			return nil, errRepoLanguageRequest{fmt.Sprintf(
+				"%s has no code lines in %s, so counting it alone would count nothing — switch on another language",
+				lang, repo.Repository)}
 		case *req.Counted && isDeselected:
 			// A deselected repository shows every language off, so switching one on
 			// brings it back counting that language alone.
@@ -1944,9 +1956,11 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		// its row already shows every language off, and its checkbox brings it back as it
 		// was, last language included. A repository already deselected is out of the
 		// totals, so there is nothing to ask.
+		// Only languages with code lines count: one holding none would pass as "still
+		// counted" while the repository counts nothing.
 		counted := 0
 		for _, l := range repo.Languages {
-			if !current.ExcludesEverywhere(l) && !own[l] {
+			if repo.CountsCode(l) && !current.ExcludesEverywhere(l) && !own[l] {
 				counted++
 			}
 		}
@@ -2043,7 +2057,7 @@ func clearExclusionsOfEmptyReselected(all []RepositoryData, stillDeselected map[
 		scoped := excluded.ForRepo(repo.Key)
 		countsSomething := false
 		for _, lang := range repo.Languages {
-			if !scoped.Excludes(lang) {
+			if repo.CountsCode(lang) && !scoped.Excludes(lang) {
 				countsSomething = true
 				break
 			}
@@ -3275,7 +3289,7 @@ const htmlTemplate = `
                 if (!res.ok) throw new Error((await res.text()) || 'Could not apply the selection.');
                 // Reload so the page, the chart, the language breakdown and the download
                 // links all come from the new selection; the row order is kept.
-                window.location.reload();
+                reloadKeepingRows();
             } catch (err) {
                 revert();
                 setSelectionControlsDisabled(false);
@@ -3313,7 +3327,7 @@ const htmlTemplate = `
             try {
                 const res = await fetch('/api/reset-selection', {method: 'POST'});
                 if (!res.ok) throw new Error((await res.text()) || res.statusText);
-                window.location.reload();
+                reloadKeepingRows();
             } catch (err) {
                 setSelectionControlsDisabled(false);
                 showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> ' +
@@ -3350,7 +3364,7 @@ const htmlTemplate = `
                     body: JSON.stringify({Languages: excluded})
                 });
                 if (!res.ok) throw new Error((await res.text()) || res.statusText);
-                window.location.reload();
+                reloadKeepingRows();
             } catch (err) {
                 if (onFailure) onFailure();
                 setLanguageTogglesDisabled(false);
@@ -3437,9 +3451,10 @@ const htmlTemplate = `
             }
         }
         
-        // Initialize sorting state on page load
+        // Initialize sorting state on page load. The inline script has already restored any
+        // saved sort by then, so this shows the one applied rather than the default.
         document.addEventListener('DOMContentLoaded', function() {
-            updateSortingIcons('codelines', 'desc');
+            updateSortingIcons(currentSort.column, currentSort.direction);
         });
         
         // direction is given when restoring a saved sort; a header click leaves it out
@@ -3521,21 +3536,27 @@ const htmlTemplate = `
             });
         }
 
-        // The row order is saved with the page and sort. Every change on this page reloads
-        // it, and the server ranks repositories by their recounted Code Lines - so without
-        // the saved order, switching a language off would move its repository down the
-        // table, away from where the user was looking.
-        function saveTableState() {
+        // The page and sort are saved on every change of either. The row order is saved
+        // only by reloadKeepingRows, just before a change made on this page reloads it: the
+        // server ranks repositories by their recounted Code Lines, so without it switching a
+        // language off would move its repository down the table, away from where the user
+        // was looking. It is used once - any other load, a refresh or a new scan, gets the
+        // server's ranking again.
+        function saveTableState(keepOrder) {
             try {
-                sessionStorage.setItem(TABLE_STATE_KEY, JSON.stringify({
-                    page: currentPage, column: currentSort.column, direction: currentSort.direction,
-                    order: repositoryRows().map(row => row.dataset.key)
-                }));
+                const state = {page: currentPage, column: currentSort.column, direction: currentSort.direction};
+                if (keepOrder) state.order = repositoryRows().map(row => row.dataset.key);
+                sessionStorage.setItem(TABLE_STATE_KEY, JSON.stringify(state));
             } catch (e) { /* storage unavailable: the page still works, it just forgets */ }
         }
 
-        // Restores a saved row order, but only for exactly the same repositories - a new
-        // scan, or a different result set in the same tab, gets the server's ranking.
+        function reloadKeepingRows() {
+            saveTableState(true);
+            window.location.reload();
+        }
+
+        // Restores a saved row order, but only for exactly the same repositories - a
+        // different result set in the same tab gets the server's ranking.
         function restoreRowOrder(order) {
             const rows = repositoryRows();
             if (!Array.isArray(order) || order.length !== rows.length) return false;
@@ -3662,7 +3683,7 @@ const htmlTemplate = `
                     res = await postRepoLanguage(Object.assign({}, change, {Deselect: true}));
                 }
                 if (!res.ok) throw new Error((await res.text()) || res.statusText);
-                window.location.reload();
+                reloadKeepingRows();
             } catch (err) {
                 if (onFailure) onFailure();
                 repoLanguageToggles.forEach(box => { box.disabled = box.hasAttribute('data-locked'); });
@@ -3886,13 +3907,13 @@ const repositoryDetailTemplate = `
                         </tr>
                       </thead>
                       <tbody>
-                        {{$repo := .Repository}}{{$key := .RepoKey}}
+                        {{$repo := .Repository}}{{$key := .RepoKey}}{{$deselected := .Deselected}}
                         {{range .Languages}}
                         <tr{{if .Excluded}} class="text-muted"{{end}}>
                           <td>
                             {{/* A language excluded for every repository is switched in the
                                  results page's Languages card, so its switch here is locked. */}}
-                            <div class="form-check form-switch m-0" title="{{if .Everywhere}}Excluded for all repositories — switch it on in the Languages card on the results page{{else if .Excluded}}Excluded from {{$repo}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$repo}}'s total{{end}}">
+                            <div class="form-check form-switch m-0" title="{{if .Everywhere}}Excluded for all repositories — switch it on in the Languages card on the results page{{else if $deselected}}Switch on to count {{.Language}} and select {{$repo}} again{{else if .Excluded}}Excluded from {{$repo}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$repo}}'s total{{end}}">
                               <input class="form-check-input detail-lang-toggle" type="checkbox" role="switch" data-key="{{$key}}" value="{{.Language}}"
                                      aria-label="Count {{.Language}} in {{$repo}}"{{if not .Excluded}} checked{{end}}{{if .Everywhere}} disabled{{end}}>
                             </div>

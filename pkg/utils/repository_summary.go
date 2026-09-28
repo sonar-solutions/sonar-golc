@@ -118,12 +118,20 @@ type RepositoryData struct {
 	// LanguageChips are the languages its row on the results page offers a switch for -
 	// see RankLanguageChips. Page-only, so not written to the reports.
 	LanguageChips []LanguageShare `json:"-"`
-	// Languages names every language the repository has, sorted. Page-only.
-	Languages []string `json:"-"`
+	// Languages names every language the repository has, sorted, and LanguageLines holds
+	// each one's code lines - some have none, e.g. files holding only comments. Page-only.
+	Languages     []string       `json:"-"`
+	LanguageLines map[string]int `json:"-"`
 	// Deselected marks a row excluded from the totals. Set only on the results page's
 	// table view, where counted and deselected rows are interleaved so a deselected
 	// repository keeps its ranked position.
 	Deselected bool `json:"Deselected,omitempty"`
+}
+
+// CountsCode reports whether a language contributes code lines to the repository. A
+// language with none cannot keep a repository counting anything, whatever its switch says.
+func (r RepositoryData) CountsCode(language string) bool {
+	return r.LanguageLines[language] > 0
 }
 
 // PrimaryLanguage returns the repository's largest language, or "" when unknown.

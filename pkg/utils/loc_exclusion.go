@@ -108,6 +108,20 @@ func (e LanguageExclusion) WithRepoExclusions(byRepo map[string][]string) Langua
 	return e
 }
 
+// WithoutRepos returns the selection without the given repositories' own exclusions.
+// Deselected repositories count nothing, so what they would exclude describes nothing
+// either: a note or a count that includes them would disagree with the section of a
+// report listing the repositories it actually counts.
+func (e LanguageExclusion) WithoutRepos(keys DeselectionSet) LanguageExclusion {
+	byRepo := e.RepoExclusions()
+	for key := range byRepo {
+		if keys.Contains(key) {
+			delete(byRepo, key)
+		}
+	}
+	return e.WithRepoExclusions(byRepo)
+}
+
 // RepoExclusions returns each repository's own exclusions, languages sorted.
 func (e LanguageExclusion) RepoExclusions() map[string][]string {
 	out := make(map[string][]string, len(e.perRepo))

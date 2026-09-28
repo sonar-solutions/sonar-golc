@@ -934,13 +934,6 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 	pdf.SetTextColor(0, 0, 0)
 }
 
-// renderDeselectedReposSection appends a "Deselected Repositories" section listing
-// the repositories the user removed from the totals on the results page, together
-// with the unfiltered total for comparison. It renders nothing when the selection is
-// untouched, so an ordinary report is unchanged.
-//
-// This section is what keeps a filtered PDF honest: a reader must be able to see
-// that the headline LOC is not the whole scan, and what the whole scan came to.
 // renderRepoLanguageExclusionsSection lists the languages individual repositories exclude
 // of their own, so a selection report states every line it leaves out - not only the
 // globally excluded languages its footer names. Deselected repositories are left out:
@@ -1009,6 +1002,13 @@ func renderRepoLanguageExclusionsSection(pdf *gofpdf.Fpdf, tr func(string) strin
 	}
 }
 
+// renderDeselectedReposSection appends a "Deselected Repositories" section listing
+// the repositories the user removed from the totals on the results page, together
+// with the unfiltered total for comparison. It renders nothing when the selection is
+// untouched, so an ordinary report is unchanged.
+//
+// This section is what keeps a filtered PDF honest: a reader must be able to see
+// that the headline LOC is not the whole scan, and what the whole scan came to.
 func renderDeselectedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, deselected []DeselectedRepo, rawTotalLOC string, marginL, contentW float64) {
 	if len(deselected) == 0 {
 		return

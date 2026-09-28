@@ -304,9 +304,9 @@ func TestRepositoryRowRendersLanguageChips(t *testing.T) {
 		`id="btnResetRepoLanguages"`,
 		`excl. in 1`,
 		`1 repository excludes languages of its own`,
-		// The row order is saved and restored across the reload a switch triggers, so a
-		// repository whose Code Lines just dropped does not move down the table.
-		`order: repositoryRows().map(row => row.dataset.key)`,
+		// The row order is saved just before the reload a change triggers, and restored
+		// once, so a repository whose Code Lines just dropped does not move down the table.
+		`if (keepOrder) state.order = repositoryRows().map(row => row.dataset.key);`,
 		`restoreRowOrder(savedTable.order)`,
 	} {
 		if !strings.Contains(out, want) {
@@ -603,5 +603,113 @@ func TestLanguagesCardShowsCountedLines(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered card missing %q", want)
 		}
+	}
+}
+
+func TestRowOrderIsKeptForOneReloadOnly(t *testing.T) {
+	setupLanguageFixture(t)
+	// html/template strips script comments, so this reads the rendered script as served.
+	out := renderTemplate(t, snapshot())
+
+	// Every reload the page itself triggers keeps the rows, through one function.
+	if n := strings.Count(out, "window.location.reload();"); n != 1 {
+		t.Errorf("found %d direct reloads, want only the one inside reloadKeepingRows", n)
+	}
+	if n := strings.Count(out, "reloadKeepingRows();"); n != 4 {
+		t.Errorf("reloadKeepingRows is called %d times, want 4 (checkboxes, reset, Languages card, repository switches)", n)
+	}
+	// Only that function saves the order; the save on every page change leaves it out,
+	// so a saved order is used for one load and never freezes the table.
+	if n := strings.Count(out, "saveTableState(true);"); n != 1 {
+		t.Errorf("saveTableState(true) appears %d times, want once, in reloadKeepingRows", n)
+	}
+	if !strings.Contains(out, "saveTableState();") {
+		t.Error("showPage should still save the page and sort")
+	}
+	// The header icon follows the sort actually applied.
+	if strings.Contains(out, "updateSortingIcons('codelines', 'desc');") ||
+		!strings.Contains(out, "updateSortingIcons(currentSort.column, currentSort.direction);") {
+		t.Error("the load handler should show the applied sort, not reset it to Code Lines")
+	}
+}
+
+func TestDeselectedRepositoriesOwnExclusionsAreNotCounted(t *testing.T) {
+	setupLanguageFixture(t)
+	if _, err := applyRepoLanguageChange(RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)}); err != nil {
+		t.Fatalf(msgApplyRepoLanguage, err)
+	}
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+
+	pd := snapshot()
+	if pd.ReposWithOwnExclusions != 0 {
+		t.Errorf("ReposWithOwnExclusions = %d, want 0: keep is deselected", pd.ReposWithOwnExclusions)
+	}
+	if strings.Contains(pd.NoteLOCExcluded, "also exclude") {
+		t.Errorf("note %q counts a deselected repository", pd.NoteLOCExcluded)
+	}
+	if strings.Contains(pd.SelectionLabel, "own language exclusions") {
+		t.Errorf("reports label %q counts a deselected repository", pd.SelectionLabel)
+	}
+
+	if rec := serveReport(t, reportGlobalCustomized); rec.Code != http.StatusOK {
+		t.Fatalf("selection request failed: %d", rec.Code)
+	}
+	text := pdfText(t, customizedVariant.globalPDFPath())
+	if strings.Contains(text, "also excludes languages of its own") || strings.Contains(text, "Per-repository Language Exclusions") {
+		t.Error("the selection PDF should not mention a deselected repository's own exclusions")
+	}
+	// They are kept, though: selecting keep again brings them back.
+	if got := utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions()[keyKeep]; strings.Join(got, ",") != "Kubernetes" {
+		t.Errorf("keep's own exclusions = %v, want [Kubernetes] kept", got)
+	}
+}
+
+func TestLanguagesWithoutCodeLinesDoNotKeepARepositoryCounted(t *testing.T) {
+	setupLanguageFixture(t)
+	// keep also has a language whose files hold no code at all.
+	data, _ := json.Marshal(map[string]any{"TotalCodeLines": 1600, "Results": []map[string]any{
+		{"Language": "Go", "CodeLines": 1000}, {"Language": "YAML", "CodeLines": 300},
+		{"Language": "JSON", "CodeLines": 200}, {"Language": "Kubernetes", "CodeLines": 100},
+		{"Language": "Text", "CodeLines": 0},
+	}})
+	if err := os.WriteFile("Results/bylanguage-report/Result_acme__keep__main.json", data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyRepoLanguageChange(RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)}); err != nil {
+		t.Fatalf(msgApplyRepoLanguage, err)
+	}
+	// Go is keep's last language with code: Text must not let it pass unasked.
+	if rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Go", Counted: counted(false)}); rec.Code != http.StatusConflict {
+		t.Errorf("excluding Go: status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	// Nor can Text alone bring a deselected keep back.
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Text", Counted: counted(true)})
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "no code lines") {
+		t.Errorf("switching Text on: status = %d, body %q; want 422", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDetailSwitchesOfADeselectedRepositorySayTheySelectItAgain(t *testing.T) {
+	setupLanguageFixture(t)
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	detail, err := getRepositoryDetailData(repoKeep, branchMain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := parseRepositoryTemplate(t).Execute(&buf, detail); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Switch on to count Go and select keep again") {
+		t.Error("a deselected repository's detail switch should say it selects the repository again")
 	}
 }

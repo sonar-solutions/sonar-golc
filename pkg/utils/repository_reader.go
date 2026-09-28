@@ -231,6 +231,7 @@ func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBran
 	codeLines := report.TotalCodeLines
 	var topLanguages, chips []LanguageShare
 	var languages []string
+	lines := make(map[string]int)
 	if langData, err := os.ReadFile(spec.ByLanguagePath(baseResultsDir, branch)); err == nil {
 		var byLang struct {
 			Results []LanguageShare `json:"Results"`
@@ -242,6 +243,7 @@ func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBran
 				}
 				if r.Language != "" {
 					languages = append(languages, r.Language)
+					lines[r.Language] += r.CodeLines
 				}
 			}
 			sort.Strings(languages)
@@ -274,5 +276,6 @@ func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBran
 		TopLanguages:  topLanguages,
 		LanguageChips: chips,
 		Languages:     languages,
+		LanguageLines: lines,
 	}, true
 }
