@@ -63,7 +63,6 @@ const (
 
 	reportGlobal           = "global-report.pdf"
 	reportGlobalCustomized = "global-report-customized.pdf"
-	reportSummaryPDF       = "repository-summary.pdf"
 	reportSummaryCSV       = "repository-summary.csv"
 
 	msgApplyDeselection = "applyDeselection: %v"
@@ -779,28 +778,36 @@ func TestGlobalPDFTopRepositoriesRespectSelection(t *testing.T) {
 	}
 }
 
-func TestSummaryPDFAndCSVCarryLanguages(t *testing.T) {
+func TestSummaryCSVCarriesLanguagesAndNoSummaryPDFIsOffered(t *testing.T) {
 	setupResultsFixture(t)
 
-	if rec := serveReport(t, reportSummaryPDF); rec.Code != http.StatusOK {
-		t.Fatalf("pdf request failed: %d", rec.Code)
+	// A summary PDF an earlier version left behind is removed as soon as a report is
+	// prepared, even one still current in the cache - so the ZIP cannot hand it on.
+	legacy := filepath.Join(resultsBaseDir, "byfile-report", "pdf-report", "repository_summary.pdf")
+	if err := os.WriteFile(legacy, []byte("%PDF-1.3 legacy"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	pdf := pdfText(t, fullScanVariant.summaryPDFPath())
-	if strings.Contains(pdf, "Main Language") {
-		t.Error("the Main Language column is replaced by a language line under each row")
+	if rec := serveReport(t, reportSummaryCSV); rec.Code != http.StatusOK {
+		t.Fatalf("csv request failed: %d", rec.Code)
 	}
-	// Columns in the results page's order, read in sequence from the table header.
-	header := pdf[strings.Index(pdf, "Branch"):]
-	for _, col := range []string{"Code Lines", "Blank", "Comments", "Lines"} {
-		i := strings.Index(header, col)
-		if i < 0 {
-			t.Errorf("summary PDF columns should read Code Lines, Blank, Comments, Lines; %q is out of place", col)
-			break
+	if rec := serveReport(t, reportSummaryCSV); rec.Code != http.StatusOK { // cached this time
+		t.Fatalf("csv request failed: %d", rec.Code)
+	}
+	if err := os.WriteFile(legacy, []byte("%PDF-1.3 legacy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := serveReport(t, reportSummaryCSV); rec.Code != http.StatusOK {
+		t.Fatalf("csv request failed: %d", rec.Code)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("a legacy summary PDF should be removed even when the reports are cached (err=%v)", err)
+	}
+
+	// The repository summary PDF is gone: its routes answer 404 and nothing writes it.
+	for _, name := range []string{"repository-summary.pdf", "repository-summary-customized.pdf"} {
+		if rec := serveReport(t, name); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", name, rec.Code)
 		}
-		header = header[i+len(col):]
-	}
-	if !strings.Contains(pdf, "Go 1.00K") || !strings.Contains(pdf, "a struck-through one is left out of its Code Lines") {
-		t.Error("summary PDF should list each repository's languages with their lines, and explain the strike-through")
 	}
 
 	if rec := serveReport(t, reportSummaryCSV); rec.Code != http.StatusOK {
@@ -867,7 +874,6 @@ func TestReportsDropdownOffersBothVariantsWhenFiltered(t *testing.T) {
 	for _, want := range []string{
 		"/reports/global-report.pdf",
 		"/reports/global-report-customized.pdf",
-		"/reports/repository-summary-customized.pdf",
 		"/reports/repository-summary-customized.csv",
 		"Full scan",
 		"Current selection",
@@ -875,6 +881,10 @@ func TestReportsDropdownOffersBothVariantsWhenFiltered(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("dropdown missing %q", want)
 		}
+	}
+	if strings.Contains(out, "repository-summary.pdf") || strings.Contains(out, "repository-summary-customized.pdf") ||
+		strings.Contains(out, "Repository Summary PDF") {
+		t.Error("the Reports menu should no longer offer a repository summary PDF")
 	}
 }
 

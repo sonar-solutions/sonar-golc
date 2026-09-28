@@ -102,7 +102,6 @@ func TestRepositorySummaryIntegration(t *testing.T) {
 		expectedFiles := []string{
 			"byfile-report/csv-report/repository_summary.csv",
 			"byfile-report/repository_summary.json",
-			"byfile-report/pdf-report/repository_summary.pdf",
 		}
 
 		for _, file := range expectedFiles {
@@ -299,7 +298,6 @@ func TestGolcMainFlowIntegration(t *testing.T) {
 		reports := []string{
 			"byfile-report/csv-report/repository_summary.csv",
 			"byfile-report/repository_summary.json",
-			"byfile-report/pdf-report/repository_summary.pdf",
 		}
 
 		for _, report := range reports {

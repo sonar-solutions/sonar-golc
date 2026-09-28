@@ -222,7 +222,7 @@ interactively — which exits 1 in a non-TTY. An explicit port also makes
 | Totals and tables | `/api/global-info`, `/api/repositories`, `/api/languages`, `/api/scan-summary` |
 | What did not get counted | `/api/skipped-repositories`, `/api/deselected` |
 | One repository's detail page | `/repository/<key>` |
-| Reports (generated on demand) | `/reports/{global-report,repository-summary}.pdf`, `/reports/repository-summary.csv`, and a `-customized` variant of each |
+| Reports (generated on demand) | `/reports/global-report.pdf`, `/reports/repository-summary.csv`, and a `-customized` variant of each |
 | Everything zipped | `/download` |
 | Change selection | `POST /api/deselected` with `{"Keys":["<org>__<repo>__<branch>"]}`; `{"Keys":[]}` resets |
 

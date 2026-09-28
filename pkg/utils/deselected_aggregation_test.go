@@ -191,9 +191,8 @@ func TestGenerateRepositorySummaryReportsSplitsDeselected(t *testing.T) {
 		t.Errorf("Deselected = %+v, want one entry for drop", summary.Deselected)
 	}
 
-	// The PDF and CSV must exist, since those are the artifacts handed to a customer.
+	// The CSV must exist, since it is the artifact handed to a customer.
 	for _, path := range []string{
-		"Results/byfile-report/pdf-report/repository_summary.pdf",
 		"Results/byfile-report/csv-report/repository_summary.csv",
 	} {
 		if info, err := os.Stat(path); err != nil || info.Size() == 0 {

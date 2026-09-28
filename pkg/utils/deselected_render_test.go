@@ -340,50 +340,6 @@ func TestRepositoryCSVRowPadsMissingLanguages(t *testing.T) {
 		}
 	}
 }
-
-func TestRenderDeselectedTableSkippedWhenNothingDeselected(t *testing.T) {
-	pdf := newSectionPDF(t)
-	tr := pdf.UnicodeTranslatorFromDescriptor("")
-
-	pagesBefore := pdf.PageNo()
-	renderDeselectedTable(pdf, tr, &RepositorySummaryReport{}, "Code Lines", 6, 297, 15)
-
-	// The section starts with AddPage, so an untouched selection must not add one.
-	if pdf.PageNo() != pagesBefore {
-		t.Errorf("page count changed from %d to %d with nothing deselected", pagesBefore, pdf.PageNo())
-	}
-}
-
-func TestRenderDeselectedTablePaginatesLongLists(t *testing.T) {
-	pdf := newSectionPDF(t)
-	tr := pdf.UnicodeTranslatorFromDescriptor("")
-
-	deselected := make([]RepositoryData, 0, 90)
-	for i := 0; i < 90; i++ {
-		deselected = append(deselected, RepositoryData{
-			Number: i + 1, Repository: "repo", Branch: testBranchMain,
-			LinesF: "1", CommentsF: "1", BlankLinesF: "1", CodeLinesF: "1",
-		})
-	}
-	summary := &RepositorySummaryReport{
-		DeselectedRepositories: len(deselected),
-		DeselectedCodeLinesF:   "90",
-		Deselected:             deselected,
-	}
-	renderDeselectedTable(pdf, tr, summary, "Code Lines", 6, 297, 15)
-
-	if pdf.PageNo() < 3 {
-		t.Errorf("90 rows should span several pages, got %d", pdf.PageNo())
-	}
-	text := pdfSectionText(t, pdf)
-	if !strings.Contains(text, "Deselected Repositories (90)") {
-		t.Errorf("heading missing or wrong count: %q", text)
-	}
-	if strings.Count(text, "Repository") < 2 {
-		t.Error("table headers should repeat after a page break")
-	}
-}
-
 func TestWriteLanguageTotalsJSONCreatesMissingDirectory(t *testing.T) {
 	// Variant reports write their language totals into a directory that may not exist yet.
 	base := t.TempDir()
