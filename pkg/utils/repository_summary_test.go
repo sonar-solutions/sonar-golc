@@ -815,7 +815,14 @@ func TestLegacySummaryPDFThatCannotBeRemovedDoesNotStopTheReports(t *testing.T) 
 	if err := GenerateRepositorySummaryReportsWith("Results", SummaryReportOptions{}); err != nil {
 		t.Fatalf("GenerateRepositorySummaryReportsWith: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join("Results", "byfile-report", "csv-report", "repository_summary.csv")); err != nil {
-		t.Errorf("the CSV should still be written: %v", err)
+	// Both are checked on disk: the generator logs a failed report rather than returning
+	// it, so a nil error alone does not show either was written.
+	for name, path := range map[string]string{
+		"CSV":  filepath.Join("Results", "byfile-report", "csv-report", "repository_summary.csv"),
+		"JSON": filepath.Join("Results", "byfile-report", "repository_summary.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("the %s should still be written: %v", name, err)
+		}
 	}
 }

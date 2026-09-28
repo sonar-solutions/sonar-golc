@@ -398,8 +398,9 @@ type SummaryReportOptions struct {
 	OutputDir string
 }
 
-// GenerateRepositorySummaryReports generates CSV, JSON, and PDF reports for all
-// repositories, applying any selection persisted under directory. Kept for existing
+// GenerateRepositorySummaryReports generates the CSV and JSON summary reports for all
+// repositories, applying any selection persisted under directory, and removes a summary
+// PDF an earlier version left there. Kept for existing
 // callers (an analysis run); use GenerateRepositorySummaryReportsWith to control the
 // selection and output location explicitly.
 func GenerateRepositorySummaryReports(directory string) error {
