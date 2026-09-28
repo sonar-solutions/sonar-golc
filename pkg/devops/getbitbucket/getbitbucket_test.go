@@ -206,34 +206,6 @@ func TestLoadExclusionFileOrCreateNew_MissingFile(t *testing.T) {
 	}
 }
 
-func TestGetBitbucketUsername(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/user" {
-			http.NotFound(w, r)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"username": "alice"})
-	}))
-	defer ts.Close()
-
-	got := GetBitbucketUsername("", "token", ts.URL+"/")
-	if got != "alice" {
-		t.Errorf("expected alice, got %q", got)
-	}
-}
-
-func TestGetBitbucketUsername_Unauthorized(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-	}))
-	defer ts.Close()
-
-	got := GetBitbucketUsername("", "bad-token", ts.URL+"/")
-	if got != "" {
-		t.Errorf("expected empty username for 401, got %q", got)
-	}
-}
-
 func TestGetAllProjectsWithAuth(t *testing.T) {
 	response := map[string]interface{}{
 		"values":  []Projectc{{Key: "P1", Name: "Project 1"}, {Key: "P2", Name: "Project 2"}},

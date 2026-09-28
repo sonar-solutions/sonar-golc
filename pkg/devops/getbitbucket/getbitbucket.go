@@ -1,7 +1,6 @@
 package getbibucket
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -71,7 +70,6 @@ type ParamsProjectBitbucket struct {
 	APIVersion       string
 	AccessToken      string
 	Users            string
-	Username         string // Bitbucket username for git operations (different from email)
 	BitbucketURLBase string
 	Organization     string
 	Exclusionlist    *utils.ExclusionList
@@ -288,49 +286,6 @@ func getAuthHeader(users, accessToken string) string {
 	return "Bearer " + accessToken
 }
 
-// GetBitbucketUsername fetches the Bitbucket username from the API
-// This is needed for git operations, as they require username:token format
-// Returns the username, or empty string if unable to fetch
-func GetBitbucketUsername(users, accessToken, bitbucketURLBase string) string {
-	url := fmt.Sprintf("%suser", bitbucketURLBase)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := utils.HTTPClient.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return ""
-	}
-
-	var userResponse struct {
-		Username string `json:"username"`
-	}
-
-	err = json.Unmarshal(body, &userResponse)
-	if err != nil {
-		return ""
-	}
-
-	return userResponse.Username
-}
-
 func GetSize(parms ParamsProjectBitbucket, repo *bitbucket.Repository) (int, error) {
 
 	url := fmt.Sprintf("%srepositories/%s/%s/?fields=size", parms.BitbucketURLBase, parms.Workspace, repo.Slug)
@@ -373,15 +328,6 @@ func getCommonParams(client *bitbucket.Client, platformConfig map[string]interfa
 		users = usersVal.(string)
 	}
 
-	// Fetch Bitbucket username for git operations
-	// For git clone, we need the username (not email), which may differ from workspace
-	accessToken := platformConfig["AccessToken"].(string)
-	username := GetBitbucketUsername(users, accessToken, bitbucketURLBase)
-	// Fallback to workspace if username fetch fails (workspace is often the same as username)
-	if username == "" {
-		username = platformConfig["Workspace"].(string)
-	}
-
 	return ParamsProjectBitbucket{
 		Client:           client,
 		Projects:         project,
@@ -389,9 +335,8 @@ func getCommonParams(client *bitbucket.Client, platformConfig map[string]interfa
 		URL:              platformConfig["Url"].(string),
 		BaseAPI:          platformConfig["Baseapi"].(string),
 		APIVersion:       platformConfig["Apiver"].(string),
-		AccessToken:      accessToken,
+		AccessToken:      platformConfig["AccessToken"].(string),
 		Users:            users,
-		Username:         username,
 		BitbucketURLBase: bitbucketURLBase,
 		Organization:     platformConfig["Organization"].(string),
 		Exclusionlist:    exclusionList,
@@ -748,9 +693,9 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 
 		var reposResponse struct {
 			Values []struct {
-				Type       string `json:"type"`
-				FullName   string `json:"full_name"`
-				Links      struct {
+				Type     string `json:"type"`
+				FullName string `json:"full_name"`
+				Links    struct {
 					Self struct {
 						Href string `json:"href"`
 					} `json:"self"`

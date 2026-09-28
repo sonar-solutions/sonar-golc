@@ -65,12 +65,19 @@ Credentials are entered in the browser and saved automatically — no config fil
 
 | Platform | Required scopes |
 |----------|----------------|
-| GitHub / GitHub Enterprise | `repo` |
-| GitLab | `read_repository`, `read_api` |
-| Bitbucket Cloud | Repositories: Read · Projects: Read · Account: Read |
-| Bitbucket Data Center | Repo read, pull |
+| GitHub / GitHub Enterprise | Classic PAT: `repo` — or fine-grained PAT: Contents: Read · Metadata: Read |
+| GitLab | `read_api`, `read_repository` |
+| Bitbucket Cloud | API token with scopes: `read:repository:bitbucket`, `read:project:bitbucket` |
+| Bitbucket Data Center | Project: Read · Repository: Read |
 | Azure DevOps | Code: Read · Project and Team: Read |
 | Azure DevOps Server | Code: Read · Project and Team: Read |
+
+#### GitHub
+
+If your organization enforces SAML single sign-on, a classic PAT must be authorized for
+that organization (**Configure SSO** next to the token). A fine-grained PAT must have the
+organization as its resource owner, and may need an organization admin to approve it.
+Until then, the organization's repositories do not appear in the scan.
 
 #### GitHub Enterprise
 
@@ -78,6 +85,31 @@ The **GitHub Enterprise** card covers both self-hosted GitHub Enterprise Server 
 GitHub Enterprise Cloud with data residency (a dedicated `*.ghe.com` address). Enter
 your server's URL in the **Server URL** field — GoLC detects which variant it is
 from the address and shows the result right under the field.
+
+#### GitLab
+
+`read_api` lists groups, projects and branches; `read_repository` is what allows the clone.
+A token with only `read_api` cannot clone over HTTPS.
+
+#### Bitbucket Cloud
+
+Bitbucket app passwords were permanently disabled on 9 June 2026. Create an
+[API token with scopes](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/),
+choose **Bitbucket** as the app, and select the two scopes above. Enter your Atlassian
+account email in the **Email address** field.
+
+A workspace, project or repository access token also works: leave **Email address** empty.
+
+#### Bitbucket Data Center
+
+Use an HTTP access token with **Project: Read** and **Repository: Read** permissions. The
+**Username** field is required — repositories are cloned as that user.
+
+#### Azure DevOps
+
+Create the personal access token for your organization only, not for
+**All accessible organizations**. Microsoft retires those global PATs on 1 December 2026;
+after that date they stop working. Azure DevOps Server is not affected.
 
 #### Azure DevOps Server
 
