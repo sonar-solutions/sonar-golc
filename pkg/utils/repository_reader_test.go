@@ -248,8 +248,8 @@ func TestReadRepositoryDataEndToEnd(t *testing.T) {
 	// scanner writes it: 700 + 200 + 5000. The headline figure must come out at 900.
 	writeRepoFixture(t, base, "azure", branch, 5900, []LanguageShare{
 		{Language: "Go", CodeLines: 700},
-		{Language: "YAML", CodeLines: 200},
-		{Language: LanguageExcludedFromTotalLOC, CodeLines: 5000},
+		{Language: "Shell", CodeLines: 200},
+		{Language: "JSON", CodeLines: 5000},
 	})
 
 	repos, err := ReadRepositoryData(base)
@@ -280,7 +280,7 @@ func TestReadRepositoryDataEndToEnd(t *testing.T) {
 		t.Errorf("PrimaryLanguage = %q, want Go", repo.PrimaryLanguage())
 	}
 	if len(repo.TopLanguages) != 2 {
-		t.Errorf("TopLanguages = %+v, want Go and YAML only", repo.TopLanguages)
+		t.Errorf("TopLanguages = %+v, want Go and Shell only", repo.TopLanguages)
 	}
 	if repo.Key != (PlatformSpec{Name: "azure", firstPart: projectKeyOrRepo}).DeselectionKey(branch) {
 		t.Errorf("Key = %q, does not match the platform rule", repo.Key)

@@ -87,6 +87,9 @@ type Globalinfo struct {
 	LinesOfCodeLargestRepo string `json:"LinesOfCodeLargestRepo"`
 	DevOpsPlatform         string `json:"DevOpsPlatform"`
 	NumberRepos            int    `json:"NumberRepos"`
+	// ExcludedLanguages is the selection the scanner counted TotalLinesOfCode under; nil
+	// in a file from before it was recorded. See utils.LanguageExclusion.Matches.
+	ExcludedLanguages []string `json:"ExcludedLanguages,omitempty"`
 }
 
 type LanguageData struct {
@@ -95,6 +98,11 @@ type LanguageData struct {
 	Percentage  float64 `json:"Percentage"`
 	CodeLinesF  string  `json:"CodeLinesF"`
 	RelativePct float64 `json:"-"`
+	// Excluded marks a language left out of every total; its Percentage is then zero.
+	Excluded bool `json:"Excluded,omitempty"`
+	// OnlyDeselected marks a language found only in deselected repositories. It is listed
+	// with zero lines so it still has a switch - see withLanguagesOnlyInDeselected.
+	OnlyDeselected bool `json:"OnlyDeselected,omitempty"`
 }
 
 // The repository row, its inventory and the platform naming rules all live in pkg/utils
@@ -121,6 +129,7 @@ type RepositoryLanguageData struct {
 	BlankLinesF string `json:"BlankLinesF"`
 	CommentsF   string `json:"CommentsF"`
 	CodeLinesF  string `json:"CodeLinesF"`
+	Excluded    bool   `json:"Excluded,omitempty"`
 }
 
 type BranchData struct {
@@ -176,8 +185,20 @@ type PageData struct {
 	Repositories    []RepositoryData    // repositories counted in the totals above
 	SkippedRepos    []utils.SkippedRepo // repos the analysis phase could not complete (clone timeout/failure, analysis error)
 	ScanSummary     *ScanSummaryView    // per-run repository breakdown; nil on older result sets
-	NoteLOCExcluded string              // Note that JSON is excluded from total (SonarQube behavior)
+	NoteLOCExcluded string              // which languages the totals leave out
 	Platform        string
+
+	// Language exclusion: languages analyzed but left out of every total. The page's
+	// switches render from Languages[].Excluded; these describe the selection as a whole.
+	ExcludedLanguages          []string // the excluded languages this scan found, sorted
+	ExcludedLanguagesIsDefault bool
+	ExcludedLanguagesCodeLines string // formatted LOC the excluded languages account for
+	DefaultExcludedLanguages   []string
+
+	// SelectionActive is true when either selection departs from the full scan, which is
+	// when the customized reports are offered. SelectionLabel says how, for their heading.
+	SelectionActive bool
+	SelectionLabel  string
 
 	// Deselection: repositories analyzed but removed from every total by the user.
 	// Deselected is empty and RawTotalLinesOfCode equals GlobalReport.TotalLinesOfCode
@@ -568,6 +589,8 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		return nil, fmt.Errorf("error decoding GlobalReport.json: %v", err)
 	}
 
+	excluded := utils.LoadLanguageExclusion(resultsBaseDir)
+
 	// Process language data to add formatted fields
 	var formattedLanguages []RepositoryLanguageData
 	for _, lang := range languageReport.Results {
@@ -583,6 +606,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 			BlankLinesF: utils.FormatCodeLines(float64(lang.BlankLines)),
 			CommentsF:   utils.FormatCodeLines(float64(lang.Comments)),
 			CodeLinesF:  utils.FormatCodeLines(float64(lang.CodeLines)),
+			Excluded:    excluded.Excludes(lang.Language),
 		}
 		formattedLanguages = append(formattedLanguages, formattedLang)
 	}
@@ -618,12 +642,11 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 	// Get platform info and repository URL
 	platformIcon, repositoryURL := getPlatformInfoAndURL(platform, orgName, repoName)
 
-	// Code lines for report total: exclude JSON to match SonarQube behavior
+	// Code lines for report total: leave out the excluded languages, as every other total does
 	totalCodeLinesForReport := byFileReport.TotalCodeLines
 	for _, lang := range languageReport.Results {
-		if strings.TrimSpace(lang.Language) == utils.LanguageExcludedFromTotalLOC {
-			totalCodeLinesForReport = byFileReport.TotalCodeLines - lang.CodeLines
-			break
+		if excluded.Excludes(lang.Language) {
+			totalCodeLinesForReport -= lang.CodeLines
 		}
 	}
 
@@ -649,7 +672,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		Platform:         platform,
 		PlatformIcon:     platformIcon,
 		RepositoryURL:    repositoryURL,
-		NoteLOCExcluded:  utils.NoteExcludedFromTotal,
+		NoteLOCExcluded:  excluded.Note(),
 	}
 
 	return repoDetail, nil
@@ -741,30 +764,39 @@ func zipResults(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "Results.zip")
 }
 
-// buildLanguageSummary converts raw language data into a sorted, percentage-annotated slice.
-func buildLanguageSummary(rawData []LanguageData) []LanguageData {
+// buildLanguageSummary converts raw language data into a sorted, percentage-annotated
+// slice. Excluded languages stay listed, so they can be switched back on, but take no
+// share of the total.
+func buildLanguageSummary(rawData []LanguageData, excluded utils.LanguageExclusion) []LanguageData {
 	totals := make(map[string]int)
 	for _, r := range rawData {
 		totals[r.Language] += r.CodeLines
 	}
 
-	totalExcl := 0
+	counted := 0
 	var languages []LanguageData
 	for lang, total := range totals {
-		if strings.TrimSpace(lang) != utils.LanguageExcludedFromTotalLOC {
-			totalExcl += total
+		isExcluded := excluded.Excludes(lang)
+		if !isExcluded {
+			counted += total
 		}
 		languages = append(languages, LanguageData{
 			Language:   lang,
 			CodeLines:  total,
 			CodeLinesF: utils.FormatCodeLines(float64(total)),
+			Excluded:   isExcluded,
 		})
 	}
 
-	applyLanguagePercentages(languages, totalExcl)
+	applyLanguagePercentages(languages, counted)
 
+	// Ties break on name: several languages at the same size would otherwise swap places
+	// between reloads, and with a switch on every row that reads as the list jumping.
 	sort.Slice(languages, func(i, j int) bool {
-		return languages[i].CodeLines > languages[j].CodeLines
+		if languages[i].CodeLines != languages[j].CodeLines {
+			return languages[i].CodeLines > languages[j].CodeLines
+		}
+		return languages[i].Language < languages[j].Language
 	})
 	if len(languages) > 0 && languages[0].CodeLines > 0 {
 		maxLOC := float64(languages[0].CodeLines)
@@ -775,13 +807,44 @@ func buildLanguageSummary(rawData []LanguageData) []LanguageData {
 	return languages
 }
 
-// applyLanguagePercentages sets the Percentage field for each language entry.
-func applyLanguagePercentages(languages []LanguageData, totalExcludingJSON int) {
+// withLanguagesOnlyInDeselected appends a zero-line row for every scanned language that
+// appears only in deselected repositories.
+//
+// Without a row such a language has no switch, and since the page posts the complete
+// selection from its switches, flipping any other one would drop it from the selection:
+// it would silently start counting once its repository is selected again. Listing it keeps
+// the page's view of the selection complete, so a change - or a reset to the defaults -
+// always sets every language deliberately.
+func withLanguagesOnlyInDeselected(languages []LanguageData, excluded utils.LanguageExclusion) ([]LanguageData, error) {
+	all, err := scannedLanguages()
+	if err != nil {
+		return nil, err
+	}
+	listed := make(map[string]bool, len(languages))
+	for _, lang := range languages {
+		listed[lang.Language] = true
+	}
+	for _, lang := range all {
+		if !listed[lang] {
+			languages = append(languages, LanguageData{
+				Language:       lang,
+				CodeLinesF:     utils.FormatCodeLines(0),
+				Excluded:       excluded.Excludes(lang),
+				OnlyDeselected: true,
+			})
+		}
+	}
+	return languages, nil
+}
+
+// applyLanguagePercentages sets the Percentage field for each language entry, as a share
+// of the counted total. Excluded languages get zero.
+func applyLanguagePercentages(languages []LanguageData, countedTotal int) {
 	for i := range languages {
-		if strings.TrimSpace(languages[i].Language) == utils.LanguageExcludedFromTotalLOC || totalExcludingJSON == 0 {
+		if languages[i].Excluded || countedTotal == 0 {
 			languages[i].Percentage = 0
 		} else {
-			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalExcludingJSON) * 100
+			languages[i].Percentage = float64(languages[i].CodeLines) / float64(countedTotal) * 100
 		}
 	}
 }
@@ -790,8 +853,9 @@ func applyLanguagePercentages(languages []LanguageData, totalExcludingJSON int) 
 func loadApplicationData() (PageData, error) {
 	var pageData PageData
 
-	// The persisted selection, applied to everything below.
+	// The persisted selections, applied to everything below.
 	deselectedSet := utils.LoadDeselectionSet(resultsBaseDir)
+	excluded := utils.LoadLanguageExclusion(resultsBaseDir)
 
 	// Language totals are computed here from the per-repository result files rather than
 	// read from the generated code_lines_by_language.json. Reports are written on demand,
@@ -800,7 +864,7 @@ func loadApplicationData() (PageData, error) {
 	//
 	// Locals, not the package vars: publish is the only writer of those, so a failed load
 	// cannot leave the served view half-updated.
-	totals, _, err := utils.CollectResultTotals(resultsBaseDir, deselectedSet)
+	totals, _, err := utils.CollectResultTotals(resultsBaseDir, deselectedSet, excluded)
 	if err != nil {
 		return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
 	}
@@ -828,7 +892,24 @@ func loadApplicationData() (PageData, error) {
 		}
 	}
 
-	languages := buildLanguageSummary(rawLanguages)
+	languages := buildLanguageSummary(rawLanguages, excluded)
+	if len(deselectedSet) > 0 {
+		languages, err = withLanguagesOnlyInDeselected(languages, excluded)
+		if err != nil {
+			return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
+		}
+	}
+	// The page names only the excluded languages this scan actually found: the selection
+	// also holds defaults with nothing to exclude, and "JSON · 0 LOC" would read as a count.
+	excludedCodeLines := 0
+	excludedPresent := []string{}
+	for _, lang := range languages {
+		if lang.Excluded {
+			excludedCodeLines += lang.CodeLines
+			excludedPresent = append(excludedPresent, lang.Language)
+		}
+	}
+	sort.Strings(excludedPresent)
 
 	data0, err := os.ReadFile(globalReportFile)
 	if err != nil {
@@ -841,6 +922,21 @@ func loadApplicationData() (PageData, error) {
 		return pageData, fmt.Errorf("error decoding JSON GlobalReport.json file: %v", err)
 	}
 	rawTotalLOC := info.TotalLinesOfCode
+	if !excluded.Matches(info.ExcludedLanguages) {
+		// GlobalReport.json was counted under another language selection - the defaults,
+		// or an older version's - so the whole-scan figure is recounted under this one.
+		allTotals, _, err := utils.CollectResultTotals(resultsBaseDir, nil, excluded)
+		if err != nil {
+			return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
+		}
+		all := 0
+		for lang, lines := range allTotals {
+			if !excluded.Excludes(lang) {
+				all += lines
+			}
+		}
+		rawTotalLOC = utils.FormatCodeLines(float64(all))
+	}
 
 	repositoryData, err := getRepositoryData()
 	if err != nil {
@@ -864,7 +960,7 @@ func loadApplicationData() (PageData, error) {
 		deselectedCodeLines += repo.CodeLines
 		deselectedKeys = append(deselectedKeys, repo.Key)
 	}
-	info = adjustGlobalInfo(info, languages, repositoryData, len(deselected))
+	info = adjustGlobalInfo(info, languages, repositoryData, len(deselected), excluded)
 
 	detectedPlatform, _, _ := detectPlatformAndReadAnalysis()
 
@@ -883,8 +979,15 @@ func loadApplicationData() (PageData, error) {
 		Repositories:    repositoryData,
 		SkippedRepos:    skippedRepos,
 		ScanSummary:     scanSummary,
-		NoteLOCExcluded: utils.NoteExcludedFromTotal,
+		NoteLOCExcluded: excluded.Note(),
 		Platform:        detectedPlatform,
+
+		ExcludedLanguages:          excludedPresent,
+		ExcludedLanguagesIsDefault: excluded.IsDefault(),
+		ExcludedLanguagesCodeLines: utils.FormatCodeLines(float64(excludedCodeLines)),
+		DefaultExcludedLanguages:   utils.DefaultLanguageExclusion().Languages(),
+		SelectionActive:            len(deselected) > 0 || !excluded.IsDefault(),
+		SelectionLabel:             selectionLabel(len(deselected), excluded, excludedPresent),
 
 		TableRows:           tableRows,
 		Deselected:          deselected,
@@ -897,6 +1000,26 @@ func loadApplicationData() (PageData, error) {
 	}
 
 	return pageData, nil
+}
+
+// selectionLabel describes how the current selection departs from the full scan, e.g.
+// "2 repositories deselected · JSON excluded". Empty when nothing does.
+func selectionLabel(deselectedCount int, excluded utils.LanguageExclusion, excludedPresent []string) string {
+	var parts []string
+	switch {
+	case deselectedCount == 1:
+		parts = append(parts, "1 repository deselected")
+	case deselectedCount > 1:
+		parts = append(parts, fmt.Sprintf("%d repositories deselected", deselectedCount))
+	}
+	if !excluded.IsDefault() {
+		if len(excludedPresent) == 0 {
+			parts = append(parts, "every language counted")
+		} else {
+			parts = append(parts, strings.Join(excludedPresent, ", ")+" excluded")
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // buildTableRows returns every repository in its original ranked order, flagging the
@@ -940,16 +1063,19 @@ func partitionDeselected(repositories []RepositoryData, deselected utils.Deselec
 
 // adjustGlobalInfo mirrors utils.AdjustGlobalInfo for this page's own types: it
 // re-derives the headline figures from the repositories that survived a deselection,
-// and returns ginfo untouched when the selection is untouched so an unfiltered page
-// shows exactly the numbers the scan produced.
-func adjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, kept []RepositoryData, deselectedCount int) Globalinfo {
-	if deselectedCount == 0 {
+// counted under the language selection, and returns ginfo untouched when nothing is
+// deselected and the scan counted under the same selection, so an unfiltered page shows
+// exactly the numbers the scan produced. See utils.AdjustGlobalInfo for why a file that
+// does not record its selection is recounted.
+func adjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, kept []RepositoryData, deselectedCount int, excluded utils.LanguageExclusion) Globalinfo {
+	if deselectedCount == 0 && excluded.Matches(ginfo.ExcludedLanguages) {
 		return ginfo
 	}
+	ginfo.ExcludedLanguages = excluded.Languages()
 
 	total := 0
 	for _, lang := range languages {
-		if strings.TrimSpace(lang.Language) != utils.LanguageExcludedFromTotalLOC {
+		if !excluded.Excludes(lang.Language) {
 			total += lang.CodeLines
 		}
 	}
@@ -1061,16 +1187,22 @@ func reportsStatePath() string {
 }
 
 // reportStamp fingerprints everything that would change a variant's content: the
-// selection it covers, and the identity of the scan itself. GlobalReport.json is
+// selections it covers, and the identity of the scan itself. GlobalReport.json is
 // rewritten by every analysis run, so its modification time changes when a new scan
 // lands and invalidates artifacts built from the previous one.
-func reportStamp(v reportVariant, deselected []utils.DeselectedRepo) string {
+//
+// Only the customized variant reflects the selections. The full scan always covers every
+// repository counted under the default languages, so neither selection is part of its
+// stamp - changing one must not rebuild, let alone alter, the original report.
+func reportStamp(v reportVariant, deselected []utils.DeselectedRepo, excluded utils.LanguageExclusion) string {
 	keys := make([]string, 0, len(deselected))
 	if v.customized {
 		for _, repo := range deselected {
 			keys = append(keys, repo.Key)
 		}
 		sort.Strings(keys)
+	} else {
+		excluded = utils.DefaultLanguageExclusion()
 	}
 
 	scanID := "unknown"
@@ -1078,7 +1210,8 @@ func reportStamp(v reportVariant, deselected []utils.DeselectedRepo) string {
 		scanID = fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
 	}
 
-	sum := sha256.Sum256([]byte(v.name + "\x00" + scanID + "\x00" + strings.Join(keys, "\x00")))
+	sum := sha256.Sum256([]byte(v.name + "\x00" + scanID + "\x00" + strings.Join(keys, "\x00") +
+		"\x00languages\x00" + strings.Join(excluded.Languages(), "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -1112,13 +1245,14 @@ func saveReportsState(state reportsState) error {
 // concurrent downloads both see "stale" and write over each other.
 func ensureReports(v reportVariant) error {
 	deselected := utils.LoadDeselectedRepos(resultsBaseDir)
-	if v.customized && len(deselected) == 0 {
-		// Nothing is deselected, so the customized variant would duplicate the full
-		// scan. Callers should not offer it; treat a request for it as the full scan.
+	excluded := utils.LoadLanguageExclusion(resultsBaseDir)
+	if v.customized && !selectionActive(deselected, excluded) {
+		// Neither selection departs from the full scan, so the customized variant would
+		// duplicate it. Callers should not offer it; treat a request for it as the full scan.
 		v = fullScanVariant
 	}
 
-	want := reportStamp(v, deselected)
+	want := reportStamp(v, deselected, excluded)
 	state := loadReportsState()
 
 	// A stamp match is only trustworthy if the files are actually still there.
@@ -1128,7 +1262,7 @@ func ensureReports(v reportVariant) error {
 		return nil
 	}
 
-	if err := generateReports(v, deselected); err != nil {
+	if err := generateReports(v, deselected, excluded); err != nil {
 		return err
 	}
 
@@ -1153,14 +1287,17 @@ func filesExist(paths ...string) bool {
 // generateReports writes one variant's artifacts. The full-scan variant passes an empty
 // selection, which is what makes the original always reproducible: the per-repository
 // result files are never modified, so it can be rebuilt at any time.
-func generateReports(v reportVariant, deselected []utils.DeselectedRepo) error {
+func generateReports(v reportVariant, deselected []utils.DeselectedRepo, excluded utils.LanguageExclusion) error {
 	applied := deselected
 	if !v.customized {
+		// The original report: every repository, counted under the default languages.
 		applied = nil
+		excluded = utils.DefaultLanguageExclusion()
 	}
 
 	if err := utils.CreateGlobalReportWith(resultsBaseDir, utils.GlobalReportOptions{
 		Deselected:         applied,
+		Excluded:           excluded,
 		PDFPath:            v.globalPDFPath(),
 		LanguageTotalsPath: v.languageTotalsPath(),
 	}); err != nil {
@@ -1169,6 +1306,7 @@ func generateReports(v reportVariant, deselected []utils.DeselectedRepo) error {
 
 	if err := utils.GenerateRepositorySummaryReportsWith(resultsBaseDir, utils.SummaryReportOptions{
 		Deselected: utils.DeselectionKeys(applied),
+		Excluded:   excluded,
 		OutputDir:  v.dir,
 	}); err != nil {
 		return fmt.Errorf("cannot generate repository summary reports: %w", err)
@@ -1309,12 +1447,11 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 	// Under regenerateMu, because a rebuild spawned by an earlier request may still be
 	// writing that directory: removing it without the lock lets the generator re-create
 	// it immediately afterwards, restoring the very files this is deleting.
-	if len(records) == 0 {
-		regenerateMu.Lock()
-		err := utils.ClearCustomizedReports(resultsBaseDir)
-		regenerateMu.Unlock()
-		if err != nil {
-			return nil, fmt.Errorf("cannot remove stale customized reports: %w", err)
+	// A changed language selection still needs them, so only a return to the full scan
+	// on both counts removes them.
+	if !selectionActive(records, utils.LoadLanguageExclusion(resultsBaseDir)) {
+		if err := clearCustomizedReportsLocked(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1333,6 +1470,208 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 		RawTotalLinesOfCode: pd.RawTotalLinesOfCode,
 		Ignored:             ignored,
 	}, nil
+}
+
+// LanguageExclusionRequest is the payload of POST /api/excluded-languages: the languages
+// to leave out of every total. An empty list counts every language.
+type LanguageExclusionRequest struct {
+	Languages []string `json:"Languages"`
+}
+
+// LanguageExclusionResponse describes the selection and the totals it produces, so the
+// caller does not have to re-fetch them.
+type LanguageExclusionResponse struct {
+	ExcludedLanguages []string `json:"ExcludedLanguages"`
+	DefaultLanguages  []string `json:"DefaultLanguages"`
+	// AvailableLanguages is every language the scan found, the excluded ones included.
+	AvailableLanguages  []string `json:"AvailableLanguages"`
+	TotalLinesOfCode    string   `json:"TotalLinesOfCode"`
+	RawTotalLinesOfCode string   `json:"RawTotalLinesOfCode"`
+	Ignored             int      `json:"Ignored"` // submitted names that match no scanned language
+}
+
+// errAllLanguagesExcluded rejects a selection that would leave nothing counted, answered
+// with 422 for the same reason as errAllDeselected.
+var errAllLanguagesExcluded = errors.New("cannot exclude every language — at least one must remain counted")
+
+// handleExcludedLanguages reads or replaces the language selection.
+//
+// GET returns the current selection. POST replaces it wholesale, like /api/deselected:
+// the client always sends the complete list, so a reset is just the default list.
+func handleExcludedLanguages(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		resp, err := languageExclusionState(utils.LoadLanguageExclusion(resultsBaseDir), 0)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(contentTypeHeader, applicationJSONType)
+		json.NewEncoder(w).Encode(resp)
+
+	case http.MethodPost:
+		var req LanguageExclusionRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		selectionMu.Lock()
+		defer selectionMu.Unlock()
+
+		resp, err := applyLanguageExclusion(req.Languages)
+		if errors.Is(err, errAllLanguagesExcluded) {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// As for a deselection: downloads regenerate on demand, this only keeps the files
+		// on disk current for anyone reading Results/ directly.
+		go rebuildReportsInBackground()
+
+		w.Header().Set(contentTypeHeader, applicationJSONType)
+		json.NewEncoder(w).Encode(resp)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// scannedLanguages returns every language found across the whole scan, deselected
+// repositories included - a language only present in a deselected repository can still
+// be switched, and switching it back on must not be refused as unknown.
+func scannedLanguages() ([]string, error) {
+	totals, _, err := utils.CollectResultTotals(resultsBaseDir, nil, utils.DefaultLanguageExclusion())
+	if err != nil {
+		return nil, err
+	}
+	langs := make([]string, 0, len(totals))
+	for lang := range totals {
+		langs = append(langs, lang)
+	}
+	sort.Strings(langs)
+	return langs, nil
+}
+
+// applyLanguageExclusion validates the requested languages, persists them and
+// republishes the page data. Callers must hold selectionMu.
+func applyLanguageExclusion(requested []string) (*LanguageExclusionResponse, error) {
+	available, err := scannedLanguages()
+	if err != nil {
+		return nil, fmt.Errorf("cannot read language data: %w", err)
+	}
+	known := make(map[string]bool, len(available))
+	for _, lang := range available {
+		known[lang] = true
+	}
+
+	// Names arrive from the browser, so only languages the scan found are persisted - a
+	// stale tab or a hand-edited request cannot write entries that silently match nothing.
+	kept := make([]string, 0, len(requested))
+	ignored := 0
+	for _, lang := range requested {
+		name := strings.TrimSpace(lang)
+		if !known[name] {
+			if !utils.DefaultLanguageExclusion().Excludes(name) {
+				ignored++
+			}
+			continue
+		}
+		kept = append(kept, name)
+	}
+	// A default language this scan did not find has no switch to flip and no lines to
+	// count, so it stays excluded. Dropping it instead would leave a scan without JSON
+	// unable to return to the defaults: a reset would save {YAML}, which is not them.
+	for _, lang := range utils.DefaultLanguageExclusion().Languages() {
+		if !known[lang] {
+			kept = append(kept, lang)
+		}
+	}
+	excluded := utils.NewLanguageExclusion(kept)
+
+	counted := 0
+	for _, lang := range available {
+		if !excluded.Excludes(lang) {
+			counted++
+		}
+	}
+	if len(available) > 0 && counted == 0 {
+		return nil, errAllLanguagesExcluded
+	}
+
+	if err := utils.SaveLanguageExclusion(resultsBaseDir, excluded); err != nil {
+		return nil, fmt.Errorf("cannot save language selection: %w", err)
+	}
+
+	// Back on the defaults with nothing deselected, the customized reports describe a
+	// selection that no longer exists - removed for the reason applyDeselection gives.
+	if !selectionActive(utils.LoadDeselectedRepos(resultsBaseDir), excluded) {
+		if err := clearCustomizedReportsLocked(); err != nil {
+			return nil, err
+		}
+	}
+
+	pd, err := loadApplicationData()
+	if err != nil {
+		return nil, fmt.Errorf("cannot reload results: %w", err)
+	}
+	publish(pd)
+
+	resp, err := languageExclusionState(excluded, ignored)
+	if err != nil {
+		return nil, err
+	}
+	resp.TotalLinesOfCode = pd.GlobalReport.TotalLinesOfCode
+	resp.RawTotalLinesOfCode = pd.RawTotalLinesOfCode
+	return resp, nil
+}
+
+// languageExclusionState describes a selection against the scanned languages, with the
+// totals taken from the page currently published.
+func languageExclusionState(excluded utils.LanguageExclusion, ignored int) (*LanguageExclusionResponse, error) {
+	available, err := scannedLanguages()
+	if err != nil {
+		return nil, fmt.Errorf("cannot read language data: %w", err)
+	}
+	pd := snapshot()
+	return &LanguageExclusionResponse{
+		ExcludedLanguages:   excluded.Languages(),
+		DefaultLanguages:    utils.DefaultLanguageExclusion().Languages(),
+		AvailableLanguages:  available,
+		TotalLinesOfCode:    pd.GlobalReport.TotalLinesOfCode,
+		RawTotalLinesOfCode: pd.RawTotalLinesOfCode,
+		Ignored:             ignored,
+	}, nil
+}
+
+// selectionActive reports whether the page's totals depart from the full scan: some
+// repositories are deselected, or the language selection is not the default one. Either
+// is enough to give the customized report variant something to describe.
+func selectionActive(deselected []utils.DeselectedRepo, excluded utils.LanguageExclusion) bool {
+	return len(deselected) > 0 || !excluded.IsDefault()
+}
+
+// persistedSelectionActive is selectionActive for the selections saved on disk.
+func persistedSelectionActive() bool {
+	return selectionActive(utils.LoadDeselectedRepos(resultsBaseDir), utils.LoadLanguageExclusion(resultsBaseDir))
+}
+
+// clearCustomizedReportsLocked removes the customized reports under regenerateMu, because
+// a rebuild spawned by an earlier request may still be writing that directory: removing it
+// without the lock lets the generator re-create it immediately afterwards, restoring the
+// very files this is deleting.
+func clearCustomizedReportsLocked() error {
+	regenerateMu.Lock()
+	err := utils.ClearCustomizedReports(resultsBaseDir)
+	regenerateMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("cannot remove stale customized reports: %w", err)
+	}
+	return nil
 }
 
 // requestedReport maps a URL name to the artifact it serves and the download file name
@@ -1379,8 +1718,8 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 
 	variant := route.variant
 	filename := route.filename
-	if variant.customized && len(utils.LoadDeselectedRepos(resultsBaseDir)) == 0 {
-		// Nothing is deselected, so there is no distinct customized report to serve.
+	if variant.customized && !persistedSelectionActive() {
+		// No selection applies, so there is no distinct customized report to serve.
 		// Fall back to the full scan rather than 404 on a link left over from a
 		// selection that has since been reset.
 		variant = fullScanVariant
@@ -1451,7 +1790,7 @@ func syncReportVariantsLocked() error {
 // variantsToBuild returns the report variants worth having on disk right now: the full
 // scan always, plus the customized set only when a selection actually exists.
 func variantsToBuild() []reportVariant {
-	if len(utils.LoadDeselectedRepos(resultsBaseDir)) == 0 {
+	if !persistedSelectionActive() {
 		return []reportVariant{fullScanVariant}
 	}
 	return []reportVariant{fullScanVariant, customizedVariant}
@@ -1477,6 +1816,7 @@ func setupHTTPHandlers(pageData PageData) {
 	})
 
 	http.HandleFunc("/api/deselected", handleDeselected)
+	http.HandleFunc("/api/excluded-languages", handleExcludedLanguages)
 
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -1806,11 +2146,30 @@ const htmlTemplate = `
       }
       /* Language bar chart */
       .lang-bar-row { margin-bottom: 0.6rem; }
-      .lang-bar-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px; gap:4px; }
+      .lang-bar-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px; }
       .lang-bar-name { font-weight:600; font-size:0.85rem; max-width:56%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .lang-bar-meta { font-size:0.75rem; opacity:0.85; white-space:nowrap; text-align:right; }
       .lang-bar-track { background:rgba(255,255,255,.18); border-radius:3px; height:5px; overflow:hidden; }
       .lang-bar-fill { background:rgba(255,255,255,.85); border-radius:3px; height:5px; transition:width .4s ease; }
+      .lang-bar-title { display:flex; align-items:center; gap:0.45rem; min-width:0; max-width:62%; }
+      .lang-bar-title .lang-bar-name { max-width:none; }
+      /* Bootstrap floats a switch into padding it reserves on the left (margin-left:-2.5em);
+         dropping both keeps the switch inside the card, flush with the bars and summary. */
+      .lang-switch.form-check { display:flex; align-items:center; flex-shrink:0; margin:0; padding-left:0; min-height:0; line-height:1; }
+      .lang-switch .form-check-input { float:none; margin:0; cursor:pointer; background-color:rgba(255,255,255,.25); border-color:rgba(255,255,255,.7); }
+      .lang-switch .form-check-input:checked { background-color:#fff; border-color:#fff;
+        background-image:url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%230073ba'/%3e%3c/svg%3e"); }
+      .lang-switch .form-check-input:focus { box-shadow:0 0 0 .2rem rgba(255,255,255,.35); }
+      .lang-switch .form-check-input:disabled { cursor:progress; opacity:.6; }
+      .lang-bar-row.lang-excluded .lang-bar-name { opacity:.6; text-decoration:line-through; text-decoration-color:rgba(255,255,255,.55); }
+      .lang-bar-row.lang-excluded .lang-bar-meta { opacity:.6; }
+      .lang-bar-row.lang-excluded .lang-bar-fill { background:rgba(255,255,255,.35); }
+      .lang-excluded-badge { font-size:0.62rem; font-weight:600; letter-spacing:.02em; text-transform:uppercase;
+        padding:1px 5px; border-radius:3px; background:rgba(255,255,255,.18); margin-right:4px; }
+      .lang-selection-summary { font-size:0.74rem; background:rgba(0,0,0,.14); border-radius:4px; padding:0.4rem 0.55rem; margin-bottom:0.7rem; line-height:1.35; }
+      .lang-selection-summary a { color:#fff; text-decoration:underline; cursor:pointer; white-space:nowrap; }
+      .lang-selection-status { font-size:0.74rem; margin-top:0.35rem; }
+      .lang-selection-status:empty { display:none; }
       /* Reports dropdown — sharp rectangular corners */
       .dropdown-menu { border-radius: 4px !important; }
     </style>
@@ -1831,15 +2190,15 @@ const htmlTemplate = `
                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="reportsDropdown">
                   {{/* Reports are generated when first requested, so a link may take a
                        moment on its first click — the JS below shows a spinner. The
-                       full-scan entries always cover every analysed repository, whatever
-                       is currently selected. */}}
-                  {{if .DeselectedCount}}<li><h6 class="dropdown-header">Full scan &mdash; all {{.ScannedRepositories}} repositories</h6></li>{{end}}
+                       full-scan entries always cover every analysed repository under
+                       SonarQube's default languages, whatever is currently selected. */}}
+                  {{if .SelectionActive}}<li><h6 class="dropdown-header">Full scan &mdash; all {{.ScannedRepositories}} repositories, default languages</h6></li>{{end}}
                   <li><a class="dropdown-item report-link" href="/reports/global-report.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF</a></li>
                   <li><a class="dropdown-item report-link" href="/reports/repository-summary.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF</a></li>
                   <li><a class="dropdown-item report-link" href="/reports/repository-summary.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV</a></li>
-                  {{if .DeselectedCount}}
+                  {{if .SelectionActive}}
                   <li><hr class="dropdown-divider"></li>
-                  <li><h6 class="dropdown-header">Current selection &mdash; {{.DeselectedCount}} excluded</h6></li>
+                  <li><h6 class="dropdown-header">Current selection &mdash; {{.SelectionLabel}}</h6></li>
                   <li><a class="dropdown-item report-link" href="/reports/global-report-customized.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
                   <li><a class="dropdown-item report-link" href="/reports/repository-summary-customized.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
                   <li><a class="dropdown-item report-link" href="/reports/repository-summary-customized.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
@@ -1856,9 +2215,14 @@ const htmlTemplate = `
       <div class="bg-dark"><img class="img-fluid position-absolute end-0" src="dist/img/bg.png" alt="" />
       <section>
         <div class="container">
-          <div class="row align-items-center py-lg-8 py-6" style="margin-top: -5%">
-            <div class="col-lg-6 text-center text-lg-start">
+          <div class="row align-items-start py-lg-8 py-6" style="margin-top: -5%">
+            <!-- The title spans the row so both cards below start at the same height;
+                 with it inside the left column, the right column was centred against the
+                 title, card and chart together and its card sat lower. -->
+            <div class="col-12 text-center text-lg-start">
               <h1 class="text-white fs-5 fs-xl-6">Results</h1>
+            </div>
+            <div class="col-lg-6 text-center text-lg-start">
                 <div class="card text-white bg-primary mb-4" style="max-width: 24rem;">
                   <h5 class="card-header text-white" style="padding: 1rem 1rem;"> <i class="fas fa-chart-line"></i> Organization: {{.GlobalReport.Organization}}
                     {{if eq .GlobalReport.DevOpsPlatform "bitbucket_dc"}}
@@ -1888,17 +2252,42 @@ const htmlTemplate = `
                 </div>
             </div>
             <div class="col-lg-6 mt-3 mt-lg-0">
-                              <div class="card text-white bg-primary mb-4" style="max-width: 21rem;">
+              <!-- The card and the button share one block as wide as the card, so the
+                   button centres under the card rather than across the whole column. -->
+              <div style="max-width: 21rem;">
+              <div class="card text-white bg-primary mb-4">
                 <h5 class="card-header text-white" style="padding: 0.75rem 1rem;">
                   <i class="fas fa-code"></i> Languages
-                  <small class="text-white-50" style="font-size:0.7rem;display:block;font-weight:400;margin-top:2px;">sorted by lines of code &darr;</small>
+                  <small class="text-white-50" style="font-size:0.7rem;display:block;font-weight:400;margin-top:2px;">sorted by lines of code &darr; · switch a language off to leave it out of every total</small>
                 </h5>
                 <div class="card-body text-white" style="padding: 0.75rem 1rem; max-height:440px; overflow-y:auto;">
+                    <!-- Language exclusion: every switch is applied as soon as it is flipped,
+                         and a new scan always starts again from SonarQube's defaults. -->
+                    <div class="lang-selection-summary" id="langSelectionSummary">
+                      {{if .ExcludedLanguages}}
+                        <i class="fas fa-filter"></i> Excluded from total:
+                        <strong>{{range $i, $l := .ExcludedLanguages}}{{if $i}}, {{end}}{{$l}}{{end}}</strong>
+                        · {{.ExcludedLanguagesCodeLines}} LOC
+                      {{else}}
+                        <i class="fas fa-check-circle"></i> Every language is counted in the total.
+                      {{end}}
+                      {{if not .ExcludedLanguagesIsDefault}}
+                        · <a id="btnResetLanguages" role="button" title="Exclude {{range $i, $l := .DefaultExcludedLanguages}}{{if $i}} and {{end}}{{$l}}{{end}} again, as SonarQube does with default settings">Reset to SonarQube defaults</a>
+                      {{end}}
+                      <div class="lang-selection-status" id="langSelectionStatus" role="status" aria-live="polite"></div>
+                    </div>
                     {{range .Languages}}
-                    <div class="lang-bar-row">
+                    <div class="lang-bar-row{{if .Excluded}} lang-excluded{{end}}">
                       <div class="lang-bar-header">
-                        <span class="lang-bar-name" title="{{.Language}}">{{.Language}}{{if eq .Language "JSON"}}&nbsp;<span style="font-size:0.68rem;opacity:0.65;font-weight:400;">(excl.)</span>{{end}}</span>
-                        <span class="lang-bar-meta">{{if ne .Language "JSON"}}{{printf "%.1f" .Percentage}}% · {{end}}{{.CodeLinesF}} LOC</span>
+                        <span class="lang-bar-title">
+                          <span class="form-check form-switch lang-switch"
+                                title="{{if eq .Language "JSON" "YAML"}}SonarQube counts plain {{.Language}} files only when its generic {{.Language}} analyzer is active: off by default on SonarQube Server, and behind a feature flag on SonarQube Cloud. {{end}}{{if .Excluded}}Switch on to count {{.Language}} in the total.{{else}}Switch off to leave {{.Language}} out of the total.{{end}}">
+                            <input class="form-check-input lang-toggle" type="checkbox" role="switch"
+                                   value="{{.Language}}" aria-label="Count {{.Language}} in the total"{{if not .Excluded}} checked{{end}}>
+                          </span>
+                          <span class="lang-bar-name" title="{{.Language}}">{{.Language}}</span>
+                        </span>
+                        <span class="lang-bar-meta"{{if .OnlyDeselected}} title="Found only in deselected repositories, so it adds nothing to the current total"{{end}}>{{if .Excluded}}<span class="lang-excluded-badge">excluded</span>{{else if not .OnlyDeselected}}{{printf "%.1f" .Percentage}}% · {{end}}{{if .OnlyDeselected}}only in deselected repositories{{else}}{{.CodeLinesF}} LOC{{end}}</span>
                       </div>
                       <div class="lang-bar-track">
                         <div class="lang-bar-fill" style="width:{{printf "%.1f" .RelativePct}}%;"></div>
@@ -1908,9 +2297,10 @@ const htmlTemplate = `
                 </div>
               </div>
               <div class="text-center mt-3">
-                <a href="#repository-section" class="btn btn-outline-light btn-lg">
+                <a href="#repository-section" class="btn btn-outline-light btn-lg px-4 text-nowrap">
                   <i class="fas fa-table"></i> View Repository Details
                 </a>
+              </div>
               </div>
             </div>
           </div>
@@ -1972,7 +2362,7 @@ const htmlTemplate = `
                             Branch <i class="fas fa-sort sort-icon"></i>
                           </th>
                           <th scope="col" class="sortable" data-column="language"
-                              title="The {{.TopLanguagesShown}} largest languages by code lines. JSON is excluded, matching the Code Lines column.">
+                              title="The {{.TopLanguagesShown}} largest languages by code lines. Excluded languages are left out, matching the Code Lines column.">
                             Top Languages <i class="fas fa-sort sort-icon"></i>
                           </th>
                           <th scope="col" class="sortable" data-column="lines">
@@ -2208,10 +2598,10 @@ const htmlTemplate = `
         var camembertChart = new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: [{{range .Languages}}"{{.Language}}",{{end}}],
+                labels: [{{range .Languages}}{{if and (not .Excluded) (not .OnlyDeselected)}}"{{.Language}}",{{end}}{{end}}],
                 datasets: [{
                     label: 'LOC ',
-                    data: [{{range .Languages}}{{.CodeLines}},{{end}}],
+                    data: [{{range .Languages}}{{if and (not .Excluded) (not .OnlyDeselected)}}{{.CodeLines}},{{end}}{{end}}],
                     backgroundColor: [
                         'rgba(255, 99, 132, 0.5)',
                         'rgba(54, 162, 235, 0.5)',
@@ -2399,6 +2789,61 @@ const htmlTemplate = `
         });
 
         refreshSelectionUI();
+
+        // ─── Language exclusion ──────────────────────────────────────────────
+        // Each switch is applied immediately. The server answers with the recounted
+        // totals, but the page reloads anyway so the chart, the table and the download
+        // links all come from one consistent rebuild - as a repository selection does.
+        const defaultExcludedLanguages = {{.DefaultExcludedLanguages}};
+        const languageToggles = document.querySelectorAll('.lang-toggle');
+
+        function showLanguageStatus(html) {
+            document.getElementById('langSelectionStatus').innerHTML = html;
+        }
+
+        function setLanguageTogglesDisabled(disabled) {
+            languageToggles.forEach(box => { box.disabled = disabled; });
+            const reset = document.getElementById('btnResetLanguages');
+            if (reset) reset.style.pointerEvents = disabled ? 'none' : '';
+        }
+
+        async function submitLanguageSelection(excluded, onFailure) {
+            setLanguageTogglesDisabled(true);
+            showLanguageStatus('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
+            try {
+                const res = await fetch('/api/excluded-languages', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({Languages: excluded})
+                });
+                if (!res.ok) throw new Error((await res.text()) || res.statusText);
+                window.location.reload();
+            } catch (err) {
+                if (onFailure) onFailure();
+                setLanguageTogglesDisabled(false);
+                showLanguageStatus('<i class="fas fa-exclamation-triangle"></i> Could not apply: ' +
+                    String(err.message || err).replace(/</g, '&lt;'));
+            }
+        }
+
+        languageToggles.forEach(box => {
+            box.addEventListener('change', function() {
+                const excluded = Array.from(languageToggles).filter(b => !b.checked).map(b => b.value);
+                // Leaving nothing counted would produce an empty report, so the server
+                // refuses it; refusing it here too saves a round trip.
+                if (excluded.length === languageToggles.length) {
+                    box.checked = true;
+                    showLanguageStatus('<i class="fas fa-exclamation-triangle"></i> At least one language must remain counted.');
+                    return;
+                }
+                submitLanguageSelection(excluded, () => { box.checked = !box.checked; });
+            });
+        });
+
+        const resetLanguages = document.getElementById('btnResetLanguages');
+        if (resetLanguages) {
+            resetLanguages.addEventListener('click', () => submitLanguageSelection(defaultExcludedLanguages));
+        }
 
         // ─── Report downloads ────────────────────────────────────────────────
         // Reports are generated when first requested, which can take a moment on a large
@@ -2709,8 +3154,8 @@ const repositoryDetailTemplate = `
                       </thead>
                       <tbody>
                         {{range .Languages}}
-                        <tr>
-                          <td><strong>{{.Language}}</strong></td>
+                        <tr{{if .Excluded}} class="text-muted" title="Left out of the Code Lines total — change this on the results page"{{end}}>
+                          <td><strong>{{.Language}}</strong>{{if .Excluded}} <span class="badge bg-secondary" style="font-size:0.65em;">excluded</span>{{end}}</td>
                           <td>{{.FilesF}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>

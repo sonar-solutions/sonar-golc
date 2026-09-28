@@ -39,6 +39,10 @@ type OrganizationData struct {
 	LinesOfCodeLargestRepo string `json:"LinesOfCodeLargestRepo"`
 	DevOpsPlatform         string `json:"DevOpsPlatform"`
 	NumberRepos            int    `json:"NumberRepos"`
+	// ExcludedLanguages records the languages TotalLinesOfCode leaves out, so a reader
+	// can tell a total counted under the current defaults from one written by an earlier
+	// version with different ones.
+	ExcludedLanguages []string `json:"ExcludedLanguages"`
 }
 
 type Repository struct {
@@ -661,15 +665,17 @@ func aggregateResultFiles(dir string, isFilePlatform bool) (resultAggregate, err
 
 		aggregate.Repositories++
 
-		// Exclude JSON LOC from the total to match SonarQube's behaviour.
-		jsonLOC := 0
+		// Leave the default excluded languages (JSON and plain YAML) out of the total to
+		// match SonarQube's default configuration. The results page recounts this figure
+		// when the user changes the selection, which is reset by every new scan.
+		excluded := utils.DefaultLanguageExclusion()
+		excludedLOC := 0
 		for _, r := range result.Results {
-			if strings.TrimSpace(r.Language) == utils.LanguageExcludedFromTotalLOC {
-				jsonLOC += r.CodeLines
-				break
+			if excluded.Excludes(r.Language) {
+				excludedLOC += r.CodeLines
 			}
 		}
-		codeLinesForTotal := result.TotalCodeLines - jsonLOC
+		codeLinesForTotal := result.TotalCodeLines - excludedLOC
 		aggregate.TotalCodeLines += codeLinesForTotal
 
 		// Update the (max, project, repo) triple together — the name was validated
@@ -1889,6 +1895,7 @@ func runGolcInProcess(platform string) {
 		LinesOfCodeLargestRepo: maxTotalCodeLines1,
 		DevOpsPlatform:         platformConfig["DevOps"].(string),
 		NumberRepos:            NumberRepos,
+		ExcludedLanguages:      utils.DefaultLanguageExclusion().Languages(),
 	}
 
 	jsonData, err := json.MarshalIndent(data, "", "    ")
@@ -1921,6 +1928,11 @@ func runGolcInProcess(platform string) {
 	// built so a fresh analysis always reports the whole scan.
 	if err := utils.ClearDeselectedRepos(baseResultsDir); err != nil {
 		logger.Errorf("❌ Error clearing repository selection: %v", err)
+	}
+	// The language selection is reset for the same reason: every scan starts from
+	// SonarQube's defaults.
+	if err := utils.ClearLanguageExclusion(baseResultsDir); err != nil {
+		logger.Errorf("❌ Error clearing language selection: %v", err)
 	}
 
 	// Generated Global Report (walks the directory for Result_* files)

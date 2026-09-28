@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -306,9 +307,10 @@ func TestAdjustGlobalInfoUntouchedWhenNothingDeselected(t *testing.T) {
 		LargestRepository:      "monolith",
 		LinesOfCodeLargestRepo: "800.00K",
 		NumberRepos:            42,
+		ExcludedLanguages:      DefaultExcludedLanguages,
 	}
-	got := AdjustGlobalInfo(in, []LanguageData{{Language: "Go", CodeLines: 5}}, []RepoTotal{{Repo: "other", CodeLines: 5}}, 0)
-	if got != in {
+	got := AdjustGlobalInfo(in, []LanguageData{{Language: "Go", CodeLines: 5}}, []RepoTotal{{Repo: "other", CodeLines: 5}}, 0, DefaultLanguageExclusion())
+	if !reflect.DeepEqual(got, in) {
 		t.Errorf("AdjustGlobalInfo changed an unfiltered report:\n got %+v\nwant %+v", got, in)
 	}
 }
@@ -323,14 +325,14 @@ func TestAdjustGlobalInfoRecomputesWhenDeselected(t *testing.T) {
 	languages := []LanguageData{
 		{Language: "Go", CodeLines: 900},
 		{Language: testLangJava, CodeLines: 100},
-		{Language: LanguageExcludedFromTotalLOC, CodeLines: 5000}, // held out of the total
+		{Language: "JSON", CodeLines: 5000}, // held out of the total
 	}
 	repoTotals := []RepoTotal{
 		{Repo: "small", CodeLines: 100},
 		{Repo: "big", CodeLines: 900},
 	}
 
-	got := AdjustGlobalInfo(in, languages, repoTotals, 3)
+	got := AdjustGlobalInfo(in, languages, repoTotals, 3, DefaultLanguageExclusion())
 
 	if got.TotalLinesOfCode != FormatCodeLines(1000) {
 		t.Errorf("TotalLinesOfCode = %q, want %q (JSON must stay excluded)", got.TotalLinesOfCode, FormatCodeLines(1000))
@@ -351,14 +353,14 @@ func TestRankTopLanguagesExcludesHeldOutLanguage(t *testing.T) {
 	// top language either — it would sit next to a code-line count that deliberately does
 	// not include those lines.
 	got := RankTopLanguages([]LanguageShare{
-		{Language: LanguageExcludedFromTotalLOC, CodeLines: 900_000},
+		{Language: "JSON", CodeLines: 900_000},
 		{Language: "Go", CodeLines: 300},
 		{Language: testLangJava, CodeLines: 200},
 		{Language: "XML", CodeLines: 100},
 		{Language: "Shell", CodeLines: 50},
 		{Language: "  ", CodeLines: 999}, // blank name, ignored
 		{Language: "Empty", CodeLines: 0},
-	}, 3)
+	}, 3, DefaultLanguageExclusion())
 
 	if len(got) != 3 {
 		t.Fatalf("got %d languages, want 3", len(got))
@@ -382,7 +384,7 @@ func TestRankTopLanguagesTiesAreStable(t *testing.T) {
 			{Language: "Zig", CodeLines: 100},
 			{Language: "Ada", CodeLines: 100},
 			{Language: "Perl", CodeLines: 100},
-		}, 3)
+		}, 3, DefaultLanguageExclusion())
 		if got[0].Language != "Ada" || got[1].Language != "Perl" || got[2].Language != "Zig" {
 			t.Fatalf("unstable tie order: %+v", got)
 		}
@@ -390,11 +392,11 @@ func TestRankTopLanguagesTiesAreStable(t *testing.T) {
 }
 
 func TestRankTopLanguagesHandlesFewerThanLimit(t *testing.T) {
-	got := RankTopLanguages([]LanguageShare{{Language: "Go", CodeLines: 5}}, 3)
+	got := RankTopLanguages([]LanguageShare{{Language: "Go", CodeLines: 5}}, 3, DefaultLanguageExclusion())
 	if len(got) != 1 {
 		t.Errorf("got %d, want 1 — a repository with one language must not be padded", len(got))
 	}
-	if empty := RankTopLanguages(nil, 3); len(empty) != 0 {
+	if empty := RankTopLanguages(nil, 3, DefaultLanguageExclusion()); len(empty) != 0 {
 		t.Errorf("got %d, want 0 for no language data", len(empty))
 	}
 }
@@ -445,7 +447,7 @@ func TestRankTopRepositoriesFewerThanLimit(t *testing.T) {
 }
 
 func TestAdjustGlobalInfoNumberReposFloorsAtZero(t *testing.T) {
-	got := AdjustGlobalInfo(Globalinfo{NumberRepos: 2}, nil, nil, 5)
+	got := AdjustGlobalInfo(Globalinfo{NumberRepos: 2}, nil, nil, 5, DefaultLanguageExclusion())
 	if got.NumberRepos != 0 {
 		t.Errorf("NumberRepos = %d, want 0", got.NumberRepos)
 	}

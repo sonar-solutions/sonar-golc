@@ -18,7 +18,6 @@ import (
 	getbibucketdc "github.com/SonarSource-Demos/sonar-golc/pkg/devops/getbitbucketdc"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgithub"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgitlab"
-	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 
 	"github.com/sirupsen/logrus"
 )
@@ -828,7 +827,7 @@ func writeResultFile(t *testing.T, dir, name string, totalCodeLines, jsonCodeLin
 		"TotalCodeLines": totalCodeLines,
 		"Results": []map[string]interface{}{
 			{"Language": "Java", "CodeLines": totalCodeLines - jsonCodeLines},
-			{"Language": utils.LanguageExcludedFromTotalLOC, "CodeLines": jsonCodeLines},
+			{"Language": "JSON", "CodeLines": jsonCodeLines},
 		},
 	}
 	data, err := json.Marshal(payload)

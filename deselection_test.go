@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -174,6 +175,8 @@ func tablePageData(platform string, all []RepositoryData, deselectedKeys ...stri
 		DeselectedCount:     len(removed),
 		ScannedRepositories: len(all),
 		TopLanguagesShown:   utils.TopLanguagesShown,
+		SelectionActive:     len(removed) > 0,
+		SelectionLabel:      selectionLabel(len(removed), utils.DefaultLanguageExclusion(), nil),
 	}
 }
 
@@ -849,6 +852,8 @@ func TestReportsDropdownOffersBothVariantsWhenFiltered(t *testing.T) {
 		DeselectedKeys:      []string{"acme__drop__main"},
 		DeselectedCount:     1,
 		ScannedRepositories: 2,
+		SelectionActive:     true,
+		SelectionLabel:      selectionLabel(1, utils.DefaultLanguageExclusion(), nil),
 	})
 	for _, want := range []string{
 		"/reports/global-report.pdf",
@@ -1025,8 +1030,9 @@ func TestAdjustGlobalInfoPageUntouchedWhenNothingDeselected(t *testing.T) {
 		LargestRepository:      "mono",
 		LinesOfCodeLargestRepo: "1.00M",
 		NumberRepos:            7,
+		ExcludedLanguages:      utils.DefaultExcludedLanguages,
 	}
-	if got := adjustGlobalInfo(in, []LanguageData{{Language: "Go", CodeLines: 1}}, nil, 0); got != in {
+	if got := adjustGlobalInfo(in, []LanguageData{{Language: "Go", CodeLines: 1}}, nil, 0, utils.DefaultLanguageExclusion()); !reflect.DeepEqual(got, in) {
 		t.Errorf("adjustGlobalInfo changed an unfiltered report:\n got %+v\nwant %+v", got, in)
 	}
 }
