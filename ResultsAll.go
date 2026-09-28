@@ -1485,6 +1485,13 @@ func applyDeselection(keys []string) (*DeselectionResponse, error) {
 		return nil, errAllDeselected
 	}
 
+	// A repository selected again must count something. One deselected by switching off
+	// its last language would otherwise come back at zero, so its own exclusions are
+	// cleared and it counts in full.
+	if err := clearExclusionsOfEmptyReselected(all, seen); err != nil {
+		return nil, err
+	}
+
 	if err := utils.SaveDeselectedRepos(resultsBaseDir, records); err != nil {
 		return nil, fmt.Errorf("cannot save selection: %w", err)
 	}
@@ -1727,9 +1734,11 @@ type RepoLanguageResponse struct {
 	CodeLines              int      `json:"CodeLines"`
 	TotalLinesOfCode       string   `json:"TotalLinesOfCode"`
 	ReposWithOwnExclusions int      `json:"ReposWithOwnExclusions"`
-	// Deselected is set when the change deselected the repository rather than exclude
-	// its last counted language.
+	// Deselected is set when excluding the repository's last counted language deselected
+	// it; Reselected when switching a language on in a deselected repository selected it
+	// again.
 	Deselected bool `json:"Deselected,omitempty"`
+	Reselected bool `json:"Reselected,omitempty"`
 }
 
 // LastLanguageConflict is the 409 body for a change that would exclude a repository's last
@@ -1813,6 +1822,11 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 	current := utils.LoadLanguageExclusion(resultsBaseDir)
 	byRepo := current.RepoExclusions()
 
+	// A change can also move the repository in or out of the deselection: switching off
+	// its last counted language deselects it (once confirmed), and switching a language on
+	// in a deselected repository selects it again.
+	var deselectAfter, reselectAfter bool
+
 	switch {
 	case req.ResetAll:
 		byRepo = nil
@@ -1860,24 +1874,27 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		for _, l := range byRepo[req.Key] {
 			own[l] = true
 		}
+		isDeselected := utils.LoadDeselectionSet(resultsBaseDir).Contains(req.Key)
 		if *req.Counted {
 			delete(own, lang)
+			reselectAfter = isDeselected
 		} else {
 			own[lang] = true
 		}
 
 		// Excluding every language a repository counts leaves it at zero, which is what
 		// deselecting it is for - and a deselection says so in every report. So once the
-		// user confirms, the repository is deselected instead, and the language exclusion
-		// is not recorded: selecting the repository again counts it in full, rather than
-		// bringing back a repository that counts nothing.
+		// user confirms, the repository is deselected as well. The exclusion is recorded
+		// too, so its switches show what was switched off; selecting the repository again
+		// clears them if they would leave it counting nothing (see applyDeselection).
+		// A repository already deselected is out of the totals, so there is nothing to ask.
 		counted := 0
 		for _, l := range repo.Languages {
 			if !current.ExcludesEverywhere(l) && !own[l] {
 				counted++
 			}
 		}
-		if counted == 0 {
+		if counted == 0 && !isDeselected {
 			if !req.Deselect {
 				return nil, errLastLanguage{LastLanguageConflict{
 					Error: fmt.Sprintf("%s is the last counted language of %s — deselect the repository instead",
@@ -1885,7 +1902,7 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 					Key: req.Key, Repository: repo.Repository, Language: lang,
 				}}
 			}
-			return deselectInsteadOfExcluding(req.Key)
+			deselectAfter = true
 		}
 
 		langs := make([]string, 0, len(own))
@@ -1898,9 +1915,25 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		byRepo[req.Key] = langs
 	}
 
+	// Deselect first: it can still be refused - the last counted repository stays counted
+	// - and nothing may be saved if it is.
+	if deselectAfter {
+		if _, err := applyDeselection(deselectionKeysWith(req.Key, true)); err != nil {
+			return nil, err
+		}
+	}
+
 	updated := current.WithRepoExclusions(byRepo)
 	if err := utils.SaveRepoLanguageExclusions(resultsBaseDir, updated); err != nil {
 		return nil, fmt.Errorf("cannot save repository language selection: %w", err)
+	}
+
+	// Select again only after saving, so the repository comes back with the language just
+	// switched on rather than counting nothing.
+	if reselectAfter {
+		if _, err := applyDeselection(deselectionKeysWith(req.Key, false)); err != nil {
+			return nil, err
+		}
 	}
 	if !selectionActive(utils.LoadDeselectedRepos(resultsBaseDir), updated) {
 		if err := clearCustomizedReportsLocked(); err != nil {
@@ -1919,6 +1952,8 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		ExcludedLanguages:      updated.RepoExclusions()[req.Key],
 		TotalLinesOfCode:       pd.GlobalReport.TotalLinesOfCode,
 		ReposWithOwnExclusions: pd.ReposWithOwnExclusions,
+		Deselected:             deselectAfter,
+		Reselected:             reselectAfter,
 	}
 	if resp.ExcludedLanguages == nil {
 		resp.ExcludedLanguages = []string{}
@@ -1931,31 +1966,52 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 	return resp, nil
 }
 
-// deselectInsteadOfExcluding adds a repository to the deselection, through the same path
-// as the repository checkboxes - which also refuses to deselect the last counted one.
-// Callers must hold selectionMu.
-func deselectInsteadOfExcluding(key string) (*RepoLanguageResponse, error) {
-	keys := []string{key}
+// clearExclusionsOfEmptyReselected clears the own exclusions of every repository that is
+// deselected now, is not in stillDeselected, and would count nothing once selected again.
+func clearExclusionsOfEmptyReselected(all []RepositoryData, stillDeselected map[string]bool) error {
+	previously := utils.LoadDeselectionSet(resultsBaseDir)
+	excluded := utils.LoadLanguageExclusion(resultsBaseDir)
+	byRepo := excluded.RepoExclusions()
+	changed := false
+	for _, repo := range all {
+		if !previously.Contains(repo.Key) || stillDeselected[repo.Key] || len(byRepo[repo.Key]) == 0 {
+			continue
+		}
+		scoped := excluded.ForRepo(repo.Key)
+		countsSomething := false
+		for _, lang := range repo.Languages {
+			if !scoped.Excludes(lang) {
+				countsSomething = true
+				break
+			}
+		}
+		if !countsSomething {
+			delete(byRepo, repo.Key)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := utils.SaveRepoLanguageExclusions(resultsBaseDir, excluded.WithRepoExclusions(byRepo)); err != nil {
+		return fmt.Errorf("cannot save repository language selection: %w", err)
+	}
+	return nil
+}
+
+// deselectionKeysWith returns the persisted deselection with one repository added to it
+// or removed from it.
+func deselectionKeysWith(key string, deselected bool) []string {
+	var keys []string
+	if deselected {
+		keys = append(keys, key)
+	}
 	for _, repo := range utils.LoadDeselectedRepos(resultsBaseDir) {
 		if repo.Key != key {
 			keys = append(keys, repo.Key)
 		}
 	}
-	if _, err := applyDeselection(keys); err != nil {
-		return nil, err
-	}
-	pd := snapshot()
-	own := utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions()[key]
-	if own == nil {
-		own = []string{}
-	}
-	return &RepoLanguageResponse{
-		Key:                    key,
-		ExcludedLanguages:      own,
-		TotalLinesOfCode:       pd.GlobalReport.TotalLinesOfCode,
-		ReposWithOwnExclusions: pd.ReposWithOwnExclusions,
-		Deselected:             true,
-	}, nil
+	return keys
 }
 
 // selectionActive reports whether the page's totals depart from the full scan: some
@@ -3513,7 +3569,7 @@ const htmlTemplate = `
      every repository are not offered here: the Languages card switches those. An em dash
      when the repository has no such language, so "unknown" is visibly unknown rather
      than an empty-looking cell. */}}
-{{define "languageChips"}}{{if .LanguageChips}}<div class="repo-lang-chips">{{range .LanguageChips}}<label class="repo-lang-chip{{if .Excluded}} excluded{{end}}" title="{{if .Excluded}}Excluded from {{$.Repository}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$.Repository}}'s total{{end}}"><input type="checkbox" class="form-check-input repo-lang-toggle" data-key="{{$.Key}}" value="{{.Language}}" aria-label="Count {{.Language}} in {{$.Repository}}"{{if not .Excluded}} checked{{end}}><span class="repo-lang-name">{{.Language}}</span><span class="repo-lang-loc">{{.CodeLinesF}}</span></label>{{end}}</div>{{else}}<span class="text-muted">&mdash;</span>{{end}}{{end}}
+{{define "languageChips"}}{{if .LanguageChips}}<div class="repo-lang-chips">{{range .LanguageChips}}<label class="repo-lang-chip{{if .Excluded}} excluded{{end}}" title="{{if and .Excluded $.Deselected}}Switch on to count {{.Language}} and select {{$.Repository}} again{{else if .Excluded}}Excluded from {{$.Repository}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$.Repository}}'s total{{end}}"><input type="checkbox" class="form-check-input repo-lang-toggle" data-key="{{$.Key}}" value="{{.Language}}" aria-label="Count {{.Language}} in {{$.Repository}}"{{if not .Excluded}} checked{{end}}><span class="repo-lang-name">{{.Language}}</span><span class="repo-lang-loc">{{.CodeLinesF}}</span></label>{{end}}</div>{{else}}<span class="text-muted">&mdash;</span>{{end}}{{end}}
 `
 
 // Repository Detail HTML template
@@ -3686,7 +3742,8 @@ const repositoryDetailTemplate = `
               <div class="alert alert-secondary d-flex align-items-center gap-2" role="status">
                 <i class="fas fa-ban"></i>
                 <span><strong>{{.Repository}} is deselected</strong> and left out of every total and report.
-                  Select it again in the repository table on the <a href="/#repository-section">results page</a>.</span>
+                  Switch a language on below to count it and select the repository again, or select it in the
+                  repository table on the <a href="/#repository-section">results page</a>.</span>
               </div>
               {{end}}
               <div class="card shadow">

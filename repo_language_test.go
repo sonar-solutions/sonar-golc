@@ -161,8 +161,8 @@ func TestExcludingTheLastLanguageAsksToDeselect(t *testing.T) {
 		t.Fatal("an unconfirmed request must not deselect the repository")
 	}
 
-	// Confirmed: the repository is deselected, and the last language stays counted so that
-	// selecting the repository again brings it back with something to count.
+	// Confirmed: the repository is deselected, and the exclusion is recorded too, so its
+	// switches show every language off rather than one still on.
 	rec = postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false), Deselect: true})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("confirmed: status = %d (body: %s)", rec.Code, rec.Body.String())
@@ -171,8 +171,8 @@ func TestExcludingTheLastLanguageAsksToDeselect(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if !resp.Deselected || strings.Join(resp.ExcludedLanguages, ",") != "Go" {
-		t.Errorf("response = %+v, want deselected with only Go excluded of its own", resp)
+	if !resp.Deselected || strings.Join(resp.ExcludedLanguages, ",") != "Go,Kubernetes" {
+		t.Errorf("response = %+v, want deselected with Go and Kubernetes excluded of its own", resp)
 	}
 	if !utils.LoadDeselectionSet(resultsBaseDir).Contains(keyKeep) {
 		t.Error("the repository should now be deselected")
@@ -360,4 +360,120 @@ func TestRepositoryDetailOffersLanguageSwitches(t *testing.T) {
 func parseRepositoryTemplate(t *testing.T) *template.Template {
 	t.Helper()
 	return template.Must(template.New("repository").Parse(repositoryDetailTemplate))
+}
+
+// deselectKeepByItsLastLanguage leaves keep deselected with both its counted languages
+// switched off, as the confirm flow does.
+func deselectKeepByItsLastLanguage(t *testing.T) {
+	t.Helper()
+	for _, req := range []RepoLanguageRequest{
+		{Key: keyKeep, Language: "Go", Counted: counted(false)},
+		{Key: keyKeep, Language: "Kubernetes", Counted: counted(false), Deselect: true},
+	} {
+		if _, err := applyRepoLanguageChange(req); err != nil {
+			t.Fatalf(msgApplyRepoLanguage, err)
+		}
+	}
+	if !utils.LoadDeselectionSet(resultsBaseDir).Contains(keyKeep) {
+		t.Fatal("setup: keep should be deselected")
+	}
+}
+
+func TestDeselectedRepositoryChipsShowEveryLanguageOff(t *testing.T) {
+	setupLanguageFixture(t)
+	deselectKeepByItsLastLanguage(t)
+
+	out := renderTemplate(t, snapshot())
+	for _, lang := range []string{"Go", "Kubernetes"} {
+		if !strings.Contains(out, `value="`+lang+`" aria-label="Count `+lang+` in keep">`) {
+			t.Errorf("%s chip should render switched off", lang)
+		}
+		if strings.Contains(out, `value="`+lang+`" aria-label="Count `+lang+` in keep" checked>`) {
+			t.Errorf("%s chip should not render switched on", lang)
+		}
+	}
+	if !strings.Contains(out, "Switch on to count Kubernetes and select keep again") {
+		t.Error("an off chip of a deselected repository should say it selects the repository again")
+	}
+}
+
+func TestSwitchingALanguageOnSelectsTheRepositoryAgain(t *testing.T) {
+	setupLanguageFixture(t)
+	deselectKeepByItsLastLanguage(t)
+
+	resp, err := applyRepoLanguageChange(RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(true)})
+	if err != nil {
+		t.Fatalf(msgApplyRepoLanguage, err)
+	}
+	if !resp.Reselected || resp.Deselected {
+		t.Errorf("response = %+v, want Reselected", resp)
+	}
+	if utils.LoadDeselectionSet(resultsBaseDir).Contains(keyKeep) {
+		t.Error("switching a language on should select the repository again")
+	}
+	// keep counts Kubernetes alone; Go stays switched off.
+	if got := repoRow(t, snapshot(), repoKeep).CodeLines; got != 100 {
+		t.Errorf("keep row = %d, want 100 (Kubernetes only)", got)
+	}
+	if want := utils.FormatCodeLines(350); resp.TotalLinesOfCode != want {
+		t.Errorf("TotalLinesOfCode = %q, want %q", resp.TotalLinesOfCode, want)
+	}
+}
+
+func TestSelectingAnEmptyRepositoryAgainCountsItInFull(t *testing.T) {
+	for _, reselect := range []struct {
+		name string
+		keys []string
+	}{
+		{"its checkbox", []string{}},
+		{"reset to full scan", nil},
+	} {
+		t.Run(reselect.name, func(t *testing.T) {
+			setupLanguageFixture(t)
+			deselectKeepByItsLastLanguage(t)
+
+			if _, err := applyDeselection(reselect.keys); err != nil {
+				t.Fatalf(msgApplyDeselection, err)
+			}
+			if got := utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions()[keyKeep]; len(got) != 0 {
+				t.Errorf("keep's own exclusions = %v, want cleared so it does not come back at zero", got)
+			}
+			if got := repoRow(t, snapshot(), repoKeep).CodeLines; got != 1100 {
+				t.Errorf("keep row = %d, want 1100 (counted in full under the global set)", got)
+			}
+		})
+	}
+}
+
+func TestReselectingKeepsExclusionsThatLeaveSomethingCounted(t *testing.T) {
+	setupLanguageFixture(t)
+	// Kubernetes off of its own, then deselected by its checkbox: selecting it again must
+	// keep the exclusion, since Go still counts.
+	if _, err := applyRepoLanguageChange(RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)}); err != nil {
+		t.Fatalf(msgApplyRepoLanguage, err)
+	}
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	if _, err := applyDeselection(nil); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	if got := utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions()[keyKeep]; strings.Join(got, ",") != "Kubernetes" {
+		t.Errorf("keep's own exclusions = %v, want [Kubernetes] kept", got)
+	}
+}
+
+func TestLastLanguageOfAnAlreadyDeselectedRepositoryNeedsNoPrompt(t *testing.T) {
+	setupLanguageFixture(t)
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	if rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Go", Counted: counted(false)}); rec.Code != http.StatusOK {
+		t.Fatalf("excluding Go: status = %d", rec.Code)
+	}
+	// Already out of every total, so switching off its last language just records it.
+	rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)})
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 without a prompt (body: %s)", rec.Code, rec.Body.String())
+	}
 }
