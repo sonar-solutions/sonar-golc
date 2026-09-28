@@ -228,6 +228,10 @@ func TestRepositoryRowRendersLanguageChips(t *testing.T) {
 		`id="btnResetRepoLanguages"`,
 		`excl. in 1`,
 		`1 repository excludes languages of its own`,
+		// The row order is saved and restored across the reload a switch triggers, so a
+		// repository whose Code Lines just dropped does not move down the table.
+		`order: repositoryRows().map(row => row.dataset.key)`,
+		`restoreRowOrder(savedTable.order)`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered page missing %q", want)

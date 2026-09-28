@@ -3209,17 +3209,7 @@ const htmlTemplate = `
                 }
             });
             
-            // Re-append rows and renumber the counted ones. Deselected rows keep their
-            // dash: they are not part of the numbered sequence.
-            let counted = 0;
-            rows.forEach(row => {
-                const numCell = row.querySelector('.row-num');
-                const box = row.querySelector('.repo-select');
-                if (numCell) {
-                    numCell.textContent = (box && !box.checked) ? '—' : ++counted;
-                }
-                tbody.appendChild(row);
-            });
+            placeRows(rows);
             
             // Update sort icons
             updateSortingIcons(column, currentSort.direction);
@@ -3248,12 +3238,43 @@ const htmlTemplate = `
             return Array.from(document.querySelectorAll('#repositoryTableBody tr'));
         }
 
+        // Re-append rows in the given order and renumber the counted ones. Deselected rows
+        // keep their dash: they are not part of the numbered sequence.
+        function placeRows(rows) {
+            const tbody = document.getElementById('repositoryTableBody');
+            let counted = 0;
+            rows.forEach(row => {
+                const numCell = row.querySelector('.row-num');
+                const box = row.querySelector('.repo-select');
+                if (numCell) {
+                    numCell.textContent = (box && !box.checked) ? '—' : ++counted;
+                }
+                tbody.appendChild(row);
+            });
+        }
+
+        // The row order is saved with the page and sort. Every change on this page reloads
+        // it, and the server ranks repositories by their recounted Code Lines - so without
+        // the saved order, switching a language off would move its repository down the
+        // table, away from where the user was looking.
         function saveTableState() {
             try {
                 sessionStorage.setItem(TABLE_STATE_KEY, JSON.stringify({
-                    page: currentPage, column: currentSort.column, direction: currentSort.direction
+                    page: currentPage, column: currentSort.column, direction: currentSort.direction,
+                    order: repositoryRows().map(row => row.dataset.key)
                 }));
             } catch (e) { /* storage unavailable: the page still works, it just forgets */ }
+        }
+
+        // Restores a saved row order, but only for exactly the same repositories - a new
+        // scan, or a different result set in the same tab, gets the server's ranking.
+        function restoreRowOrder(order) {
+            const rows = repositoryRows();
+            if (!Array.isArray(order) || order.length !== rows.length) return false;
+            const position = new Map(order.map((key, i) => [key, i]));
+            if (position.size !== rows.length || !rows.every(row => position.has(row.dataset.key))) return false;
+            placeRows(rows.sort((a, b) => position.get(a.dataset.key) - position.get(b.dataset.key)));
+            return true;
         }
 
         function loadTableState() {
@@ -3320,7 +3341,14 @@ const htmlTemplate = `
         }
 
         const savedTable = loadTableState();
-        if (savedTable && savedTable.column &&
+        if (savedTable && savedTable.column && restoreRowOrder(savedTable.order)) {
+            // Rows stay where they were before the reload; the header shows the sort they
+            // came from, and clicking it re-sorts by the current values.
+            currentSort.column = savedTable.column;
+            currentSort.direction = savedTable.direction;
+            updateSortingIcons(currentSort.column, currentSort.direction);
+            showPage(savedTable.page);
+        } else if (savedTable && savedTable.column &&
             (savedTable.column !== currentSort.column || savedTable.direction !== currentSort.direction)) {
             sortTable(savedTable.column, savedTable.direction, savedTable.page);
         } else {
