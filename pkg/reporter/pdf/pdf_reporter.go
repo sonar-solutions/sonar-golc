@@ -181,7 +181,10 @@ func (p PdfReporter) writePdf(pdfReport *report) error {
 	pdf.Cell(0, 10, "Total Code Lines: "+strconv.Itoa(totalCodeLinesForReport))
 	pdf.Ln(5)
 	pdf.SetFont("Times", "", 8)
-	pdf.Cell(0, 8, "Note: "+utils.NoteExcludedFromTotal)
+	// This report is written by the scanner and counts .json files by extension, since its
+	// per-file results carry no language - so its note names JSON alone rather than the
+	// language selection the results page applies.
+	pdf.Cell(0, 8, "Note: JSON is excluded from the total to reproduce standard SonarQube behavior.")
 	pdf.Ln(10)
 
 	// Table Headers

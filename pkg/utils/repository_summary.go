@@ -27,16 +27,16 @@ type LanguageShare struct {
 // RankTopLanguages returns a repository's largest languages, biggest first, capped at
 // limit.
 //
-// The language held out of the headline total (JSON) is excluded, matching the CodeLines
-// figure these languages appear next to. Including it would let a repository show
+// The languages held out of the headline total are excluded, matching the CodeLines
+// figure these languages appear next to. Including them would let a repository show
 // "JSON 240K" beside a code-line count that deliberately does not contain those lines.
 //
 // Ties break on language name so the output is stable across runs.
-func RankTopLanguages(languages []LanguageShare, limit int) []LanguageShare {
+func RankTopLanguages(languages []LanguageShare, limit int, excluded LanguageExclusion) []LanguageShare {
 	ranked := make([]LanguageShare, 0, len(languages))
 	for _, lang := range languages {
 		name := strings.TrimSpace(lang.Language)
-		if name == "" || name == LanguageExcludedFromTotalLOC || lang.CodeLines <= 0 {
+		if name == "" || excluded.Excludes(name) || lang.CodeLines <= 0 {
 			continue
 		}
 		ranked = append(ranked, LanguageShare{
@@ -135,6 +135,8 @@ type RepositorySummaryReport struct {
 	TotalCommentsF    string           `json:"TotalCommentsF"`
 	TotalCodeLinesF   string           `json:"TotalCodeLinesF"`
 	Repositories      []RepositoryData `json:"Repositories"`
+	// ExcludedNote says which languages every code-line figure above leaves out.
+	ExcludedNote string `json:"ExcludedNote"`
 
 	DeselectedRepositories int              `json:"DeselectedRepositories,omitempty"`
 	DeselectedCodeLines    int              `json:"DeselectedCodeLines,omitempty"`
@@ -433,7 +435,7 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 		fmt.Sprintf("Total Code Lines: %s", summary.TotalCodeLinesF),
 		fmt.Sprintf("Total Comments: %s", summary.TotalCommentsF),
 		fmt.Sprintf("Total Blank Lines: %s", summary.TotalBlankLinesF),
-		NoteExcludedFromTotal,
+		summary.ExcludedNote,
 	}
 
 	// Stated up front, next to the totals it changes, so a reader cannot take the
@@ -527,6 +529,9 @@ func renderDeselectedTable(pdf *gofpdf.Fpdf, tr func(string) string, summary *Re
 type SummaryReportOptions struct {
 	// Deselected repositories to leave out of the totals. Empty means the full scan.
 	Deselected DeselectionSet
+	// Excluded languages to leave out of every repository's code lines. The zero value
+	// is the default set.
+	Excluded LanguageExclusion
 	// OutputDir is the base directory the byfile-report tree is written under. Empty
 	// means the directory passed to the generator.
 	OutputDir string
@@ -539,6 +544,7 @@ type SummaryReportOptions struct {
 func GenerateRepositorySummaryReports(directory string) error {
 	return GenerateRepositorySummaryReportsWith(directory, SummaryReportOptions{
 		Deselected: LoadDeselectionSet(directory),
+		Excluded:   LoadLanguageExclusion(directory),
 	})
 }
 
@@ -552,7 +558,7 @@ func GenerateRepositorySummaryReportsWith(directory string, opts SummaryReportOp
 	}
 
 	// Get repository data
-	repositories, err := getRepositoryData()
+	repositories, err := ReadRepositoryDataWith(resultsDirName, opts.Excluded)
 	if err != nil {
 		// If we can't find analysis result files, this might be the File platform
 		// or no repositories were analyzed. Skip repository summary generation.
@@ -584,6 +590,7 @@ func GenerateRepositorySummaryReportsWith(directory string, opts SummaryReportOp
 		TotalCommentsF:    FormatCodeLines(float64(totalComments)),
 		TotalCodeLinesF:   FormatCodeLines(float64(totalCodeLines)),
 		Repositories:      repositories,
+		ExcludedNote:      opts.Excluded.Note(),
 	}
 
 	// Left entirely absent when the selection is untouched, so an unfiltered report

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // resultsDirName is the results tree the reports have always read from, relative to the
@@ -157,11 +156,17 @@ func PreferredBranches(branches []ProjectBranch) map[string]ProjectBranch {
 }
 
 // ReadRepositoryData collects every analyzed repository from the result files under
-// baseResultsDir, largest first.
+// baseResultsDir, largest first, counted under the language selection persisted there.
+func ReadRepositoryData(baseResultsDir string) ([]RepositoryData, error) {
+	return ReadRepositoryDataWith(baseResultsDir, LoadLanguageExclusion(baseResultsDir))
+}
+
+// ReadRepositoryDataWith collects every analyzed repository, largest first, with each
+// repository's CodeLines and top languages leaving out the excluded languages.
 //
 // A repository whose result documents are missing or unreadable is skipped rather than
 // failing the whole read: one unreadable file should not cost the user the entire report.
-func ReadRepositoryData(baseResultsDir string) ([]RepositoryData, error) {
+func ReadRepositoryDataWith(baseResultsDir string, excluded LanguageExclusion) ([]RepositoryData, error) {
 	spec, inventory, err := DetectPlatform(baseResultsDir)
 	if err != nil {
 		return nil, fmt.Errorf("error reading analysis result file: %w", err)
@@ -174,7 +179,7 @@ func ReadRepositoryData(baseResultsDir string) ([]RepositoryData, error) {
 
 	var repositories []RepositoryData
 	for _, branch := range PreferredBranches(analysis.ProjectBranches) {
-		repo, ok := readRepository(baseResultsDir, spec, branch)
+		repo, ok := readRepository(baseResultsDir, spec, branch, excluded)
 		if !ok {
 			continue
 		}
@@ -200,7 +205,7 @@ func ReadRepositoryData(baseResultsDir string) ([]RepositoryData, error) {
 
 // readRepository builds one repository's row from its result documents, reporting ok=false
 // when they cannot be read.
-func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBranch) (RepositoryData, bool) {
+func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBranch, excluded LanguageExclusion) (RepositoryData, bool) {
 	fileData, err := os.ReadFile(spec.ByFilePath(baseResultsDir, branch))
 	if err != nil {
 		return RepositoryData{}, false
@@ -217,7 +222,7 @@ func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBran
 	}
 
 	// The per-language document answers two questions from one parse: how much of the
-	// total is the language held out of it (JSON), and which languages are the largest.
+	// total is the languages held out of it, and which languages are the largest.
 	codeLines := report.TotalCodeLines
 	var topLanguages []LanguageShare
 	if langData, err := os.ReadFile(spec.ByLanguagePath(baseResultsDir, branch)); err == nil {
@@ -226,12 +231,11 @@ func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBran
 		}
 		if json.Unmarshal(langData, &byLang) == nil {
 			for _, r := range byLang.Results {
-				if strings.TrimSpace(r.Language) == LanguageExcludedFromTotalLOC {
-					codeLines = report.TotalCodeLines - r.CodeLines
-					break
+				if excluded.Excludes(r.Language) {
+					codeLines -= r.CodeLines
 				}
 			}
-			topLanguages = RankTopLanguages(byLang.Results, TopLanguagesShown)
+			topLanguages = RankTopLanguages(byLang.Results, TopLanguagesShown, excluded)
 		}
 	}
 

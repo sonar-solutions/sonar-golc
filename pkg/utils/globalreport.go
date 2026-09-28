@@ -25,6 +25,8 @@ type LanguageData struct {
 	CodeLines  int     `json:"CodeLines"`
 	Percentage float64 `json:"Percentage"`
 	CodeLinesF string  `json:"CodeLinesF"`
+	// Excluded marks a language left out of the totals; its Percentage is then zero.
+	Excluded bool `json:"Excluded,omitempty"`
 }
 
 type Globalinfo struct {
@@ -48,12 +50,12 @@ func getTotalCodeLines(languages []LanguageData) int {
 	return total
 }
 
-// getTotalCodeLinesExcludingJSON returns the sum of CodeLines for all languages except JSON.
-// Used for report totals and percentages to match SonarQube standard behavior.
-func getTotalCodeLinesExcludingJSON(languages []LanguageData) int {
+// getCountedCodeLines returns the sum of CodeLines for every language the selection
+// counts. Used for report totals and percentages.
+func getCountedCodeLines(languages []LanguageData, excluded LanguageExclusion) int {
 	total := 0
 	for _, lang := range languages {
-		if strings.TrimSpace(lang.Language) != LanguageExcludedFromTotalLOC {
+		if !excluded.Excludes(lang.Language) {
 			total += lang.CodeLines
 		}
 	}
@@ -66,6 +68,8 @@ func getTotalCodeLinesExcludingJSON(languages []LanguageData) int {
 type GlobalReportOptions struct {
 	// Deselected repositories to leave out of every total. Empty means the full scan.
 	Deselected []DeselectedRepo
+	// Excluded languages to leave out of every total. The zero value is the default set.
+	Excluded LanguageExclusion
 	// PDFPath is where the PDF is written. Empty means Results/GlobalReport.pdf.
 	PDFPath string
 	// LanguageTotalsPath is where the per-language totals JSON is written. Empty means
@@ -80,6 +84,7 @@ type GlobalReportOptions struct {
 func CreateGlobalReport(directory string) error {
 	return CreateGlobalReportWith(directory, GlobalReportOptions{
 		Deselected: LoadDeselectedRepos(directory),
+		Excluded:   LoadLanguageExclusion(directory),
 	})
 }
 
@@ -101,7 +106,7 @@ func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 	deselected := opts.Deselected
 	deselectedSet := DeselectionKeys(deselected)
 
-	totals, repoTotals, err := collectResultTotals(directory, deselectedSet)
+	totals, repoTotals, err := collectResultTotals(directory, deselectedSet, opts.Excluded)
 	if err != nil {
 		loggers.Errorf("❌ Error reading files : %v", err)
 		return err
@@ -132,7 +137,17 @@ func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 	// the headline figures must be re-derived from the repositories that survived the
 	// deselection. With an empty set this reproduces the scanned values.
 	rawTotalLOC := ginfo.TotalLinesOfCode
-	ginfo = AdjustGlobalInfo(ginfo, languages, repoTotals, len(deselected))
+	if !opts.Excluded.IsDefault() {
+		// GlobalReport.json was written with the default language selection, so the
+		// whole-scan figure has to be recounted under the one in force.
+		allTotals, _, err := collectResultTotals(directory, nil, opts.Excluded)
+		if err != nil {
+			loggers.Errorf("❌ Error reading files : %v", err)
+			return err
+		}
+		rawTotalLOC = FormatCodeLines(float64(countedTotal(allTotals, opts.Excluded)))
+	}
+	ginfo = AdjustGlobalInfo(ginfo, languages, repoTotals, len(deselected), opts.Excluded)
 
 	// Repositories the analysis phase could not complete (clone timeout/failure or
 	// counting error). Surfaced in the PDF so a large scan that skips a few problem
@@ -152,6 +167,7 @@ func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 		Deselected:   deselected,
 		RawTotalLOC:  rawTotalLOC,
 		RepoTotals:   repoTotals,
+		Excluded:     opts.Excluded,
 		OutputPath:   opts.PDFPath,
 	}); err != nil {
 		return err
@@ -162,15 +178,15 @@ func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 }
 
 // RepoTotal is one repository's contribution to the global totals, as recovered
-// from its by-language result file. CodeLines excludes the language held out of the
-// total (JSON), matching the headline LOC figure everywhere else.
+// from its by-language result file. CodeLines excludes the languages held out of the
+// total, matching the headline LOC figure everywhere else.
 type RepoTotal struct {
 	Key       string
 	Org       string
 	Repo      string
 	Branch    string
 	CodeLines int
-	// PrimaryLanguage is the repository's largest language, excluding the one held out
+	// PrimaryLanguage is the repository's largest language, excluding those held out
 	// of the totals. Empty when the file listed none.
 	PrimaryLanguage string
 	// PrimaryLanguageCodeLines is that language's own code lines, reported alongside it
@@ -192,27 +208,40 @@ func (r RepoTotal) primaryLanguageCell(pdf *gofpdf.Fpdf, tr func(string) string,
 
 // collectLanguageTotals walks result files and aggregates language totals.
 func collectLanguageTotals(directory string) (map[string]int, error) {
-	totals, _, err := collectResultTotals(directory, nil)
+	totals, _, err := collectResultTotals(directory, nil, DefaultLanguageExclusion())
 	return totals, err
+}
+
+// countedTotal sums the per-language totals the selection counts.
+func countedTotal(totals map[string]int, excluded LanguageExclusion) int {
+	total := 0
+	for lang, lines := range totals {
+		if !excluded.Excludes(lang) {
+			total += lines
+		}
+	}
+	return total
 }
 
 // CollectResultTotals walks the per-repository result files under directory and returns
 // the per-language totals plus each repository's contribution, leaving out anything in
-// deselected. Pass nil to cover the full scan.
+// deselected, with each repository's contribution counted under the excluded-language
+// selection. Pass nil to cover the full scan. The per-language totals always list every
+// language, so a caller can still show what an excluded one amounts to.
 //
 // Exported so the results page can compute its language breakdown in memory instead of
 // reading the generated code_lines_by_language.json. Since the reports are now written
 // on demand, that file is not necessarily current, and a page that read it could show a
 // language chart describing a different repository set than its own table.
-func CollectResultTotals(directory string, deselected DeselectionSet) (map[string]int, []RepoTotal, error) {
-	return collectResultTotals(directory, deselected)
+func CollectResultTotals(directory string, deselected DeselectionSet, excluded LanguageExclusion) (map[string]int, []RepoTotal, error) {
+	return collectResultTotals(directory, deselected, excluded)
 }
 
 // collectResultTotals walks result files once and returns both the per-language
 // totals and each repository's contribution, skipping any repository in deselected.
 // Both come from the same pass so the language breakdown and the headline totals can
 // never disagree about which repositories were counted.
-func collectResultTotals(directory string, deselected DeselectionSet) (map[string]int, []RepoTotal, error) {
+func collectResultTotals(directory string, deselected DeselectionSet, excluded LanguageExclusion) (map[string]int, []RepoTotal, error) {
 	ligneDeCodeParLangage := make(map[string]int)
 	var repoTotals []RepoTotal
 
@@ -230,7 +259,7 @@ func collectResultTotals(directory string, deselected DeselectionSet) (map[strin
 			return nil
 		}
 
-		repoLOC, primaryLanguage, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage)
+		repoLOC, primaryLanguage, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage, excluded)
 		if err != nil {
 			return err
 		}
@@ -258,20 +287,20 @@ func collectResultTotals(directory string, deselected DeselectionSet) (map[strin
 }
 
 // AdjustGlobalInfo re-derives the headline figures from the repositories that
-// survived a deselection. TotalLinesOfCode and the largest-repository pair are
-// recomputed from the filtered data; NumberRepos is reduced by the deselected count
-// rather than replaced by len(repoTotals), so the platform-specific meaning of the
-// scanned count is preserved.
+// survived a deselection, counted under the excluded-language selection.
+// TotalLinesOfCode and the largest-repository pair are recomputed from the filtered
+// data; NumberRepos is reduced by the deselected count rather than replaced by
+// len(repoTotals), so the platform-specific meaning of the scanned count is preserved.
 //
-// With nothing deselected it returns ginfo untouched rather than recomputing an
-// identical value: the scan's own figures stay authoritative, so enabling this
-// feature cannot shift a number on an unfiltered report.
-func AdjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, repoTotals []RepoTotal, deselectedCount int) Globalinfo {
-	if deselectedCount == 0 {
+// With nothing deselected and the default languages excluded it returns ginfo untouched
+// rather than recomputing an identical value: the scan's own figures stay
+// authoritative, so these features cannot shift a number on an unfiltered report.
+func AdjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, repoTotals []RepoTotal, deselectedCount int, excluded LanguageExclusion) Globalinfo {
+	if deselectedCount == 0 && excluded.IsDefault() {
 		return ginfo
 	}
 
-	ginfo.TotalLinesOfCode = FormatCodeLines(float64(getTotalCodeLinesExcludingJSON(languages)))
+	ginfo.TotalLinesOfCode = FormatCodeLines(float64(getCountedCodeLines(languages, excluded)))
 
 	maxLOC := 0
 	largest := ""
@@ -332,10 +361,10 @@ func isEligibleResultFile(info os.FileInfo, path string) bool {
 
 // accumulateLanguageTotalsFromFile parses a file and updates the totals map. It returns
 // that single file's contribution to the headline LOC figure — its code lines excluding
-// the language held out of the total (JSON) — and its largest language with that
+// the languages held out of the total — and its largest counted language with that
 // language's own line count, so a caller tracking per-repository figures does not have to
 // parse the file a second time.
-func accumulateLanguageTotalsFromFile(path string, totals map[string]int) (int, LanguageShare, error) {
+func accumulateLanguageTotalsFromFile(path string, totals map[string]int, excluded LanguageExclusion) (int, LanguageShare, error) {
 	fileData, err := os.ReadFile(path)
 	if err != nil {
 		return 0, LanguageShare{}, err
@@ -353,14 +382,14 @@ func accumulateLanguageTotalsFromFile(path string, totals map[string]int) (int, 
 			continue
 		}
 		totals[lang] += result.CodeLines
-		if lang != LanguageExcludedFromTotalLOC {
+		if !excluded.Excludes(lang) {
 			fileLOC += result.CodeLines
 		}
 		shares = append(shares, LanguageShare{Language: lang, CodeLines: result.CodeLines})
 	}
 
 	var primary LanguageShare
-	if ranked := RankTopLanguages(shares, 1); len(ranked) > 0 {
+	if ranked := RankTopLanguages(shares, 1, excluded); len(ranked) > 0 {
 		primary = ranked[0]
 	}
 	return fileLOC, primary, nil
@@ -419,7 +448,7 @@ func readGlobalInfoFromFile(path string) (Globalinfo, error) {
 
 // prepareLanguagesForPDF sorts languages descending by LOC, computes percentages and formatted values,
 // and returns the sorted slice together with the maximum LOC value (for bar-width scaling).
-func prepareLanguagesForPDF(languages []LanguageData) ([]LanguageData, int) {
+func prepareLanguagesForPDF(languages []LanguageData, excluded LanguageExclusion) ([]LanguageData, int) {
 	sort.Slice(languages, func(i, j int) bool {
 		return languages[i].CodeLines > languages[j].CodeLines
 	})
@@ -431,9 +460,10 @@ func prepareLanguagesForPDF(languages []LanguageData) ([]LanguageData, int) {
 		}
 	}
 
-	totalExcl := getTotalCodeLinesExcludingJSON(languages)
+	totalExcl := getCountedCodeLines(languages, excluded)
 	for i := range languages {
-		if strings.TrimSpace(languages[i].Language) == LanguageExcludedFromTotalLOC || totalExcl == 0 {
+		languages[i].Excluded = excluded.Excludes(languages[i].Language)
+		if languages[i].Excluded || totalExcl == 0 {
 			languages[i].Percentage = 0
 		} else {
 			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalExcl) * 100
@@ -483,7 +513,7 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 	pdf.CellFormat(colNum, rowH, fmt.Sprintf("%d", i+1), "0", 0, "C", false, 0, "")
 
 	langDisplay := lang.Language
-	if strings.TrimSpace(lang.Language) == LanguageExcludedFromTotalLOC {
+	if lang.Excluded {
 		langDisplay = lang.Language + " (excl.)"
 	}
 	pdf.SetFont("Helvetica", "B", 8)
@@ -494,7 +524,7 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 	pdf.CellFormat(colLOC, rowH, lang.CodeLinesF, "0", 0, "R", false, 0, "")
 
 	pctStr := fmt.Sprintf("%.1f%%", lang.Percentage)
-	if strings.TrimSpace(lang.Language) == LanguageExcludedFromTotalLOC {
+	if lang.Excluded {
 		pctStr = "-"
 	}
 	pdf.CellFormat(colPct, rowH, pctStr, "0", 0, "R", false, 0, "")
@@ -899,6 +929,8 @@ type globalPDFContent struct {
 	// RepoTotals drives the top-repositories table; it reflects the same selection as
 	// every other figure in the report.
 	RepoTotals []RepoTotal
+	// Excluded is the language selection every figure in the report was counted under.
+	Excluded   LanguageExclusion
 	OutputPath string
 }
 
@@ -913,7 +945,7 @@ func renderGlobalPDF(content globalPDFContent) error {
 
 	loggers := NewLogger()
 
-	languages, maxLOC := prepareLanguagesForPDF(languages)
+	languages, maxLOC := prepareLanguagesForPDF(languages, content.Excluded)
 
 	const (
 		pageW    = 210.0
@@ -972,7 +1004,7 @@ func renderGlobalPDF(content globalPDFContent) error {
 		pdf.SetFont("Helvetica", "I", 7)
 		pdf.SetTextColor(150, 150, 150)
 		pdf.SetX(marginL)
-		note := NoteExcludedFromTotal
+		note := content.Excluded.Note()
 		if len(note) > 85 {
 			note = note[:82] + "..."
 		}
@@ -1078,7 +1110,7 @@ func renderGlobalPDF(content globalPDFContent) error {
 	// ── Top repositories section ─────────────────────────────────────
 	// Shares are computed against the same total the headline figure uses, so the
 	// percentages add up to what the reader sees on the first page.
-	renderTopRepositoriesSection(pdf, tr, content.RepoTotals, getTotalCodeLinesExcludingJSON(languages), marginL, contentW)
+	renderTopRepositoriesSection(pdf, tr, content.RepoTotals, getCountedCodeLines(languages, content.Excluded), marginL, contentW)
 
 	// ── Scan summary section ─────────────────────────────────────────
 	renderScanSummarySection(pdf, summary, len(skippedRepos), len(deselected), marginL, contentW)

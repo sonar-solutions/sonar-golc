@@ -287,7 +287,7 @@ func TestCollectResultTotalsExported(t *testing.T) {
 
 	totals, repoTotals, err := CollectResultTotals(base, DeselectionSet{
 		DeselectionKey("org", testRepoDrop, testBranchMain): true,
-	})
+	}, DefaultLanguageExclusion())
 	if err != nil {
 		t.Fatalf("CollectResultTotals: %v", err)
 	}

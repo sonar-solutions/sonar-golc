@@ -38,7 +38,7 @@ func TestCollectResultTotalsExcludesDeselectedRepos(t *testing.T) {
 	})
 
 	deselected := DeselectionSet{DeselectionKey("org", testRepoDrop, testBranchMain): true}
-	totals, repoTotals, err := collectResultTotals(base, deselected)
+	totals, repoTotals, err := collectResultTotals(base, deselected, DefaultLanguageExclusion())
 	if err != nil {
 		t.Fatalf("collectResultTotals: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestCollectResultTotalsWithNilSetCountsEverything(t *testing.T) {
 	writeByLanguageResult(t, byLang, "Result_org__a__main.json", []LanguageData1{{Language: "Go", CodeLines: 10}})
 	writeByLanguageResult(t, byLang, "Result_org__b__main.json", []LanguageData1{{Language: "Go", CodeLines: 20}})
 
-	totals, repoTotals, err := collectResultTotals(base, nil)
+	totals, repoTotals, err := collectResultTotals(base, nil, DefaultLanguageExclusion())
 	if err != nil {
 		t.Fatalf("collectResultTotals: %v", err)
 	}
