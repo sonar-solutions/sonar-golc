@@ -446,6 +446,114 @@ func TestGetProjectsOfReposWithAuth_ExcludedProject(t *testing.T) {
 	}
 }
 
+func TestGetProjectsOfReposWithAuth_SkipsUnusableEntries(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repositories/ws/repo-a":
+			json.NewEncoder(w).Encode(map[string]Projectc{"project": {Key: "P1"}})
+		case "/repositories/ws/no-project":
+			w.Write([]byte(`{}`))
+		default:
+			w.Write([]byte(`not json`))
+		}
+	}))
+	defer ts.Close()
+
+	el := utils.NewExclusionList(nil, nil)
+	result, _, err := getProjectsOfReposWithAuth("ws", "repo-a, ,no-project,bad-json", "token", "", ts.URL+"/", el)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 || result[0].Key != "P1" {
+		t.Errorf("expected [P1], got %v", result)
+	}
+}
+
+func TestGetProjectsOfReposWithAuth_Unreachable(t *testing.T) {
+	ts := httptest.NewServer(http.NotFoundHandler())
+	base := ts.URL + "/"
+	ts.Close()
+
+	el := utils.NewExclusionList(nil, nil)
+	if _, _, err := getProjectsOfReposWithAuth("ws", "repo-a", "token", "", base, el); err == nil {
+		t.Error("expected error when the server is unreachable")
+	}
+}
+
+func TestGetProjectsOfReposWithAuth_InvalidURL(t *testing.T) {
+	el := utils.NewExclusionList(nil, nil)
+	if _, _, err := getProjectsOfReposWithAuth("ws", "repo-a", "token", "", "http://bad\x7fhost/", el); err == nil {
+		t.Error("expected error for an invalid base URL")
+	}
+}
+
+func TestGetProjectsToAnalyse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workspaces/ws/projects":
+			json.NewEncoder(w).Encode(map[string][]Projectc{"values": {{Key: "ALL1"}, {Key: "ALL2"}}})
+		case "/workspaces/ws/projects/P1":
+			json.NewEncoder(w).Encode(Projectc{Key: "P1"})
+		case "/repositories/ws/repo-a":
+			json.NewEncoder(w).Encode(map[string]Projectc{"project": {Key: "R1"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	tests := []struct {
+		name, project, repos string
+		want                 []string
+	}{
+		{"project key wins over repositories", "P1", "repo-a", []string{"P1"}},
+		{"repositories only", "", "repo-a", []string{"R1"}},
+		{"neither lists the workspace", "", "", []string{"ALL1", "ALL2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			el := utils.NewExclusionList(nil, nil)
+			got, _, err := getProjectsToAnalyse("ws", tt.project, tt.repos, "token", "", ts.URL+"/", el)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var keys []string
+			for _, p := range got {
+				keys = append(keys, p.Key)
+			}
+			if strings.Join(keys, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("expected %v, got %v", tt.want, keys)
+			}
+		})
+	}
+}
+
+func TestGetProjectsToAnalyse_Errors(t *testing.T) {
+	ts := httptest.NewServer(http.NotFoundHandler())
+	defer ts.Close()
+
+	el := utils.NewExclusionList(nil, nil)
+	for _, repos := range []string{"", "repo-a"} {
+		if _, _, err := getProjectsToAnalyse("ws", "", repos, "token", "", ts.URL+"/", el); err == nil {
+			t.Errorf("repos=%q: expected error on HTTP 404", repos)
+		}
+	}
+}
+
+func TestGetCommonParams(t *testing.T) {
+	cfg := map[string]interface{}{
+		"Users": "me@example.com", "AccessToken": "tok", "Workspace": "ws",
+		"Url": "https://api.bitbucket.org/", "Baseapi": "bitbucket.org", "Apiver": "2.0",
+		"Organization": "org", "Period": float64(30), "Stats": true, "DefaultBranch": true,
+		"Repos": "repo-a", "Branch": "main",
+	}
+	p := getCommonParams(nil, cfg, nil, nil, 2, nil, "https://api.bitbucket.org/2.0/")
+	if p.AccessToken != "tok" || p.Users != "me@example.com" || p.Workspace != "ws" ||
+		p.SingleRepos != "repo-a" || p.Period != 30 || p.Excludeproject != 2 {
+		t.Errorf("unexpected params: %+v", p)
+	}
+}
+
 func TestListReposForProject_ArchivedFiltered(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
