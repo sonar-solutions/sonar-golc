@@ -1,43 +1,12 @@
 package utils
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/jung-kurt/gofpdf"
 )
-
-// TestCreateRepositoryPDFRow_NoMojibake guards against the gofpdf latin1 bug: an
-// accented repository or branch name must be translated to the font encoding, so
-// no raw multi-byte UTF-8 sequence survives into the PDF content stream.
-func TestCreateRepositoryPDFRow_NoMojibake(t *testing.T) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetCompression(false)
-	pdf.SetFont("Arial", "", 8)
-	pdf.AddPage()
-	tr := pdf.UnicodeTranslatorFromDescriptor("")
-
-	createRepositoryPDFRow(pdf, tr, RepositoryData{
-		Number: 1, Repository: "café-service", Branch: "fonctionnalité",
-		LinesF: "1", CommentsF: "0", BlankLinesF: "0", CodeLinesF: "1",
-	}, true)
-
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		t.Fatalf("pdf output: %v", err)
-	}
-	raw := buf.Bytes()
-	// é -> C3 A9, and generally any C3-prefixed 2-byte UTF-8 must not survive.
-	for label, seq := range map[string][]byte{"é": {0xC3, 0xA9}} {
-		if bytes.Contains(raw, seq) {
-			t.Errorf("untranslated UTF-8 %s leaked into the repository summary PDF", label)
-		}
-	}
-}
 
 // Constants to avoid duplicating string literals (SonarQube maintainability)
 const (
@@ -100,50 +69,6 @@ func createTestByfileData() map[string]interface{} {
 		"TotalCodeLines":  70,
 	}
 }
-
-func TestTruncateText(t *testing.T) {
-	tests := []struct {
-		name      string
-		text      string
-		maxLength int
-		expected  string
-	}{
-		{
-			name:      "Text shorter than max length",
-			text:      "short",
-			maxLength: 10,
-			expected:  "short",
-		},
-		{
-			name:      "Text longer than max length",
-			text:      "this is a very long text",
-			maxLength: 10,
-			expected:  "this is...",
-		},
-		{
-			name:      "Text exactly max length",
-			text:      "exact",
-			maxLength: 5,
-			expected:  "exact",
-		},
-		{
-			name:      "Empty text",
-			text:      "",
-			maxLength: 5,
-			expected:  "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := truncateText(tt.text, tt.maxLength)
-			if result != tt.expected {
-				t.Errorf("truncateText(%q, %d) = %q, want %q", tt.text, tt.maxLength, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestIsMainBranch(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -244,7 +169,7 @@ func TestCalculateTotals(t *testing.T) {
 func TestCreateReportFilePaths(t *testing.T) {
 	directory := "/test/directory"
 
-	csvPath, jsonPath, pdfPath := createReportFilePaths(directory)
+	csvPath, jsonPath := createReportFilePaths(directory)
 
 	// Built with filepath.Join rather than written as literals because the function
 	// under test joins with the OS separator: hard-coded forward slashes assert Unix
@@ -253,16 +178,12 @@ func TestCreateReportFilePaths(t *testing.T) {
 	// directories, nested how - which is the part that is actually specified.
 	expectedCsvPath := filepath.Join(directory, "byfile-report", "csv-report")
 	expectedJsonPath := filepath.Join(directory, "byfile-report")
-	expectedPdfPath := filepath.Join(directory, "byfile-report", "pdf-report")
 
 	if csvPath != expectedCsvPath {
 		t.Errorf("createReportFilePaths() csvPath = %q, want %q", csvPath, expectedCsvPath)
 	}
 	if jsonPath != expectedJsonPath {
 		t.Errorf("createReportFilePaths() jsonPath = %q, want %q", jsonPath, expectedJsonPath)
-	}
-	if pdfPath != expectedPdfPath {
-		t.Errorf("createReportFilePaths() pdfPath = %q, want %q", pdfPath, expectedPdfPath)
 	}
 }
 
@@ -435,61 +356,6 @@ func TestGenerateRepositoryJSONReport(t *testing.T) {
 		t.Errorf("generateRepositoryJSONReport() repository count = %d, want %d", len(parsedSummary.Repositories), len(summary.Repositories))
 	}
 }
-
-func TestGenerateRepositoryPDFReport(t *testing.T) {
-	tempDir, cleanup := setupTestEnvironment(t, "test_pdf_*")
-	defer cleanup()
-
-	// Create test data
-	summary := &RepositorySummaryReport{
-		TotalRepositories: 1,
-		TotalLines:        100,
-		TotalBlankLines:   10,
-		TotalComments:     20,
-		TotalCodeLines:    70,
-		TotalLinesF:       "100",
-		TotalBlankLinesF:  "10",
-		TotalCommentsF:    "20",
-		TotalCodeLinesF:   "70",
-		Repositories: []RepositoryData{
-			{
-				Number:      1,
-				Repository:  testRepoName,
-				Branch:      "main",
-				Lines:       100,
-				BlankLines:  10,
-				Comments:    20,
-				CodeLines:   70,
-				LinesF:      "100",
-				BlankLinesF: "10",
-				CommentsF:   "20",
-				CodeLinesF:  "70",
-			},
-		},
-	}
-
-	// Test PDF generation
-	err := generateRepositoryPDFReport(summary, tempDir)
-	if err != nil {
-		t.Errorf("generateRepositoryPDFReport() error = %v, want nil", err)
-	}
-
-	// Verify file was created
-	pdfFile := filepath.Join(tempDir, "repository_summary.pdf")
-	if _, err := os.Stat(pdfFile); os.IsNotExist(err) {
-		t.Error("generateRepositoryPDFReport() did not create PDF file")
-	}
-
-	// Verify file is not empty
-	info, err := os.Stat(pdfFile)
-	if err != nil {
-		t.Fatalf("Failed to stat generated PDF file: %v", err)
-	}
-	if info.Size() == 0 {
-		t.Error("generateRepositoryPDFReport() created empty PDF file")
-	}
-}
-
 func TestGenerateRepositorySummaryReportsNoAnalysisFiles(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t, "test_no_analysis_*")
 	defer cleanup()
@@ -542,13 +408,16 @@ func TestGenerateRepositorySummaryReportsWithAnalysisFiles(t *testing.T) {
 	// Verify that reports were created
 	csvFile := filepath.Join(tempDir, "byfile-report/csv-report/repository_summary.csv")
 	jsonFile := filepath.Join(tempDir, "byfile-report/repository_summary.json")
-	pdfFile := filepath.Join(tempDir, "byfile-report/pdf-report/repository_summary.pdf")
 
-	files := []string{csvFile, jsonFile, pdfFile}
+	files := []string{csvFile, jsonFile}
 	for _, file := range files {
 		if _, err := os.Stat(file); os.IsNotExist(err) {
 			t.Errorf("Expected report file was not created: %s", file)
 		}
+	}
+	// No summary PDF any more: the CSV and JSON carry the same table.
+	if _, err := os.Stat(legacySummaryPDFPath(tempDir)); !os.IsNotExist(err) {
+		t.Errorf("a repository summary PDF should no longer be generated (err=%v)", err)
 	}
 }
 
@@ -717,70 +586,6 @@ func TestGetRepositoryDataComplexScenarios(t *testing.T) {
 		}
 	})
 }
-
-func TestCreatePDFTableHeader(t *testing.T) {
-	t.Run("PDF table header creation", func(t *testing.T) {
-		// This tests the helper function that was extracted during refactoring
-		pdf := gofpdf.New("P", "mm", "A4", "")
-		pdf.AddPage()
-
-		// Test that the function doesn't panic
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("createPDFTableHeader panicked: %v", r)
-			}
-		}()
-
-		createPDFTableHeader(pdf, "Test Header")
-
-		// Basic validation that content was added
-		if pdf.PageCount() == 0 {
-			t.Error("createPDFTableHeader did not add content to PDF")
-		}
-	})
-}
-
-func TestCreateRepositoryPDFRow(t *testing.T) {
-	t.Run("PDF row creation", func(t *testing.T) {
-		// This tests the helper function that was extracted during refactoring.
-		// A font must be set, as every production caller does before drawing rows: the
-		// language cell is truncated by measured width, and gofpdf cannot measure a
-		// string without a current font.
-		pdf := gofpdf.New("P", "mm", "A4", "")
-		pdf.SetFont("Arial", "", 8)
-		pdf.AddPage()
-		tr := pdf.UnicodeTranslatorFromDescriptor("")
-
-		repo := RepositoryData{
-			Number:      1,
-			Repository:  "very-long-repository-name-that-should-be-truncated",
-			Branch:      "very-long-branch-name-that-should-be-truncated",
-			Lines:       1000,
-			BlankLines:  100,
-			Comments:    200,
-			CodeLines:   700,
-			LinesF:      "1.0K",
-			BlankLinesF: "100",
-			CommentsF:   "200",
-			CodeLinesF:  "700",
-		}
-
-		// Test that the function doesn't panic and handles long names
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("createRepositoryPDFRow panicked: %v", r)
-			}
-		}()
-
-		createRepositoryPDFRow(pdf, tr, repo, true)
-		createRepositoryPDFRow(pdf, tr, repo, false) // Test alternating colors
-
-		if pdf.PageCount() == 0 {
-			t.Error("createRepositoryPDFRow did not add content to PDF")
-		}
-	})
-}
-
 func TestAdvancedPlatformDetection(t *testing.T) {
 	// Create a temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "test_platform_detection_*")
@@ -942,10 +747,47 @@ func TestIntegrationCoverageImprovements(t *testing.T) {
 			t.Errorf("generateRepositoryJSONReport with empty data failed: %v", err)
 		}
 
-		// Test generateRepositoryPDFReport with empty data
-		err = generateRepositoryPDFReport(emptySummary, tempDir)
-		if err != nil {
-			t.Errorf("generateRepositoryPDFReport with empty data failed: %v", err)
-		}
 	})
+}
+
+func TestSummaryReportsRemoveALegacySummaryPDF(t *testing.T) {
+	// A result set written by an earlier version still holds a summary PDF. Rebuilding the
+	// reports removes it, so it is neither zipped nor mistaken for a current report.
+	base := t.TempDir()
+	legacy := legacySummaryPDFPath(filepath.Join(base, "Results"))
+	if err := os.MkdirAll(filepath.Dir(legacy), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("%PDF-1.3 old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	perRepo := filepath.Join(filepath.Dir(legacy), "Result_acme__svc__main_byfile.pdf")
+	if err := os.WriteFile(perRepo, []byte("%PDF-1.3"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origWD, _ := os.Getwd()
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+	branch := ProjectBranch{Org: "acme", RepoSlug: "svc", MainBranch: testBranchMain}
+	writeRepoFixture(t, "Results", "github", branch, 100, []LanguageShare{{Language: "Go", CodeLines: 100}})
+
+	if err := GenerateRepositorySummaryReportsWith("Results", SummaryReportOptions{}); err != nil {
+		t.Fatalf("GenerateRepositorySummaryReportsWith: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("the legacy summary PDF should be removed (err=%v)", err)
+	}
+	if _, err := os.Stat(perRepo); err != nil {
+		t.Errorf("per-repository PDFs in the same directory must be kept: %v", err)
+	}
+}
+
+func TestRemoveLegacySummaryPDFIsIdempotent(t *testing.T) {
+	base := t.TempDir()
+	if err := RemoveLegacySummaryPDF(base); err != nil {
+		t.Errorf("removing a file that is not there should succeed, got %v", err)
+	}
 }

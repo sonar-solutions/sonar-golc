@@ -1271,9 +1271,6 @@ func (v reportVariant) globalPDFPath() string { return filepath.Join(v.dir, "Glo
 func (v reportVariant) languageTotalsPath() string {
 	return filepath.Join(v.dir, "code_lines_by_language.json")
 }
-func (v reportVariant) summaryPDFPath() string {
-	return filepath.Join(v.dir, "byfile-report", "pdf-report", "repository_summary.pdf")
-}
 func (v reportVariant) summaryCSVPath() string {
 	return filepath.Join(v.dir, "byfile-report", "csv-report", "repository_summary.csv")
 }
@@ -1370,12 +1367,19 @@ func ensureReports(v reportVariant) error {
 		v = fullScanVariant
 	}
 
+	// Remove a summary PDF an earlier version left here, even when the reports are current:
+	// they are no longer rebuilt after an upgrade until a download asks for them, and the
+	// ZIP would otherwise hand the stale file on.
+	if err := utils.RemoveLegacySummaryPDF(v.dir); err != nil {
+		fmt.Println("⚠️  could not remove the obsolete repository summary PDF:", err)
+	}
+
 	want := reportStamp(v, deselected, excluded)
 	state := loadReportsState()
 
 	// A stamp match is only trustworthy if the files are actually still there.
 	if state.Stamps[v.name] == want && filesExist(
-		v.globalPDFPath(), v.summaryPDFPath(), v.summaryCSVPath(),
+		v.globalPDFPath(), v.summaryCSVPath(),
 	) {
 		return nil
 	}
@@ -2204,15 +2208,11 @@ type requestedReport struct {
 // the total would be genuinely dangerous.
 var reportRoutes = map[string]requestedReport{
 	"global-report.pdf": {fullScanVariant, reportVariant.globalPDFPath, "GlobalReport_full-scan.pdf"},
-	"repository-summary.pdf": {fullScanVariant, reportVariant.summaryPDFPath,
-		"RepositorySummary_full-scan.pdf"},
 	"repository-summary.csv": {fullScanVariant, reportVariant.summaryCSVPath,
 		"RepositorySummary_full-scan.csv"},
 
 	"global-report-customized.pdf": {customizedVariant, reportVariant.globalPDFPath,
 		"GlobalReport_selection.pdf"},
-	"repository-summary-customized.pdf": {customizedVariant, reportVariant.summaryPDFPath,
-		"RepositorySummary_selection.pdf"},
 	"repository-summary-customized.csv": {customizedVariant, reportVariant.summaryCSVPath,
 		"RepositorySummary_selection.csv"},
 }
@@ -2721,13 +2721,11 @@ const htmlTemplate = `
                        SonarQube's default languages, whatever is currently selected. */}}
                   {{if .SelectionActive}}<li><h6 class="dropdown-header">Full scan &mdash; all {{.ScannedRepositories}} repositories, default languages</h6></li>{{end}}
                   <li><a class="dropdown-item report-link" href="/reports/global-report.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF</a></li>
-                  <li><a class="dropdown-item report-link" href="/reports/repository-summary.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF</a></li>
                   <li><a class="dropdown-item report-link" href="/reports/repository-summary.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV</a></li>
                   {{if .SelectionActive}}
                   <li><hr class="dropdown-divider"></li>
                   <li><h6 class="dropdown-header">Current selection &mdash; {{.SelectionLabel}}</h6></li>
                   <li><a class="dropdown-item report-link" href="/reports/global-report-customized.pdf" download><i class="fas fa-file-pdf text-primary me-2"></i>Global Report PDF <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
-                  <li><a class="dropdown-item report-link" href="/reports/repository-summary-customized.pdf" download><i class="fas fa-file-pdf text-success me-2"></i>Repository Summary PDF <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
                   <li><a class="dropdown-item report-link" href="/reports/repository-summary-customized.csv" download><i class="fas fa-file-csv me-2" style="color:#e67e22;"></i>Repository Summary CSV <span class="badge bg-secondary ms-1" style="font-size:0.65em;">customized</span></a></li>
                   {{end}}
                   <li><hr class="dropdown-divider"></li>
