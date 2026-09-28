@@ -221,21 +221,34 @@ func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBran
 		return RepositoryData{}, false
 	}
 
-	// The per-language document answers two questions from one parse: how much of the
-	// total is the languages held out of it, and which languages are the largest.
+	// The repository counts under the global set plus its own exclusions.
+	key := spec.DeselectionKey(branch)
+	scoped := excluded.ForRepo(key)
+
+	// The per-language document answers three questions from one parse: how much of the
+	// total is the languages held out of it, which languages are the largest, and which
+	// languages the repository has at all.
 	codeLines := report.TotalCodeLines
-	var topLanguages []LanguageShare
+	var topLanguages, chips []LanguageShare
+	var languages []string
+	lines := make(map[string]int)
 	if langData, err := os.ReadFile(spec.ByLanguagePath(baseResultsDir, branch)); err == nil {
 		var byLang struct {
 			Results []LanguageShare `json:"Results"`
 		}
 		if json.Unmarshal(langData, &byLang) == nil {
 			for _, r := range byLang.Results {
-				if excluded.Excludes(r.Language) {
+				if scoped.Excludes(r.Language) {
 					codeLines -= r.CodeLines
 				}
+				if r.Language != "" {
+					languages = append(languages, r.Language)
+					lines[r.Language] += r.CodeLines
+				}
 			}
-			topLanguages = RankTopLanguages(byLang.Results, TopLanguagesShown, excluded)
+			sort.Strings(languages)
+			topLanguages = RankTopLanguages(byLang.Results, TopLanguagesShown, scoped)
+			chips = RankLanguageChips(byLang.Results, TopLanguagesShown, scoped)
 		}
 	}
 
@@ -248,18 +261,21 @@ func readRepository(baseResultsDir string, spec PlatformSpec, branch ProjectBran
 	}
 
 	return RepositoryData{
-		Key:          spec.DeselectionKey(branch),
-		Repository:   branch.RepoSlug,
-		Org:          org,
-		Branch:       branch.MainBranch,
-		Lines:        report.TotalLines,
-		BlankLines:   report.TotalBlankLines,
-		Comments:     report.TotalComments,
-		CodeLines:    codeLines,
-		LinesF:       FormatCodeLines(float64(report.TotalLines)),
-		BlankLinesF:  FormatCodeLines(float64(report.TotalBlankLines)),
-		CommentsF:    FormatCodeLines(float64(report.TotalComments)),
-		CodeLinesF:   FormatCodeLines(float64(codeLines)),
-		TopLanguages: topLanguages,
+		Key:           key,
+		Repository:    branch.RepoSlug,
+		Org:           org,
+		Branch:        branch.MainBranch,
+		Lines:         report.TotalLines,
+		BlankLines:    report.TotalBlankLines,
+		Comments:      report.TotalComments,
+		CodeLines:     codeLines,
+		LinesF:        FormatCodeLines(float64(report.TotalLines)),
+		BlankLinesF:   FormatCodeLines(float64(report.TotalBlankLines)),
+		CommentsF:     FormatCodeLines(float64(report.TotalComments)),
+		CodeLinesF:    FormatCodeLines(float64(codeLines)),
+		TopLanguages:  topLanguages,
+		LanguageChips: chips,
+		Languages:     languages,
+		LanguageLines: lines,
 	}, true
 }

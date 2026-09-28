@@ -735,7 +735,7 @@ func TestGlobalPDFListsTopRepositories(t *testing.T) {
 	if !strings.Contains(text, "Repositories by Lines of Code") {
 		t.Fatal("global report should list the largest repositories")
 	}
-	for _, want := range []string{repoKeep, repoDrop, "MAIN LANGUAGE", "SHARE %"} {
+	for _, want := range []string{repoKeep, repoDrop, "Go 1.00K", "SHARE %"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("top-repositories table missing %q", want)
 		}
@@ -786,11 +786,21 @@ func TestSummaryPDFAndCSVCarryLanguages(t *testing.T) {
 		t.Fatalf("pdf request failed: %d", rec.Code)
 	}
 	pdf := pdfText(t, fullScanVariant.summaryPDFPath())
-	if !strings.Contains(pdf, "Main Language") {
-		t.Error("summary PDF should have a Main Language column")
+	if strings.Contains(pdf, "Main Language") {
+		t.Error("the Main Language column is replaced by a language line under each row")
 	}
-	if !strings.Contains(pdf, "Go") {
-		t.Error("summary PDF should show each repository's main language")
+	// Columns in the results page's order, read in sequence from the table header.
+	header := pdf[strings.Index(pdf, "Branch"):]
+	for _, col := range []string{"Code Lines", "Blank", "Comments", "Lines"} {
+		i := strings.Index(header, col)
+		if i < 0 {
+			t.Errorf("summary PDF columns should read Code Lines, Blank, Comments, Lines; %q is out of place", col)
+			break
+		}
+		header = header[i+len(col):]
+	}
+	if !strings.Contains(pdf, "Go 1.00K") || !strings.Contains(pdf, "a struck-through one is left out of its Code Lines") {
+		t.Error("summary PDF should list each repository's languages with their lines, and explain the strike-through")
 	}
 
 	if rec := serveReport(t, reportSummaryCSV); rec.Code != http.StatusOK {
@@ -800,8 +810,7 @@ func TestSummaryPDFAndCSVCarryLanguages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The CSV carries all three languages in fixed columns so a spreadsheet can pivot
-	// on them, where the PDF has room for only the primary one.
+	// The CSV carries the top languages in fixed columns so a spreadsheet can pivot on them.
 	for _, want := range []string{"Language 1", "Language 3 Code Lines", ",Go,1000"} {
 		if !strings.Contains(string(csv), want) {
 			t.Errorf("summary CSV missing %q", want)
@@ -1006,6 +1015,32 @@ func TestRepositoryTableColumnCountsLineUp(t *testing.T) {
 	if headerCells != footerCells+spanned {
 		t.Errorf("footer spans %d columns but the header has %d", footerCells+spanned, headerCells)
 	}
+
+	// Code Lines follows Top Languages and Lines closes the row, in the header, the rows
+	// and the totals alike.
+	order := func(text string, marks ...string) bool {
+		last := -1
+		for _, m := range marks {
+			i := strings.Index(text, m)
+			if i <= last {
+				return false
+			}
+			last = i
+		}
+		return true
+	}
+	if !order(header, `data-column="language"`, `data-column="codelines"`, `data-column="blanklines"`, `data-column="comments"`, `data-column="lines"`) {
+		t.Error("header columns are not Top Languages, Code Lines, Blank Lines, Comments, Lines")
+	}
+	if !order(footer, `id="totalCodeLines"`, `id="totalBlankLines"`, `id="totalComments"`, `id="totalLines"`) {
+		t.Error("totals row does not follow the header's column order")
+	}
+	row := section[:strings.Index(section, "</tr>")]
+	afterLanguages := row[strings.Index(row, `class="top-languages"`):]
+	afterLanguages = afterLanguages[strings.Index(afterLanguages, "</td>")+len("</td>"):]
+	if !strings.HasPrefix(strings.TrimSpace(afterLanguages), "<td><strong>") {
+		t.Error("a repository row should put the bold Code Lines right after Top Languages")
+	}
 }
 
 func TestPartitionDeselectedPage(t *testing.T) {
@@ -1046,8 +1081,14 @@ func TestRepositoryTableRendersSelectionControls(t *testing.T) {
 	pd.RawTotalLinesOfCode = rawTotalLOC
 	out := renderTemplate(t, pd)
 
+	// No Apply button: a checkbox applies as soon as it changes.
+	for _, gone := range []string{`id="btnApplySelection"`, `id="btnSelectAll"`, "Apply selection"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("rendered page still has %q", gone)
+		}
+	}
 	for _, want := range []string{
-		`id="btnApplySelection"`,
+		"applySelection(currentDeselectedKeys(), () => { box.checked = !box.checked; });",
 		`id="btnResetSelection"`,
 		`id="selectAllCheckbox"`,
 		`class="form-check-input repo-select"`,
