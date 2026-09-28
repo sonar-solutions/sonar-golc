@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
@@ -372,6 +373,76 @@ func TestGetSpecificProjectsWithAuth_ExcludedProject(t *testing.T) {
 	}
 	if excluded != 1 {
 		t.Errorf("expected 1 excluded, got %d", excluded)
+	}
+}
+
+func projectOfRepoServer(t *testing.T, repoProjects map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key, ok := repoProjects[strings.TrimPrefix(r.URL.Path, "/repositories/ws/")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]Projectc{"project": {Key: key, Name: "Project " + key}})
+	}))
+}
+
+func TestGetProjectsOfReposWithAuth(t *testing.T) {
+	ts := projectOfRepoServer(t, map[string]string{"repo-a": "P1", "repo-b": "P1", "repo-c": "P2"})
+	defer ts.Close()
+
+	el := utils.NewExclusionList(nil, nil)
+	result, excluded, err := getProjectsOfReposWithAuth("ws", "repo-a, repo-b ,repo-c", "token", "", ts.URL+"/", el)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 2 || result[0].Key != "P1" || result[1].Key != "P2" {
+		t.Errorf("expected [P1 P2] once each, got %v", result)
+	}
+	if excluded != 0 {
+		t.Errorf("expected 0 excluded, got %d", excluded)
+	}
+}
+
+func TestGetProjectsOfReposWithAuth_SkipsMissingRepo(t *testing.T) {
+	ts := projectOfRepoServer(t, map[string]string{"repo-a": "P1"})
+	defer ts.Close()
+
+	el := utils.NewExclusionList(nil, nil)
+	result, _, err := getProjectsOfReposWithAuth("ws", "missing, repo-a", "token", "", ts.URL+"/", el)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 || result[0].Key != "P1" {
+		t.Errorf("expected [P1], got %v", result)
+	}
+}
+
+func TestGetProjectsOfReposWithAuth_NoneFound(t *testing.T) {
+	ts := projectOfRepoServer(t, nil)
+	defer ts.Close()
+
+	el := utils.NewExclusionList(nil, nil)
+	if _, _, err := getProjectsOfReposWithAuth("ws", "missing", "token", "", ts.URL+"/", el); err == nil {
+		t.Error("expected error when no repository can be fetched")
+	}
+}
+
+func TestGetProjectsOfReposWithAuth_ExcludedProject(t *testing.T) {
+	ts := projectOfRepoServer(t, map[string]string{"repo-a": "EXCL", "repo-b": "EXCL"})
+	defer ts.Close()
+
+	el := utils.NewExclusionList([]string{"EXCL"}, nil)
+	result, excluded, err := getProjectsOfReposWithAuth("ws", "repo-a,repo-b", "token", "", ts.URL+"/", el)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected no projects, got %v", result)
+	}
+	if excluded != 1 {
+		t.Errorf("expected the project excluded once, got %d", excluded)
 	}
 }
 
