@@ -2252,7 +2252,10 @@ const htmlTemplate = `
                 </div>
             </div>
             <div class="col-lg-6 mt-3 mt-lg-0">
-                              <div class="card text-white bg-primary mb-4" style="max-width: 21rem;">
+              <!-- The card and the button share one block as wide as the card, so the
+                   button centres under the card rather than across the whole column. -->
+              <div style="max-width: 21rem;">
+              <div class="card text-white bg-primary mb-4">
                 <h5 class="card-header text-white" style="padding: 0.75rem 1rem;">
                   <i class="fas fa-code"></i> Languages
                   <small class="text-white-50" style="font-size:0.7rem;display:block;font-weight:400;margin-top:2px;">sorted by lines of code &darr; · switch a language off to leave it out of every total</small>
@@ -2294,9 +2297,10 @@ const htmlTemplate = `
                 </div>
               </div>
               <div class="text-center mt-3">
-                <a href="#repository-section" class="btn btn-outline-light btn-lg">
+                <a href="#repository-section" class="btn btn-outline-light btn-lg px-4 text-nowrap">
                   <i class="fas fa-table"></i> View Repository Details
                 </a>
+              </div>
               </div>
             </div>
           </div>
