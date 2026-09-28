@@ -147,14 +147,16 @@ func TestRenderTopRepositoriesSectionShowsSharesAndLanguages(t *testing.T) {
 	tr := pdf.UnicodeTranslatorFromDescriptor("")
 
 	repoTotals := []RepoTotal{
-		{Repo: "big", Branch: testBranchMain, CodeLines: 900, PrimaryLanguage: "Go"},
-		{Repo: "small", Branch: "develop", CodeLines: 100, PrimaryLanguage: testLangJava},
+		{Repo: "big", Branch: testBranchMain, CodeLines: 900, PrimaryLanguage: "Go",
+			TopLanguages: []LanguageShare{{Language: "Go", CodeLinesF: "900"}, {Language: "JSON", CodeLinesF: "40", Excluded: true}}},
+		{Repo: "small", Branch: "develop", CodeLines: 100, PrimaryLanguage: testLangJava,
+			TopLanguages: []LanguageShare{{Language: testLangJava, CodeLinesF: "100"}}},
 	}
 	renderTopRepositoriesSection(pdf, tr, repoTotals, 1000, 15, 180)
 
 	text := pdfSectionText(t, pdf)
 	for _, want := range []string{"Top 2 Repositories by Lines of Code", "big", "small", "Go", testLangJava,
-		testBranchMain, "develop", "90.0%", "10.0%", "MAIN LANGUAGE", "SHARE %"} {
+		testBranchMain, "develop", "90.0%", "10.0%", "Go 900", "JSON 40", "SHARE %"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("section missing %q", want)
 		}
@@ -231,44 +233,8 @@ func TestRenderTopRepositoriesSectionPaginates(t *testing.T) {
 	if pages := pdf.PageNo(); pages < 2 {
 		t.Fatalf("a table starting near the page bottom should break, got %d page(s)", pages)
 	}
-	if text := pdfSectionText(t, pdf); strings.Count(text, "MAIN LANGUAGE") < 2 {
+	if text := pdfSectionText(t, pdf); strings.Count(text, "SHARE %") < 2 {
 		t.Error("column headers should repeat after a page break")
-	}
-}
-
-func TestFitLabelWithValueKeepsTheNumber(t *testing.T) {
-	// The cell exists to report a figure, so the figure must survive truncation. Trimming
-	// the whole "name value" string from the end removes the number first — and worse,
-	// half-trims it: "Objective-C++ 123.45K" became "Objective-C++ 123...", which reads as
-	// 123 lines rather than 123 thousand. A shortened language name is still recognisable;
-	// a mangled number is a wrong figure in a customer-facing report.
-	pdf := newSectionPDF(t)
-	tr := pdf.UnicodeTranslatorFromDescriptor("")
-
-	cases := []struct{ name, value string }{
-		{"Python", "67.14K"},                          // fits as-is
-		{"JavaScript", "2.87K"},                       // fits as-is
-		{"Objective-C++", "123.45K"},                  // needs truncation at 28mm
-		{"Visual Basic .NET", "1.23M"},                // needs more truncation
-		{"An Absurdly Long Language Name", "999.99M"}, // extreme
-	}
-	for _, tc := range cases {
-		got := fitLabelWithValue(pdf, tr(tc.name), tr(tc.value), colPDFLanguage)
-		if !strings.HasSuffix(got, tc.value) {
-			t.Errorf("fitLabelWithValue(%q, %q) = %q: the value must survive intact",
-				tc.name, tc.value, got)
-		}
-		if w := pdf.GetStringWidth(got); w > colPDFLanguage-2 {
-			t.Errorf("fitLabelWithValue(%q, %q) = %q: %.1fmm exceeds the %.0fmm column",
-				tc.name, tc.value, got, w, colPDFLanguage-2)
-		}
-	}
-}
-
-func TestFitLabelWithValueLeavesShortLabelsAlone(t *testing.T) {
-	pdf := newSectionPDF(t)
-	if got := fitLabelWithValue(pdf, "Go", "12", colPDFLanguage); got != "Go 12" {
-		t.Errorf("got %q, want %q — a label that fits must not be altered", got, "Go 12")
 	}
 }
 

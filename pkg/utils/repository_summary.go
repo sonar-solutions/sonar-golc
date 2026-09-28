@@ -142,17 +142,6 @@ func (r RepositoryData) PrimaryLanguage() string {
 	return r.TopLanguages[0].Language
 }
 
-// primaryLanguageCell renders the main language with its own code lines, e.g.
-// "C++ 761.37K", so the report shows how much of the repository that language accounts for
-// rather than just naming it. Fitted to the column width so the line count survives
-// truncation. A dash when no language was recorded.
-func (r RepositoryData) primaryLanguageCell(pdf *gofpdf.Fpdf, tr func(string) string, w float64) string {
-	if len(r.TopLanguages) == 0 {
-		return "-"
-	}
-	return fitLabelWithValue(pdf, tr(r.TopLanguages[0].Language), tr(r.TopLanguages[0].CodeLinesF), w)
-}
-
 // AnalysisResult represents the structure of analysis result files
 type AnalysisResult struct {
 	NumRepositories int             `json:"NumRepositories"`
@@ -272,15 +261,21 @@ func truncateText(text string, maxLength int) string {
 	return text
 }
 
-// Column widths for the repository table, summing to the 190mm content width. Repository
-// and Branch each gave up 8mm to make room for the language column; three languages will
-// not fit at this width, so the PDF shows the primary one and the CSV/JSON carry the rest.
+// Column widths for the repository table, summing to the 190mm content width, in the
+// results page's order: Code Lines, Blank, Comments, Lines. A
+// repository's top languages do not fit in a column at this width, so they get a line of
+// their own under its row - see drawLanguageLine - spanning everything after the number.
 const (
-	colPDFNum      = 10.0
-	colPDFRepo     = 42.0
-	colPDFBranch   = 22.0
-	colPDFLanguage = 28.0
-	colPDFMetric   = 22.0 // Lines, Comments, Blank, Code Lines
+	colPDFNum    = 10.0
+	colPDFRepo   = 70.0
+	colPDFBranch = 22.0
+	colPDFMetric = 22.0 // Code Lines, Blank, Comments, Lines
+)
+
+// pdfLanguageFont and pdfLanguageSize are the font of the summary PDF's language lines.
+const (
+	pdfLanguageFont = "Arial"
+	pdfLanguageSize = 7.0
 )
 
 // createPDFTableHeader creates the standard table header for repository reports
@@ -290,35 +285,41 @@ func createPDFTableHeader(pdf *gofpdf.Fpdf, codeLinesHeader string) {
 	pdf.CellFormat(colPDFNum, 8, "#", "1", 0, "C", true, 0, "")
 	pdf.CellFormat(colPDFRepo, 8, "Repository", "1", 0, "C", true, 0, "")
 	pdf.CellFormat(colPDFBranch, 8, "Branch", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(colPDFLanguage, 8, "Main Language", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(colPDFMetric, 8, "Lines", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(colPDFMetric, 8, "Comments", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(colPDFMetric, 8, codeLinesHeader, "1", 0, "C", true, 0, "")
 	pdf.CellFormat(colPDFMetric, 8, "Blank", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(colPDFMetric, 8, codeLinesHeader, "1", 1, "C", true, 0, "")
+	pdf.CellFormat(colPDFMetric, 8, "Comments", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(colPDFMetric, 8, "Lines", "1", 1, "C", true, 0, "")
 }
 
 // createRepositoryPDFRow creates a single row in the PDF table. tr converts UTF-8
 // into the font's Windows-1252 encoding so accented repository/branch names render
 // correctly instead of as mojibake; it is applied before truncation so the
 // byte-based length limit matches the rendered single-byte characters.
+//
+// Under the row, a second line lists the repository's top languages, the excluded ones
+// struck through, so the Code Lines figure can be read against what it leaves out.
 func createRepositoryPDFRow(pdf *gofpdf.Fpdf, tr func(string) string, repo RepositoryData, fill bool) {
-	repoName := truncateText(tr(repo.Repository), 22)
+	repoName := truncateText(tr(repo.Repository), 40)
 	branchName := truncateText(tr(repo.Branch), 12)
 
-	// The main language with its own line count ("C++ 761.37K"); a dash when no
-	// by-language result file was found, so an unknown reads as unknown rather than as an
-	// empty cell. Fitted by measured width, shortening the language name rather than the
-	// number: see fitLabelWithValue for why the figure must be the part that survives.
-	language := repo.primaryLanguageCell(pdf, tr, colPDFLanguage)
-
-	pdf.CellFormat(colPDFNum, 6, strconv.Itoa(repo.Number), "1", 0, "C", fill, 0, "")
+	x := pdf.GetX()
+	pdf.CellFormat(colPDFNum, 6, strconv.Itoa(repo.Number), "LTR", 0, "C", fill, 0, "")
 	pdf.CellFormat(colPDFRepo, 6, repoName, "1", 0, "L", fill, 0, "")
 	pdf.CellFormat(colPDFBranch, 6, branchName, "1", 0, "C", fill, 0, "")
-	pdf.CellFormat(colPDFLanguage, 6, language, "1", 0, "L", fill, 0, "")
-	pdf.CellFormat(colPDFMetric, 6, repo.LinesF, "1", 0, "R", fill, 0, "")
-	pdf.CellFormat(colPDFMetric, 6, repo.CommentsF, "1", 0, "R", fill, 0, "")
+	pdf.CellFormat(colPDFMetric, 6, repo.CodeLinesF, "1", 0, "R", fill, 0, "")
 	pdf.CellFormat(colPDFMetric, 6, repo.BlankLinesF, "1", 0, "R", fill, 0, "")
-	pdf.CellFormat(colPDFMetric, 6, repo.CodeLinesF, "1", 1, "R", fill, 0, "")
+	pdf.CellFormat(colPDFMetric, 6, repo.CommentsF, "1", 0, "R", fill, 0, "")
+	pdf.CellFormat(colPDFMetric, 6, repo.LinesF, "1", 1, "R", fill, 0, "")
+
+	// The language line: the number column stays empty so the row reads as one block.
+	y := pdf.GetY()
+	pdf.SetXY(x, y)
+	pdf.CellFormat(colPDFNum, languageLineH, "", "LBR", 0, "C", fill, 0, "")
+	lineW := colPDFRepo + colPDFBranch + 4*colPDFMetric
+	drawLanguageLine(pdf, tr, repo.LanguageChips, pdfLanguageFont, pdfLanguageSize, x+colPDFNum, y, lineW, fill)
+	pdf.SetXY(x+colPDFNum, y)
+	pdf.CellFormat(lineW, languageLineH, "", "LBR", 1, "L", false, 0, "")
+	pdf.SetFont("Arial", "", 8)
 }
 
 // generateReportWithErrorHandling generates a report and handles errors consistently
@@ -485,6 +486,7 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 		fmt.Sprintf("Total Comments: %s", summary.TotalCommentsF),
 		fmt.Sprintf("Total Blank Lines: %s", summary.TotalBlankLinesF),
 		summary.ExcludedNote,
+		"Each repository lists its top languages below its row; a struck-through one is left out of its Code Lines.",
 	}
 
 	// Stated up front, next to the totals it changes, so a reader cannot take the
@@ -495,8 +497,10 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 			summary.DeselectedRepositories, summary.DeselectedCodeLinesF))
 	}
 
+	// MultiCell, so a long note - the exclusion note grows with the selection - wraps
+	// inside the box rather than running past its edge.
 	for _, data := range summaryData {
-		pdf.CellFormat(190, 6, tr(data), "1", 1, "L", true, 0, "")
+		pdf.MultiCell(190, 6, tr(data), "1", "L", true)
 	}
 
 	pdf.Ln(5)
@@ -511,7 +515,7 @@ func generateRepositoryPDFReport(summary *RepositorySummaryReport, outputPath st
 	rowCount := 0
 	for _, repo := range summary.Repositories {
 		// Break before the row would overflow the page
-		if pdf.GetY()+rowH > pageH-bottomMargin {
+		if pdf.GetY()+rowH+languageLineH > pageH-bottomMargin {
 			pdf.AddPage()
 			createPDFTableHeader(pdf, codeLinesHeader)
 			pdf.SetFont("Arial", "", 8)
@@ -560,7 +564,7 @@ func renderDeselectedTable(pdf *gofpdf.Fpdf, tr func(string) string, summary *Re
 
 	rowCount := 0
 	for _, repo := range summary.Deselected {
-		if pdf.GetY()+rowH > pageH-bottomMargin {
+		if pdf.GetY()+rowH+languageLineH > pageH-bottomMargin {
 			pdf.AddPage()
 			createPDFTableHeader(pdf, codeLinesHeader)
 			pdf.SetFont("Arial", "", 8)

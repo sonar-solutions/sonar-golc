@@ -129,7 +129,7 @@ func TestAccumulateLanguageTotalsFromFile(t *testing.T) {
 		},
 	})
 	totals := map[string]int{}
-	fileLOC, primary, err := accumulateLanguageTotalsFromFile(path, totals, map[string]int{}, DefaultLanguageExclusion())
+	fileLOC, primary, top, err := accumulateLanguageTotalsFromFile(path, totals, map[string]int{}, DefaultLanguageExclusion())
 	if err != nil {
 		t.Fatalf("accumulateLanguageTotalsFromFile error: %v", err)
 	}
@@ -143,6 +143,10 @@ func TestAccumulateLanguageTotalsFromFile(t *testing.T) {
 	// top-repositories table.
 	if primary.Language != "Go" || primary.CodeLines != 100 {
 		t.Errorf("accumulateLanguageTotalsFromFile primary = %+v, want Go/100", primary)
+	}
+	// And its top languages for the reports' language lines, largest first.
+	if len(top) != 2 || top[0].Language != "Go" || top[1].Language != "Java" {
+		t.Errorf("accumulateLanguageTotalsFromFile top = %+v, want Go then Java", top)
 	}
 	if _, ok := totals[""]; ok {
 		t.Errorf("blank language should be ignored")

@@ -1309,10 +1309,25 @@ func reportStamp(v reportVariant, deselected []utils.DeselectedRepo, excluded ut
 	if info, err := os.Stat(globalReportFile); err == nil {
 		scanID = fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
 	}
+	scanID += "\x00" + generatorID()
 
 	sum := sha256.Sum256([]byte(v.name + "\x00" + scanID + "\x00" + strings.Join(keys, "\x00") +
 		"\x00languages\x00" + excluded.Fingerprint()))
 	return hex.EncodeToString(sum[:])
+}
+
+// generatorID identifies the program that builds the reports, so reports cached by an
+// earlier version are rebuilt after an upgrade rather than served with its layout. The
+// release alone is not enough - development builds all share one - so the binary's own
+// modification time is part of it.
+func generatorID() string {
+	id := assets.Version
+	if exe, err := os.Executable(); err == nil {
+		if info, err := os.Stat(exe); err == nil {
+			id += fmt.Sprintf("-%d", info.ModTime().UnixNano())
+		}
+	}
+	return id
 }
 
 func loadReportsState() reportsState {

@@ -241,18 +241,8 @@ type RepoTotal struct {
 	// CountedLanguages is each language's lines that count in this repository: zero for
 	// one excluded globally or by the repository itself.
 	CountedLanguages map[string]int
-}
-
-// primaryLanguageCell renders the main language with its own code lines, e.g.
-// "C++ 761.37K", fitted to the given column width so the line count survives truncation.
-// A dash when no language was recorded, so an unknown reads as unknown rather than as an
-// empty cell.
-func (r RepoTotal) primaryLanguageCell(pdf *gofpdf.Fpdf, tr func(string) string, w float64) string {
-	if r.PrimaryLanguage == "" {
-		return "-"
-	}
-	return fitLabelWithValue(pdf, tr(r.PrimaryLanguage),
-		tr(FormatCodeLines(float64(r.PrimaryLanguageCodeLines))), w)
+	// TopLanguages are its largest languages, excluded ones flagged - see RankLanguageChips.
+	TopLanguages []LanguageShare
 }
 
 // collectLanguageTotals walks result files and aggregates language totals.
@@ -308,7 +298,7 @@ func collectResultTotals(directory string, deselected DeselectionSet, excluded L
 
 		// Each repository counts under the global set plus its own exclusions.
 		counted := make(map[string]int)
-		repoLOC, primaryLanguage, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage, counted, excluded.ForRepo(key))
+		repoLOC, primaryLanguage, topLanguages, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage, counted, excluded.ForRepo(key))
 		if err != nil {
 			return err
 		}
@@ -327,6 +317,7 @@ func collectResultTotals(directory string, deselected DeselectionSet, excluded L
 			PrimaryLanguage:          primaryLanguage.Language,
 			PrimaryLanguageCodeLines: primaryLanguage.CodeLines,
 			CountedLanguages:         counted,
+			TopLanguages:             topLanguages,
 		})
 		return nil
 	})
@@ -422,14 +413,17 @@ func isEligibleResultFile(info os.FileInfo, path string) bool {
 //
 // counted receives each language's lines that count under excluded, which is expected to
 // be scoped to this file's repository with ForRepo.
-func accumulateLanguageTotalsFromFile(path string, totals, counted map[string]int, excluded LanguageExclusion) (int, LanguageShare, error) {
+//
+// It also returns the repository's top languages as the results page lists them, excluded
+// ones flagged, for the reports' language lines.
+func accumulateLanguageTotalsFromFile(path string, totals, counted map[string]int, excluded LanguageExclusion) (int, LanguageShare, []LanguageShare, error) {
 	fileData, err := os.ReadFile(path)
 	if err != nil {
-		return 0, LanguageShare{}, err
+		return 0, LanguageShare{}, nil, err
 	}
 	var data FileData
 	if err := json.Unmarshal(fileData, &data); err != nil {
-		return 0, LanguageShare{}, err
+		return 0, LanguageShare{}, nil, err
 	}
 
 	fileLOC := 0
@@ -451,7 +445,7 @@ func accumulateLanguageTotalsFromFile(path string, totals, counted map[string]in
 	if ranked := RankTopLanguages(shares, 1, excluded); len(ranked) > 0 {
 		primary = ranked[0]
 	}
-	return fileLOC, primary, nil
+	return fileLOC, primary, RankLanguageChips(shares, TopLanguagesShown, excluded), nil
 }
 
 // writeLanguageTotalsJSON writes the per-language totals to outputFile and returns the
@@ -653,30 +647,6 @@ func fitToWidth(pdf *gofpdf.Fpdf, s string, w float64) string {
 	return s + "..."
 }
 
-// fitLabelWithValue renders "name value" within w, shortening only name when the pair does
-// not fit. Returns the value alone (trimmed if it must be) when even that will not fit.
-//
-// Shortening the name rather than the whole string matters because the value is the figure
-// the cell exists to report. Trimming from the end takes the number first, and can leave a
-// half-trimmed one: "Objective-C++ 123.45K" becomes "Objective-C++ 123...", which reads as
-// 123 lines rather than 123 thousand. A shortened language name is still recognisable; a
-// mangled number is simply wrong.
-//
-// Both parts must already be translated to the font's encoding, as fitToWidth also
-// requires — the byte-wise trimming assumes single-byte characters.
-func fitLabelWithValue(pdf *gofpdf.Fpdf, name, value string, w float64) string {
-	if full := name + " " + value; pdf.GetStringWidth(full) <= w-2 {
-		return full
-	}
-	for len(name) > 1 {
-		name = name[:len(name)-1]
-		if candidate := name + "... " + value; pdf.GetStringWidth(candidate) <= w-2 {
-			return candidate
-		}
-	}
-	return fitToWidth(pdf, value, w)
-}
-
 // renderScanSummarySection appends a "Scan Summary" section to the global PDF,
 // showing how many repositories were scanned versus analyzed and how many were
 // filtered out (archived/disabled, empty) or could not be completed (skipped).
@@ -862,15 +832,15 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 	pdf.CellFormat(contentW-2, 8, heading, "", 1, "L", false, 0, "")
 	pdf.Ln(2)
 
+	// A repository's top languages get a line of their own under its row - five do not
+	// fit in a column - so the repository name has the room the language column had.
 	const (
 		colNum    = 10.0
 		colBranch = 26.0
-		// Wide enough for a language name plus its own line count ("JavaScript 761.37K").
-		colLang  = 38.0
-		colLOC   = 26.0
-		colShare = 20.0
+		colLOC    = 26.0
+		colShare  = 20.0
 	)
-	colRepo := contentW - colNum - colBranch - colLang - colLOC - colShare
+	colRepo := contentW - colNum - colBranch - colLOC - colShare
 
 	drawHeaders := func() {
 		pdf.SetFillColor(220, 230, 242)
@@ -880,7 +850,6 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		pdf.CellFormat(colNum, 6, "#", "0", 0, "C", true, 0, "")
 		pdf.CellFormat(colRepo, 6, "REPOSITORY", "0", 0, "L", true, 0, "")
 		pdf.CellFormat(colBranch, 6, "BRANCH", "0", 0, "L", true, 0, "")
-		pdf.CellFormat(colLang, 6, "MAIN LANGUAGE", "0", 0, "L", true, 0, "")
 		pdf.CellFormat(colLOC, 6, "TOTAL LOC", "0", 0, "R", true, 0, "")
 		pdf.CellFormat(colShare, 6, "SHARE %", "0", 1, "R", true, 0, "")
 	}
@@ -888,7 +857,7 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 
 	const rowH = 6.0
 	for i, rt := range top {
-		if pdf.GetY() > 265 {
+		if pdf.GetY()+rowH+languageLineH > 270 {
 			pdf.AddPage()
 			pdf.SetFillColor(0, 115, 186)
 			pdf.Rect(marginL, pdf.GetY(), contentW, 7, "F")
@@ -906,7 +875,7 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		} else {
 			pdf.SetFillColor(244, 247, 251)
 		}
-		pdf.Rect(marginL, rowY, contentW, rowH, "F")
+		pdf.Rect(marginL, rowY, contentW, rowH+languageLineH, "F")
 
 		share := "-"
 		if totalLOC > 0 {
@@ -925,11 +894,13 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		pdf.SetFont("Helvetica", "", 8)
 		pdf.SetTextColor(60, 60, 70)
 		pdf.CellFormat(colBranch, rowH, fitToWidth(pdf, tr(rt.Branch), colBranch), "0", 0, "L", false, 0, "")
-		pdf.CellFormat(colLang, rowH, rt.primaryLanguageCell(pdf, tr, colLang), "0", 0, "L", false, 0, "")
 		pdf.CellFormat(colLOC, rowH, FormatCodeLines(float64(rt.CodeLines)), "0", 0, "R", false, 0, "")
 		pdf.CellFormat(colShare, rowH, share, "0", 1, "R", false, 0, "")
 
-		pdf.SetXY(marginL, rowY+rowH)
+		// Its top languages, the excluded ones struck through, under the name.
+		drawLanguageLine(pdf, tr, rt.TopLanguages, "Helvetica", 7, marginL+colNum, rowY+rowH, contentW-colNum, false)
+
+		pdf.SetXY(marginL, rowY+rowH+languageLineH)
 	}
 	pdf.SetTextColor(0, 0, 0)
 }
