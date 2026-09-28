@@ -105,8 +105,9 @@ type LanguageData struct {
 	OnlyDeselected bool `json:"OnlyDeselected,omitempty"`
 	// CountedLines is how much of CodeLines counts toward the total: less than CodeLines
 	// when some repositories exclude the language of their own, ExcludedInRepos of them.
-	CountedLines    int `json:"CountedLines"`
-	ExcludedInRepos int `json:"ExcludedInRepos,omitempty"`
+	CountedLines    int    `json:"CountedLines"`
+	CountedLinesF   string `json:"CountedLinesF"`
+	ExcludedInRepos int    `json:"ExcludedInRepos,omitempty"`
 }
 
 // PartlyExcluded reports whether some repositories exclude the language of their own
@@ -211,7 +212,8 @@ type PageData struct {
 	ExcludedLanguagesIsDefault bool
 	ExcludedLanguagesCodeLines string // formatted LOC the excluded languages account for
 	DefaultExcludedLanguages   []string
-	ReposWithOwnExclusions     int // repositories excluding languages of their own
+	ReposWithOwnExclusions     int    // repositories excluding languages of their own
+	RepoExcludedCodeLines      string // formatted LOC those exclusions leave out
 
 	// SelectionActive is true when either selection departs from the full scan, which is
 	// when the customized reports are offered. SelectionLabel says how, for their heading.
@@ -830,6 +832,7 @@ func buildLanguageSummary(rawData []LanguageData, excluded utils.LanguageExclusi
 			CodeLinesF:      utils.FormatCodeLines(float64(total)),
 			Excluded:        isExcluded,
 			CountedLines:    countedLines,
+			CountedLinesF:   utils.FormatCodeLines(float64(countedLines)),
 			ExcludedInRepos: excludedIn[lang],
 		})
 	}
@@ -844,13 +847,30 @@ func buildLanguageSummary(rawData []LanguageData, excluded utils.LanguageExclusi
 		}
 		return languages[i].Language < languages[j].Language
 	})
-	if len(languages) > 0 && languages[0].CodeLines > 0 {
-		maxLOC := float64(languages[0].CodeLines)
+	// Bars show the lines each row displays: what counts, or for a language excluded
+	// everywhere, what it would add. The order stays by scanned size, so switching a
+	// language off in some repositories shortens its bar without moving its row.
+	maxLOC := 0
+	for _, lang := range languages {
+		if shown := lang.shownLines(); shown > maxLOC {
+			maxLOC = shown
+		}
+	}
+	if maxLOC > 0 {
 		for i := range languages {
-			languages[i].RelativePct = float64(languages[i].CodeLines) / maxLOC * 100
+			languages[i].RelativePct = float64(languages[i].shownLines()) / float64(maxLOC) * 100
 		}
 	}
 	return languages
+}
+
+// shownLines is the figure the Languages card shows for a language: the lines that count,
+// or all of them for a language excluded everywhere, which the card marks excluded.
+func (l LanguageData) shownLines() int {
+	if l.Excluded {
+		return l.CodeLines
+	}
+	return l.CountedLines
 }
 
 // withLanguagesOnlyInDeselected appends a zero-line row for every scanned language that
@@ -960,11 +980,14 @@ func loadApplicationData() (PageData, error) {
 	// The page names only the excluded languages this scan actually found: the selection
 	// also holds defaults with nothing to exclude, and "JSON · 0 LOC" would read as a count.
 	excludedCodeLines := 0
+	repoExcludedCodeLines := 0
 	excludedPresent := []string{}
 	for _, lang := range languages {
 		if lang.Excluded {
 			excludedCodeLines += lang.CodeLines
 			excludedPresent = append(excludedPresent, lang.Language)
+		} else {
+			repoExcludedCodeLines += lang.CodeLines - lang.CountedLines
 		}
 	}
 	sort.Strings(excludedPresent)
@@ -1041,6 +1064,7 @@ func loadApplicationData() (PageData, error) {
 		ExcludedLanguages:          excludedPresent,
 		ExcludedLanguagesIsDefault: excluded.GlobalIsDefault(),
 		ReposWithOwnExclusions:     len(repoExclusions),
+		RepoExcludedCodeLines:      utils.FormatCodeLines(float64(repoExcludedCodeLines)),
 		ExcludedLanguagesCodeLines: utils.FormatCodeLines(float64(excludedCodeLines)),
 		DefaultExcludedLanguages:   utils.DefaultLanguageExclusion().Languages(),
 		SelectionActive:            len(deselected) > 0 || !excluded.IsDefault(),
@@ -2638,6 +2662,8 @@ const htmlTemplate = `
       .repo-lang-loc { color:#6c757d; font-size:0.85em; }
       .repo-lang-chip.excluded { background:#f1f3f5; border-style:dashed; }
       .repo-lang-chip.excluded .repo-lang-name { text-decoration:line-through; color:#8a939d; }
+      .repo-lang-chip.locked { cursor:not-allowed; opacity:.7; }
+      .repo-lang-chip.locked .form-check-input { cursor:not-allowed; }
       .lang-selection-status:empty { display:none; }
       /* Reports dropdown — sharp rectangular corners */
       .dropdown-menu { border-radius: 4px !important; }
@@ -2745,7 +2771,7 @@ const htmlTemplate = `
                       {{end}}
                       {{if .ReposWithOwnExclusions}}
                         <div style="margin-top:0.25rem;">
-                          <i class="fas fa-code-branch"></i> {{.ReposWithOwnExclusions}} {{if eq .ReposWithOwnExclusions 1}}repository excludes languages of its own{{else}}repositories exclude languages of their own{{end}}
+                          <i class="fas fa-code-branch"></i> {{.ReposWithOwnExclusions}} {{if eq .ReposWithOwnExclusions 1}}repository excludes languages of its own{{else}}repositories exclude languages of their own{{end}} · {{.RepoExcludedCodeLines}} LOC
                           · <a id="btnResetRepoLanguages" role="button" title="Count every language again in every repository, apart from those excluded for all of them">Reset them</a>
                         </div>
                       {{end}}
@@ -2762,7 +2788,7 @@ const htmlTemplate = `
                           </span>
                           <span class="lang-bar-name" title="{{.Language}}">{{.Language}}</span>
                         </span>
-                        <span class="lang-bar-meta"{{if .OnlyDeselected}} title="Found only in deselected repositories, so it adds nothing to the current total"{{else if .PartlyExcluded}} title="{{.ExcludedInRepos}} {{if eq .ExcludedInRepos 1}}repository excludes{{else}}repositories exclude{{end}} {{.Language}} of its own, so only part of its lines count"{{end}}>{{if .Excluded}}<span class="lang-excluded-badge">excluded</span>{{else if not .OnlyDeselected}}{{if .PartlyExcluded}}<span class="lang-partly-badge">excl. in {{.ExcludedInRepos}}</span>{{end}}{{printf "%.1f" .Percentage}}% · {{end}}{{if .OnlyDeselected}}only in deselected repositories{{else}}{{.CodeLinesF}} LOC{{end}}</span>
+                        <span class="lang-bar-meta"{{if .OnlyDeselected}} title="Found only in deselected repositories, so it adds nothing to the current total"{{else if .PartlyExcluded}} title="{{.CountedLinesF}} of {{.CodeLinesF}} scanned lines count: {{.ExcludedInRepos}} {{if eq .ExcludedInRepos 1}}repository excludes {{.Language}} of its own{{else}}repositories exclude {{.Language}} of their own{{end}}"{{end}}>{{if .Excluded}}<span class="lang-excluded-badge">excluded</span>{{else if not .OnlyDeselected}}{{if .PartlyExcluded}}<span class="lang-partly-badge">excl. in {{.ExcludedInRepos}}</span>{{end}}{{printf "%.1f" .Percentage}}% · {{end}}{{if .OnlyDeselected}}only in deselected repositories{{else if .Excluded}}{{.CodeLinesF}} LOC{{else}}{{.CountedLinesF}} LOC{{end}}</span>
                       </div>
                       <div class="lang-bar-track">
                         <div class="lang-bar-fill" style="width:{{printf "%.1f" .RelativePct}}%;"></div>
@@ -3629,7 +3655,7 @@ const htmlTemplate = `
                     if (!confirm(conflict.Language + ' is the last counted language of ' + conflict.Repository +
                             '. Deselect ' + conflict.Repository + ' instead? It will be left out of every total and report.')) {
                         if (onFailure) onFailure();
-                        repoLanguageToggles.forEach(box => { box.disabled = false; });
+                        repoLanguageToggles.forEach(box => { box.disabled = box.hasAttribute('data-locked'); });
                         report('');
                         return;
                     }
@@ -3639,7 +3665,7 @@ const htmlTemplate = `
                 window.location.reload();
             } catch (err) {
                 if (onFailure) onFailure();
-                repoLanguageToggles.forEach(box => { box.disabled = false; });
+                repoLanguageToggles.forEach(box => { box.disabled = box.hasAttribute('data-locked'); });
                 report('<i class="fas fa-exclamation-triangle"></i> Could not apply: ' +
                     String(err.message || err).replace(/</g, '&lt;'), 'danger');
             }
@@ -3667,7 +3693,7 @@ const htmlTemplate = `
      every repository are not offered here: the Languages card switches those. An em dash
      when the repository has no such language, so "unknown" is visibly unknown rather
      than an empty-looking cell. */}}
-{{define "languageChips"}}{{if .LanguageChips}}<div class="repo-lang-chips">{{range .LanguageChips}}<label class="repo-lang-chip{{if .Excluded}} excluded{{end}}" title="{{if and .Excluded $.Deselected}}Switch on to count {{.Language}} and select {{$.Repository}} again{{else if .Excluded}}Excluded from {{$.Repository}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$.Repository}}'s total{{end}}"><input type="checkbox" class="form-check-input repo-lang-toggle" data-key="{{$.Key}}" value="{{.Language}}" aria-label="Count {{.Language}} in {{$.Repository}}"{{if not .Excluded}} checked{{end}}><span class="repo-lang-name">{{.Language}}</span><span class="repo-lang-loc">{{.CodeLinesF}}</span></label>{{end}}</div>{{else}}<span class="text-muted">&mdash;</span>{{end}}{{end}}
+{{define "languageChips"}}{{if .LanguageChips}}<div class="repo-lang-chips">{{range .LanguageChips}}<label class="repo-lang-chip{{if .Excluded}} excluded{{end}}{{if .Everywhere}} locked{{end}}" title="{{if .Everywhere}}Excluded for all repositories — switch it on in the Languages card{{else if and .Excluded $.Deselected}}Switch on to count {{.Language}} and select {{$.Repository}} again{{else if .Excluded}}Excluded from {{$.Repository}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$.Repository}}'s total{{end}}"><input type="checkbox" class="form-check-input repo-lang-toggle" data-key="{{$.Key}}" value="{{.Language}}" aria-label="Count {{.Language}} in {{$.Repository}}"{{if not .Excluded}} checked{{end}}{{if .Everywhere}} disabled data-locked{{end}}><span class="repo-lang-name">{{.Language}}</span><span class="repo-lang-loc">{{.CodeLinesF}}</span></label>{{end}}</div>{{else}}<span class="text-muted">&mdash;</span>{{end}}{{end}}
 `
 
 // Repository Detail HTML template

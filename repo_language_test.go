@@ -313,9 +313,13 @@ func TestRepositoryRowRendersLanguageChips(t *testing.T) {
 			t.Errorf("rendered page missing %q", want)
 		}
 	}
-	// Globally excluded languages are switched on the Languages card, not per repository.
-	if strings.Contains(out, `data-key="`+keyKeep+`" value="YAML"`) {
-		t.Error("a globally excluded language should not get a repository chip")
+	// A globally excluded language still shows in the row, switched off and locked: it is
+	// switched on the Languages card, not per repository.
+	if !strings.Contains(out, `data-key="`+keyKeep+`" value="YAML" aria-label="Count YAML in keep" disabled data-locked>`) {
+		t.Error("a globally excluded language should show as a locked, switched-off chip")
+	}
+	if !strings.Contains(out, "Excluded for all repositories — switch it on in the Languages card") {
+		t.Error("a locked chip should say where it is switched")
 	}
 }
 
@@ -574,5 +578,30 @@ func TestLastLanguageOfAnAlreadyDeselectedRepositoryNeedsNoPrompt(t *testing.T) 
 	rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 without a prompt (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLanguagesCardShowsCountedLines(t *testing.T) {
+	setupLanguageFixture(t)
+	// Kubernetes off in keep, its only repository: 100 scanned, 0 counted.
+	if _, err := applyRepoLanguageChange(RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)}); err != nil {
+		t.Fatalf(msgApplyRepoLanguage, err)
+	}
+	pd := snapshot()
+	k8s := languageRow(t, pd, "Kubernetes")
+	if k8s.CountedLinesF != "0" || k8s.RelativePct != 0 {
+		t.Errorf("Kubernetes = %+v, want 0 counted lines and no bar", k8s)
+	}
+	if pd.RepoExcludedCodeLines != "100" {
+		t.Errorf("RepoExcludedCodeLines = %q, want 100", pd.RepoExcludedCodeLines)
+	}
+	out := renderTemplate(t, pd)
+	for _, want := range []string{
+		"0 of 100 scanned lines count: 1 repository excludes Kubernetes of its own",
+		"1 repository excludes languages of its own · 100 LOC",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered card missing %q", want)
+		}
 	}
 }

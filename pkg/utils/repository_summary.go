@@ -22,8 +22,10 @@ type LanguageShare struct {
 	Language   string `json:"Language"`
 	CodeLines  int    `json:"CodeLines"`
 	CodeLinesF string `json:"CodeLinesF"`
-	// Excluded marks a language the repository excludes of its own; see RankLanguageChips.
-	Excluded bool `json:"Excluded,omitempty"`
+	// Excluded marks a language left out of the repository's total; see RankLanguageChips.
+	// Everywhere marks one excluded by the global set, which the repository cannot change.
+	Excluded   bool `json:"Excluded,omitempty"`
+	Everywhere bool `json:"Everywhere,omitempty"`
 }
 
 // RankTopLanguages returns a repository's largest languages, biggest first, capped at
@@ -54,23 +56,24 @@ func RankTopLanguages(languages []LanguageShare, limit int, excluded LanguageExc
 // RankLanguageChips returns the languages the results page offers a switch for in a
 // repository's row: its largest languages, biggest first, capped at limit.
 //
-// Unlike RankTopLanguages it keeps the languages the repository excludes of its own,
-// flagged Excluded, so they can be switched back on from the row. Languages excluded
-// globally are left out - they are switched on the Languages card, not per repository -
-// and would otherwise crowd a repository's own languages out of the limit. excluded is
-// expected to be scoped to the repository with ForRepo.
+// Unlike RankTopLanguages it keeps the excluded languages, flagged, so a row always shows
+// the repository's real largest languages: those it excludes of its own can be switched
+// back on from the row, and those excluded globally show switched off and locked - they
+// are switched on the Languages card, not per repository. excluded is expected to be
+// scoped to the repository with ForRepo.
 func RankLanguageChips(languages []LanguageShare, limit int, excluded LanguageExclusion) []LanguageShare {
 	ranked := make([]LanguageShare, 0, len(languages))
 	for _, lang := range languages {
 		name := strings.TrimSpace(lang.Language)
-		if name == "" || excluded.ExcludesEverywhere(name) || lang.CodeLines <= 0 {
+		if name == "" || lang.CodeLines <= 0 {
 			continue
 		}
 		ranked = append(ranked, LanguageShare{
 			Language:   name,
 			CodeLines:  lang.CodeLines,
 			CodeLinesF: FormatCodeLines(float64(lang.CodeLines)),
-			Excluded:   excluded.ExcludedHere(name),
+			Excluded:   excluded.Excludes(name),
+			Everywhere: excluded.ExcludesEverywhere(name),
 		})
 	}
 	return rankShares(ranked, limit)

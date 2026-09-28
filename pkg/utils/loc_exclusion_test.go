@@ -329,7 +329,7 @@ func TestSaveLoadAndClearRepoExclusions(t *testing.T) {
 
 func TestRankLanguageChipsKeepsARepositorysOwnExclusions(t *testing.T) {
 	shares := []LanguageShare{
-		{Language: "JSON", CodeLines: 9000}, // global: never a chip
+		{Language: "JSON", CodeLines: 9000}, // global: shown, off and locked
 		{Language: "Go", CodeLines: 700},
 		{Language: "Kubernetes", CodeLines: 100},
 		{Language: "Shell", CodeLines: 50},
@@ -340,13 +340,16 @@ func TestRankLanguageChipsKeepsARepositorysOwnExclusions(t *testing.T) {
 	var got []string
 	for _, c := range chips {
 		name := c.Language
-		if c.Excluded {
+		switch {
+		case c.Everywhere:
+			name += "(locked)"
+		case c.Excluded:
 			name += "(off)"
 		}
 		got = append(got, name)
 	}
-	if strings.Join(got, ",") != "Go,Kubernetes(off),Shell" {
-		t.Errorf("chips = %v, want Go,Kubernetes(off),Shell", got)
+	if strings.Join(got, ",") != "JSON(locked),Go,Kubernetes(off),Shell" {
+		t.Errorf("chips = %v, want JSON(locked),Go,Kubernetes(off),Shell", got)
 	}
 	// The report ranking leaves the repository's own exclusion out altogether.
 	top := RankTopLanguages(shares, 5, scoped)
@@ -378,8 +381,19 @@ func TestReadRepositoryDataAppliesRepoExclusions(t *testing.T) {
 	if len(repo.TopLanguages) != 1 || repo.TopLanguages[0].Language != "Go" {
 		t.Errorf("TopLanguages = %+v, want Go alone", repo.TopLanguages)
 	}
-	if len(repo.LanguageChips) != 2 || !repo.LanguageChips[1].Excluded {
-		t.Errorf("LanguageChips = %+v, want Go and an excluded Kubernetes", repo.LanguageChips)
+	// Every language the repository has, by size: the global ones locked, its own off.
+	var chips []string
+	for _, c := range repo.LanguageChips {
+		state := "on"
+		if c.Everywhere {
+			state = "locked"
+		} else if c.Excluded {
+			state = "off"
+		}
+		chips = append(chips, c.Language+":"+state)
+	}
+	if strings.Join(chips, ",") != "Go:on,YAML:locked,JSON:locked,Kubernetes:off" {
+		t.Errorf("LanguageChips = %v", chips)
 	}
 	if strings.Join(repo.Languages, ",") != "Go,JSON,Kubernetes,YAML" {
 		t.Errorf("Languages = %v", repo.Languages)
