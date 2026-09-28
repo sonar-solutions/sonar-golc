@@ -191,6 +191,8 @@ type RepositoryDetailData struct {
 	NoteLOCExcluded  string                   `json:"NoteLOCExcluded"`
 	// RepoKey identifies the repository to /api/repo-languages.
 	RepoKey string `json:"RepoKey"`
+	// Deselected is set when the repository is left out of every total.
+	Deselected bool `json:"Deselected,omitempty"`
 }
 
 type PageData struct {
@@ -694,6 +696,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		RepositoryURL:    repositoryURL,
 		NoteLOCExcluded:  excluded.RepoNote(),
 		RepoKey:          repoKey,
+		Deselected:       utils.LoadDeselectionSet(resultsBaseDir).Contains(repoKey),
 	}
 
 	return repoDetail, nil
@@ -1710,6 +1713,10 @@ type RepoLanguageRequest struct {
 	Counted  *bool  `json:"Counted"`
 	Reset    bool   `json:"Reset"`
 	ResetAll bool   `json:"ResetAll"`
+	// Deselect confirms that excluding the repository's last counted language should
+	// deselect the repository instead. Without it that change is answered 409, so the
+	// page can ask first - a script cannot deselect a repository by accident.
+	Deselect bool `json:"Deselect"`
 }
 
 // RepoLanguageResponse reports the repository's state after the change.
@@ -1720,7 +1727,25 @@ type RepoLanguageResponse struct {
 	CodeLines              int      `json:"CodeLines"`
 	TotalLinesOfCode       string   `json:"TotalLinesOfCode"`
 	ReposWithOwnExclusions int      `json:"ReposWithOwnExclusions"`
+	// Deselected is set when the change deselected the repository rather than exclude
+	// its last counted language.
+	Deselected bool `json:"Deselected,omitempty"`
 }
+
+// LastLanguageConflict is the 409 body for a change that would exclude a repository's last
+// counted language. The page offers to deselect the repository and, if the user agrees,
+// repeats the request with Deselect set.
+type LastLanguageConflict struct {
+	Error      string `json:"Error"`
+	Key        string `json:"Key"`
+	Repository string `json:"Repository"`
+	Language   string `json:"Language"`
+}
+
+// errLastLanguage asks for confirmation before deselecting a repository.
+type errLastLanguage struct{ conflict LastLanguageConflict }
+
+func (e errLastLanguage) Error() string { return e.conflict.Error }
 
 // errRepoLanguageRequest is a request that is well-formed but cannot be carried out,
 // answered with 422 rather than 500 for the reason errAllDeselected gives.
@@ -1755,7 +1780,16 @@ func handleRepoLanguages(w http.ResponseWriter, r *http.Request) {
 	resp, err := applyRepoLanguageChange(req)
 	var unprocessable errRepoLanguageRequest
 	var notFound errRepoLanguageNotFound
+	var lastLanguage errLastLanguage
 	switch {
+	case errors.As(err, &lastLanguage):
+		w.Header().Set(contentTypeHeader, applicationJSONType)
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(lastLanguage.conflict)
+		return
+	case errors.Is(err, errAllDeselected):
+		http.Error(w, "this is the last counted repository and cannot be deselected — switch another repository back on first", http.StatusUnprocessableEntity)
+		return
 	case errors.As(err, &unprocessable):
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -1833,7 +1867,10 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		}
 
 		// Excluding every language a repository counts leaves it at zero, which is what
-		// deselecting it is for - and a deselection says so in every report.
+		// deselecting it is for - and a deselection says so in every report. So once the
+		// user confirms, the repository is deselected instead, and the language exclusion
+		// is not recorded: selecting the repository again counts it in full, rather than
+		// bringing back a repository that counts nothing.
 		counted := 0
 		for _, l := range repo.Languages {
 			if !current.ExcludesEverywhere(l) && !own[l] {
@@ -1841,8 +1878,14 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 			}
 		}
 		if counted == 0 {
-			return nil, errRepoLanguageRequest{fmt.Sprintf(
-				"cannot exclude every language of %s — deselect the repository instead", repo.Repository)}
+			if !req.Deselect {
+				return nil, errLastLanguage{LastLanguageConflict{
+					Error: fmt.Sprintf("%s is the last counted language of %s — deselect the repository instead",
+						lang, repo.Repository),
+					Key: req.Key, Repository: repo.Repository, Language: lang,
+				}}
+			}
+			return deselectInsteadOfExcluding(req.Key)
 		}
 
 		langs := make([]string, 0, len(own))
@@ -1886,6 +1929,33 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		}
 	}
 	return resp, nil
+}
+
+// deselectInsteadOfExcluding adds a repository to the deselection, through the same path
+// as the repository checkboxes - which also refuses to deselect the last counted one.
+// Callers must hold selectionMu.
+func deselectInsteadOfExcluding(key string) (*RepoLanguageResponse, error) {
+	keys := []string{key}
+	for _, repo := range utils.LoadDeselectedRepos(resultsBaseDir) {
+		if repo.Key != key {
+			keys = append(keys, repo.Key)
+		}
+	}
+	if _, err := applyDeselection(keys); err != nil {
+		return nil, err
+	}
+	pd := snapshot()
+	own := utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions()[key]
+	if own == nil {
+		own = []string{}
+	}
+	return &RepoLanguageResponse{
+		Key:                    key,
+		ExcludedLanguages:      own,
+		TotalLinesOfCode:       pd.GlobalReport.TotalLinesOfCode,
+		ReposWithOwnExclusions: pd.ReposWithOwnExclusions,
+		Deselected:             true,
+	}, nil
 }
 
 // selectionActive reports whether the page's totals depart from the full scan: some
@@ -2972,6 +3042,14 @@ const htmlTemplate = `
             return keys.every(k => persistedDeselected.has(k));
         }
 
+        // Every language switch reloads the page, which would silently discard repository
+        // checkboxes changed but not yet applied. Switches refuse while there are some.
+        const UNAPPLIED_SELECTION_MESSAGE = '<i class="fas fa-exclamation-triangle"></i> ' +
+            'Apply or reset your repository selection first — switching a language reloads the page and would discard it.';
+        function hasUnappliedSelection() {
+            return !sameAsPersisted(currentDeselectedKeys());
+        }
+
         function showSelectionStatus(message, variant) {
             const el = document.getElementById('selectionStatus');
             el.className = 'alert alert-' + variant + ' py-2 small';
@@ -3073,6 +3151,11 @@ const htmlTemplate = `
         }
 
         async function submitLanguageSelection(excluded, onFailure) {
+            if (hasUnappliedSelection()) {
+                if (onFailure) onFailure();
+                showLanguageStatus(UNAPPLIED_SELECTION_MESSAGE);
+                return;
+            }
             setLanguageTogglesDisabled(true);
             showLanguageStatus('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
             try {
@@ -3361,6 +3444,14 @@ const htmlTemplate = `
         // - are never touched by a switch on it.
         const repoLanguageToggles = document.querySelectorAll('.repo-lang-toggle');
 
+        function postRepoLanguage(change) {
+            return fetch('/api/repo-languages', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(change)
+            });
+        }
+
         function showRepoLanguageStatus(html, variant) {
             const el = document.getElementById('repoLangStatus');
             el.className = 'small mt-2' + (variant ? ' text-' + variant : '');
@@ -3368,14 +3459,28 @@ const htmlTemplate = `
         }
 
         async function submitRepoLanguageChange(change, onFailure, report) {
+            if (hasUnappliedSelection()) {
+                if (onFailure) onFailure();
+                report(UNAPPLIED_SELECTION_MESSAGE, 'danger');
+                return;
+            }
             repoLanguageToggles.forEach(box => { box.disabled = true; });
             report('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
             try {
-                const res = await fetch('/api/repo-languages', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(change)
-                });
+                let res = await postRepoLanguage(change);
+                if (res.status === 409) {
+                    // The language is the repository's last counted one: excluding it is a
+                    // deselection, so ask before doing that instead.
+                    const conflict = await res.json();
+                    if (!confirm(conflict.Language + ' is the last counted language of ' + conflict.Repository +
+                            '. Deselect ' + conflict.Repository + ' instead? It will be left out of every total and report.')) {
+                        if (onFailure) onFailure();
+                        repoLanguageToggles.forEach(box => { box.disabled = false; });
+                        report('');
+                        return;
+                    }
+                    res = await postRepoLanguage(Object.assign({}, change, {Deselect: true}));
+                }
                 if (!res.ok) throw new Error((await res.text()) || res.statusText);
                 window.location.reload();
             } catch (err) {
@@ -3577,6 +3682,13 @@ const repositoryDetailTemplate = `
               <h2 class="text-center mb-4">
                 <i class="fas fa-code"></i> Language Breakdown for {{.Repository}}
               </h2>
+              {{if .Deselected}}
+              <div class="alert alert-secondary d-flex align-items-center gap-2" role="status">
+                <i class="fas fa-ban"></i>
+                <span><strong>{{.Repository}} is deselected</strong> and left out of every total and report.
+                  Select it again in the repository table on the <a href="/#repository-section">results page</a>.</span>
+              </div>
+              {{end}}
               <div class="card shadow">
                 <div class="card-body">
                   <div class="table-responsive">
@@ -3886,17 +3998,38 @@ const repositoryDetailTemplate = `
           el.innerHTML = html;
         }
         toggles.forEach(function(box) {
-          box.addEventListener('change', function() {
-            toggles.forEach(function(b) { b.disabled = true; });
-            status('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
-            fetch('/api/repo-languages', {
+          function post(change) {
+            return fetch('/api/repo-languages', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({Key: box.dataset.key, Language: box.value, Counted: box.checked})
+              body: JSON.stringify(change)
+            });
+          }
+          box.addEventListener('change', function() {
+            var change = {Key: box.dataset.key, Language: box.value, Counted: box.checked};
+            toggles.forEach(function(b) { b.disabled = true; });
+            status('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
+            post(change).then(function(res) {
+              if (res.status !== 409) return res;
+              // The repository's last counted language: offer to deselect it instead.
+              return res.json().then(function(conflict) {
+                if (!confirm(conflict.Language + ' is the last counted language of ' + conflict.Repository +
+                    '. Deselect ' + conflict.Repository + ' instead? It will be left out of every total and report.')) {
+                  throw new Error('cancelled');
+                }
+                change.Deselect = true;
+                return post(change);
+              });
             }).then(function(res) {
               if (res.ok) { window.location.reload(); return; }
               return res.text().then(function(text) { throw new Error(text || res.statusText); });
             }).catch(function(err) {
+              if (err.message === 'cancelled') {
+                box.checked = !box.checked;
+                toggles.forEach(function(b) { b.disabled = b.hasAttribute('data-locked'); });
+                status('');
+                return;
+              }
               box.checked = !box.checked;
               toggles.forEach(function(b) { b.disabled = b.hasAttribute('data-locked'); });
               status('<i class="fas fa-exclamation-triangle"></i> Could not apply: ' +

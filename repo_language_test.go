@@ -137,16 +137,97 @@ func TestHandleRepoLanguagesRejectsBadRequests(t *testing.T) {
 	}
 }
 
-func TestRepoLanguageRefusesToExcludeEverything(t *testing.T) {
+func TestExcludingTheLastLanguageAsksToDeselect(t *testing.T) {
 	setupLanguageFixture(t)
 
 	if rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Go", Counted: counted(false)}); rec.Code != http.StatusOK {
 		t.Fatalf("excluding Go: status = %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	// Kubernetes is keep's last counted language: excluding it too is a deselection.
+
+	// Kubernetes is keep's last counted language: without Deselect the server asks first.
 	rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)})
-	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "deselect the repository instead") {
-		t.Errorf("status = %d, body %q; want 422 pointing at deselection", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var conflict LastLanguageConflict
+	if err := json.Unmarshal(rec.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("409 body is not JSON: %v", err)
+	}
+	if conflict.Key != keyKeep || conflict.Repository != repoKeep || conflict.Language != "Kubernetes" ||
+		!strings.Contains(conflict.Error, "deselect the repository instead") {
+		t.Errorf("conflict = %+v", conflict)
+	}
+	if utils.LoadDeselectionSet(resultsBaseDir).Contains(keyKeep) {
+		t.Fatal("an unconfirmed request must not deselect the repository")
+	}
+
+	// Confirmed: the repository is deselected, and the last language stays counted so that
+	// selecting the repository again brings it back with something to count.
+	rec = postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false), Deselect: true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirmed: status = %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp RepoLanguageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Deselected || strings.Join(resp.ExcludedLanguages, ",") != "Go" {
+		t.Errorf("response = %+v, want deselected with only Go excluded of its own", resp)
+	}
+	if !utils.LoadDeselectionSet(resultsBaseDir).Contains(keyKeep) {
+		t.Error("the repository should now be deselected")
+	}
+	if want := utils.FormatCodeLines(250); resp.TotalLinesOfCode != want {
+		t.Errorf("TotalLinesOfCode = %q, want %q (drop alone)", resp.TotalLinesOfCode, want)
+	}
+
+	// Its detail page says so.
+	detail, err := getRepositoryDetailData(repoKeep, branchMain)
+	if err != nil {
+		t.Fatalf("getRepositoryDetailData: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := parseRepositoryTemplate(t).Execute(&buf, detail); err != nil {
+		t.Fatalf("template: %v", err)
+	}
+	if !detail.Deselected || !strings.Contains(buf.String(), "keep is deselected") {
+		t.Error("the detail page of a deselected repository should say it is deselected")
+	}
+}
+
+func TestLastLanguageOfTheLastRepositoryCannotDeselectIt(t *testing.T) {
+	setupLanguageFixture(t)
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	// Java is drop's only language and drop the only counted repository: deselecting it
+	// would leave nothing counted, which the repository checkboxes refuse too.
+	rec := postRepoLanguage(t, RepoLanguageRequest{Key: keyDrop, Language: "Java", Counted: counted(false), Deselect: true})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if utils.LoadDeselectionSet(resultsBaseDir).Contains(keyDrop) {
+		t.Error("the last counted repository must stay counted")
+	}
+}
+
+func TestLanguageSwitchesGuardUnappliedSelection(t *testing.T) {
+	setupLanguageFixture(t)
+	out := renderTemplate(t, snapshot())
+	// Switching reloads the page; unapplied repository checkboxes must not be lost to it.
+	for _, want := range []string{
+		"function hasUnappliedSelection()",
+		"if (hasUnappliedSelection()) {",
+		"Apply or reset your repository selection first",
+		"res.status === 409",
+		"Deselect: true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("page script missing %q", want)
+		}
+	}
+	if n := strings.Count(out, "if (hasUnappliedSelection()) {"); n != 2 {
+		t.Errorf("guard appears %d times, want 2 (Languages card and repository chips)", n)
 	}
 }
 
