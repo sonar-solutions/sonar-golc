@@ -161,8 +161,8 @@ func TestExcludingTheLastLanguageAsksToDeselect(t *testing.T) {
 		t.Fatal("an unconfirmed request must not deselect the repository")
 	}
 
-	// Confirmed: the repository is deselected, and the exclusion is recorded too, so its
-	// switches show every language off rather than one still on.
+	// Confirmed: the repository is deselected and nothing else changes - its row shows
+	// every language off anyway, and its checkbox brings it back as it was.
 	rec = postRepoLanguage(t, RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false), Deselect: true})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("confirmed: status = %d (body: %s)", rec.Code, rec.Body.String())
@@ -171,8 +171,8 @@ func TestExcludingTheLastLanguageAsksToDeselect(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if !resp.Deselected || strings.Join(resp.ExcludedLanguages, ",") != "Go,Kubernetes" {
-		t.Errorf("response = %+v, want deselected with Go and Kubernetes excluded of its own", resp)
+	if !resp.Deselected || strings.Join(resp.ExcludedLanguages, ",") != "Go" {
+		t.Errorf("response = %+v, want deselected with only Go excluded of its own", resp)
 	}
 	if !utils.LoadDeselectionSet(resultsBaseDir).Contains(keyKeep) {
 		t.Error("the repository should now be deselected")
@@ -415,28 +415,132 @@ func TestSwitchingALanguageOnSelectsTheRepositoryAgain(t *testing.T) {
 	}
 }
 
-func TestSelectingAnEmptyRepositoryAgainCountsItInFull(t *testing.T) {
-	for _, reselect := range []struct {
-		name string
-		keys []string
-	}{
-		{"its checkbox", []string{}},
-		{"reset to full scan", nil},
-	} {
-		t.Run(reselect.name, func(t *testing.T) {
-			setupLanguageFixture(t)
-			deselectKeepByItsLastLanguage(t)
+func TestCheckboxBringsARepositoryBackAsItWas(t *testing.T) {
+	setupLanguageFixture(t)
+	deselectKeepByItsLastLanguage(t) // Go off of its own, then Kubernetes off deselected it
 
-			if _, err := applyDeselection(reselect.keys); err != nil {
-				t.Fatalf(msgApplyDeselection, err)
-			}
-			if got := utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions()[keyKeep]; len(got) != 0 {
-				t.Errorf("keep's own exclusions = %v, want cleared so it does not come back at zero", got)
-			}
-			if got := repoRow(t, snapshot(), repoKeep).CodeLines; got != 1100 {
-				t.Errorf("keep row = %d, want 1100 (counted in full under the global set)", got)
-			}
-		})
+	if _, err := applyDeselection(nil); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	if got := utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions()[keyKeep]; strings.Join(got, ",") != "Go" {
+		t.Errorf("keep's own exclusions = %v, want [Go] as before it was deselected", got)
+	}
+	if got := repoRow(t, snapshot(), repoKeep).CodeLines; got != 100 {
+		t.Errorf("keep row = %d, want 100 (Kubernetes counted again)", got)
+	}
+}
+
+func TestResetReturnsEverySelectionToTheFullScan(t *testing.T) {
+	setupLanguageFixture(t)
+	deselectKeepByItsLastLanguage(t)
+	if _, err := applyLanguageExclusion([]string{"JSON"}); err != nil { // YAML counted globally
+		t.Fatalf(msgApplyLanguages, err)
+	}
+
+	rec := httptest.NewRecorder()
+	handleResetSelection(rec, httptest.NewRequest(http.MethodPost, "/api/reset-selection", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	if len(utils.LoadDeselectedRepos(resultsBaseDir)) != 0 {
+		t.Error("reset should select every repository")
+	}
+	if ex := utils.LoadLanguageExclusion(resultsBaseDir); !ex.IsDefault() {
+		t.Errorf("reset should leave the default languages and no repository exclusions, got %v / %v",
+			ex.Languages(), ex.RepoExclusions())
+	}
+	pd := snapshot()
+	if pd.GlobalReport.TotalLinesOfCode != defaultLanguagesLOC || pd.SelectionActive {
+		t.Errorf("after reset: total %q, selection active %v; want %q and none",
+			pd.GlobalReport.TotalLinesOfCode, pd.SelectionActive, defaultLanguagesLOC)
+	}
+	if _, err := os.Stat(customizedVariant.globalPDFPath()); !os.IsNotExist(err) {
+		t.Errorf("reset should remove the selection reports (err=%v)", err)
+	}
+
+	rec = httptest.NewRecorder()
+	handleResetSelection(rec, httptest.NewRequest(http.MethodGet, "/api/reset-selection", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET: status = %d, want 405", rec.Code)
+	}
+}
+
+func TestResetButtonIsOfferedForAnySelection(t *testing.T) {
+	setupLanguageFixture(t)
+	pd, err := loadApplicationData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(renderTemplate(t, pd), `id="btnResetSelection" class="btn btn-sm btn-outline-danger" disabled`) {
+		t.Error("with nothing to reset the button should be disabled")
+	}
+	// A language selection alone, no repository deselected, is something to reset.
+	if _, err := applyRepoLanguageChange(RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(false)}); err != nil {
+		t.Fatalf(msgApplyRepoLanguage, err)
+	}
+	out := renderTemplate(t, snapshot())
+	if strings.Contains(out, `id="btnResetSelection" class="btn btn-sm btn-outline-danger" disabled`) {
+		t.Error("with a language selection the reset button should be enabled")
+	}
+	if !strings.Contains(out, "fetch('/api/reset-selection'") {
+		t.Error("the reset button should call the full reset")
+	}
+}
+
+func TestDeselectedRowShowsZeroAndEveryLanguageOff(t *testing.T) {
+	setupLanguageFixture(t)
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	pd := snapshot()
+	var row RepositoryData
+	for _, r := range pd.TableRows {
+		if r.Key == keyKeep {
+			row = r
+		}
+	}
+	if row.CodeLines != 0 || row.CodeLinesF != "0" {
+		t.Errorf("deselected row code lines = %d (%q), want 0", row.CodeLines, row.CodeLinesF)
+	}
+	for _, chip := range row.LanguageChips {
+		if !chip.Excluded {
+			t.Errorf("%s chip should show off on a deselected row", chip.Language)
+		}
+	}
+	// The repository keeps its real figures everywhere else.
+	if pd.DeselectedCodeLines != utils.FormatCodeLines(1100) {
+		t.Errorf("DeselectedCodeLines = %q, want keep's real 1.10K", pd.DeselectedCodeLines)
+	}
+	// Its detail page shows the same.
+	detail, err := getRepositoryDetailData(repoKeep, branchMain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.TotalCodeLines != 0 {
+		t.Errorf("detail TotalCodeLines = %d, want 0", detail.TotalCodeLines)
+	}
+	for _, lang := range detail.Languages {
+		if !lang.Excluded {
+			t.Errorf("detail %s should show off", lang.Language)
+		}
+	}
+}
+
+func TestSwitchingOnInACheckboxDeselectedRepositoryCountsThatLanguageAlone(t *testing.T) {
+	setupLanguageFixture(t)
+	if _, err := applyDeselection([]string{keyKeep}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	resp, err := applyRepoLanguageChange(RepoLanguageRequest{Key: keyKeep, Language: "Kubernetes", Counted: counted(true)})
+	if err != nil {
+		t.Fatalf(msgApplyRepoLanguage, err)
+	}
+	if !resp.Reselected || strings.Join(resp.ExcludedLanguages, ",") != "Go" {
+		t.Errorf("response = %+v, want reselected counting Kubernetes alone", resp)
+	}
+	if got := repoRow(t, snapshot(), repoKeep).CodeLines; got != 100 {
+		t.Errorf("keep row = %d, want 100", got)
 	}
 }
 

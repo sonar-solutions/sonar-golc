@@ -699,6 +699,16 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		Deselected:       utils.LoadDeselectionSet(resultsBaseDir).Contains(repoKey),
 	}
 
+	// A deselected repository counts nothing, and its page says so the way its table row
+	// does: zero code lines and every language switched off.
+	if repoDetail.Deselected {
+		repoDetail.TotalCodeLines = 0
+		repoDetail.TotalCodeLinesF = utils.FormatCodeLines(0)
+		for i := range repoDetail.Languages {
+			repoDetail.Languages[i].Excluded = true
+		}
+	}
+
 	return repoDetail, nil
 }
 
@@ -1079,6 +1089,10 @@ func selectionLabel(deselectedCount int, excluded utils.LanguageExclusion, exclu
 // deselected ones and numbering only those still counted. Keeping a deselected row in
 // place preserves the size ordering the user is reading the table for; the numbering
 // skips it, which is what the "—" in its row column represents.
+//
+// A deselected row shows what it contributes - nothing: zero code lines and every
+// language switched off. Only the row is changed; the repository keeps its figures
+// elsewhere, so the deselection note and the reports can still say what was left out.
 func buildTableRows(repositories []RepositoryData, deselected utils.DeselectionSet) []RepositoryData {
 	rows := make([]RepositoryData, 0, len(repositories))
 	counted := 0
@@ -1086,6 +1100,14 @@ func buildTableRows(repositories []RepositoryData, deselected utils.DeselectionS
 		if deselected.Contains(repo.Key) {
 			repo.Deselected = true
 			repo.Number = 0
+			repo.CodeLines = 0
+			repo.CodeLinesF = utils.FormatCodeLines(0)
+			chips := make([]utils.LanguageShare, len(repo.LanguageChips))
+			for i, chip := range repo.LanguageChips {
+				chip.Excluded = true
+				chips[i] = chip
+			}
+			repo.LanguageChips = chips
 		} else {
 			counted++
 			repo.Number = counted
@@ -1875,19 +1897,29 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 			own[l] = true
 		}
 		isDeselected := utils.LoadDeselectionSet(resultsBaseDir).Contains(req.Key)
-		if *req.Counted {
+		switch {
+		case *req.Counted && isDeselected:
+			// A deselected repository shows every language off, so switching one on
+			// brings it back counting that language alone.
+			own = make(map[string]bool)
+			for _, l := range repo.Languages {
+				if l != lang && !current.ExcludesEverywhere(l) {
+					own[l] = true
+				}
+			}
+			reselectAfter = true
+		case *req.Counted:
 			delete(own, lang)
-			reselectAfter = isDeselected
-		} else {
+		default:
 			own[lang] = true
 		}
 
 		// Excluding every language a repository counts leaves it at zero, which is what
 		// deselecting it is for - and a deselection says so in every report. So once the
-		// user confirms, the repository is deselected as well. The exclusion is recorded
-		// too, so its switches show what was switched off; selecting the repository again
-		// clears them if they would leave it counting nothing (see applyDeselection).
-		// A repository already deselected is out of the totals, so there is nothing to ask.
+		// user confirms, the repository is deselected instead, and nothing else changes:
+		// its row already shows every language off, and its checkbox brings it back as it
+		// was, last language included. A repository already deselected is out of the
+		// totals, so there is nothing to ask.
 		counted := 0
 		for _, l := range repo.Languages {
 			if !current.ExcludesEverywhere(l) && !own[l] {
@@ -1915,12 +1947,20 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		byRepo[req.Key] = langs
 	}
 
-	// Deselect first: it can still be refused - the last counted repository stays counted
-	// - and nothing may be saved if it is.
 	if deselectAfter {
+		// The language exclusion is not saved - see above.
 		if _, err := applyDeselection(deselectionKeysWith(req.Key, true)); err != nil {
 			return nil, err
 		}
+		pd := snapshot()
+		own := byRepoBefore(current, req.Key)
+		return &RepoLanguageResponse{
+			Key:                    req.Key,
+			ExcludedLanguages:      own,
+			TotalLinesOfCode:       pd.GlobalReport.TotalLinesOfCode,
+			ReposWithOwnExclusions: pd.ReposWithOwnExclusions,
+			Deselected:             true,
+		}, nil
 	}
 
 	updated := current.WithRepoExclusions(byRepo)
@@ -1952,7 +1992,6 @@ func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, er
 		ExcludedLanguages:      updated.RepoExclusions()[req.Key],
 		TotalLinesOfCode:       pd.GlobalReport.TotalLinesOfCode,
 		ReposWithOwnExclusions: pd.ReposWithOwnExclusions,
-		Deselected:             deselectAfter,
 		Reselected:             reselectAfter,
 	}
 	if resp.ExcludedLanguages == nil {
@@ -1999,6 +2038,14 @@ func clearExclusionsOfEmptyReselected(all []RepositoryData, stillDeselected map[
 	return nil
 }
 
+// byRepoBefore returns a repository's own exclusions as they were saved, never nil.
+func byRepoBefore(e utils.LanguageExclusion, key string) []string {
+	if own := e.RepoExclusions()[key]; own != nil {
+		return own
+	}
+	return []string{}
+}
+
 // deselectionKeysWith returns the persisted deselection with one repository added to it
 // or removed from it.
 func deselectionKeysWith(key string, deselected bool) []string {
@@ -2012,6 +2059,50 @@ func deselectionKeysWith(key string, deselected bool) []string {
 		}
 	}
 	return keys
+}
+
+// handleResetSelection returns every selection on the page to the full scan in one step:
+// every repository selected, no repository excluding languages of its own, and the
+// global set back to the defaults - what the full-scan reports describe. Doing it in one
+// request means a failure part-way cannot leave the page half reset.
+func handleResetSelection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	selectionMu.Lock()
+	defer selectionMu.Unlock()
+
+	if err := resetSelection(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	go rebuildReportsInBackground()
+
+	pd := snapshot()
+	w.Header().Set(contentTypeHeader, applicationJSONType)
+	json.NewEncoder(w).Encode(map[string]string{"TotalLinesOfCode": pd.GlobalReport.TotalLinesOfCode})
+}
+
+// resetSelection clears every persisted selection and republishes the page data. Callers
+// must hold selectionMu.
+func resetSelection() error {
+	if err := utils.SaveDeselectedRepos(resultsBaseDir, nil); err != nil {
+		return fmt.Errorf("cannot clear repository selection: %w", err)
+	}
+	if err := utils.ClearLanguageExclusion(resultsBaseDir); err != nil {
+		return fmt.Errorf("cannot clear language selection: %w", err)
+	}
+	if err := clearCustomizedReportsLocked(); err != nil {
+		return err
+	}
+	pd, err := loadApplicationData()
+	if err != nil {
+		return fmt.Errorf("cannot reload results: %w", err)
+	}
+	publish(pd)
+	return nil
 }
 
 // selectionActive reports whether the page's totals depart from the full scan: some
@@ -2184,6 +2275,7 @@ func setupHTTPHandlers(pageData PageData) {
 	http.HandleFunc("/api/deselected", handleDeselected)
 	http.HandleFunc("/api/excluded-languages", handleExcludedLanguages)
 	http.HandleFunc("/api/repo-languages", handleRepoLanguages)
+	http.HandleFunc("/api/reset-selection", handleResetSelection)
 
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -2711,7 +2803,8 @@ const htmlTemplate = `
                     <span class="fw-bold" style="color:#333;"><i class="fas fa-filter"></i> Selection</span>
                     <span id="selectionSummary" class="text-muted small"></span>
                     <div class="ms-auto d-flex flex-wrap gap-2">
-                      <button type="button" id="btnResetSelection" class="btn btn-sm btn-outline-danger"{{if not .DeselectedCount}} disabled{{end}}>
+                      <button type="button" id="btnResetSelection" class="btn btn-sm btn-outline-danger"{{if not .SelectionActive}} disabled{{end}}
+                              title="Select every repository, count every language in each, and return the Languages card to SonarQube's defaults">
                         Reset to full scan
                       </button>
                     </div>
@@ -3081,6 +3174,9 @@ const htmlTemplate = `
         // it tells us whether the current checkboxes are a real change, so Apply is
         // only enabled when there is something to apply.
         const persistedDeselected = new Set({{.DeselectedKeys}});
+        // Whether any selection - repositories or languages - departs from the full scan,
+        // which is when Reset has something to do.
+        const selectionActive = {{.SelectionActive}};
 
         function currentDeselectedKeys() {
             const keys = [];
@@ -3110,7 +3206,7 @@ const htmlTemplate = `
                 counted + ' of ' + total + ' repositories counted' +
                 (keys.length ? ' · ' + keys.length + ' deselected' : '');
 
-            document.getElementById('btnResetSelection').disabled = keys.length === 0;
+            document.getElementById('btnResetSelection').disabled = !selectionActive && keys.length === 0;
 
             const box = document.getElementById('selectAllCheckbox');
             box.checked = keys.length === 0;
@@ -3121,7 +3217,7 @@ const htmlTemplate = `
 
         function setSelectionControlsDisabled(disabled) {
             document.querySelectorAll('#repositoryTableBody .repo-select, #selectAllCheckbox').forEach(box => { box.disabled = disabled; });
-            document.getElementById('btnResetSelection').disabled = disabled || currentDeselectedKeys().length === 0;
+            document.getElementById('btnResetSelection').disabled = disabled || (!selectionActive && currentDeselectedKeys().length === 0);
         }
 
         // Every change applies at once. revert undoes the checkbox change if the server
@@ -3183,10 +3279,20 @@ const htmlTemplate = `
             applySelection(currentDeselectedKeys(), revert);
         });
 
-        document.getElementById('btnResetSelection').addEventListener('click', function() {
-            const revert = snapshotBoxes();
-            document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => { box.checked = true; });
-            applySelection([], revert);
+        // Reset returns every selection to the full scan - repositories, each repository's
+        // own languages and the Languages card - in one request.
+        document.getElementById('btnResetSelection').addEventListener('click', async function() {
+            setSelectionControlsDisabled(true);
+            showSelectionStatus('<i class="fas fa-spinner fa-spin"></i> Resetting to the full scan…', 'info');
+            try {
+                const res = await fetch('/api/reset-selection', {method: 'POST'});
+                if (!res.ok) throw new Error((await res.text()) || res.statusText);
+                window.location.reload();
+            } catch (err) {
+                setSelectionControlsDisabled(false);
+                showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> ' +
+                    String(err.message || err).replace(/</g, '&lt;'), 'danger');
+            }
         });
 
         refreshSelectionUI();
