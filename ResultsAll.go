@@ -2705,15 +2705,12 @@ const htmlTemplate = `
                 <div class="card-body">
 
                   <!-- Deselection controls: uncheck a repository to remove it from every
-                       total on this page and from the generated reports. -->
+                       total on this page and from the generated reports. A checkbox applies
+                       as soon as it changes, like the language switches. -->
                   <div id="selectionBar" class="d-flex flex-wrap align-items-center gap-2 mb-3 p-2 rounded" style="background-color:#eef2f7;">
                     <span class="fw-bold" style="color:#333;"><i class="fas fa-filter"></i> Selection</span>
                     <span id="selectionSummary" class="text-muted small"></span>
                     <div class="ms-auto d-flex flex-wrap gap-2">
-                      <button type="button" id="btnSelectAll" class="btn btn-sm btn-outline-secondary">Select all</button>
-                      <button type="button" id="btnApplySelection" class="btn btn-sm btn-primary" disabled>
-                        <i class="fas fa-check"></i> Apply selection
-                      </button>
                       <button type="button" id="btnResetSelection" class="btn btn-sm btn-outline-danger"{{if not .DeselectedCount}} disabled{{end}}>
                         Reset to full scan
                       </button>
@@ -2748,8 +2745,8 @@ const htmlTemplate = `
                               title="The {{.TopLanguagesShown}} largest languages by code lines. Switch one off to leave it out of that repository's Code Lines; languages excluded for every repository are switched in the Languages card.">
                             Top Languages <i class="fas fa-sort sort-icon"></i>
                           </th>
-                          <th scope="col" class="sortable" data-column="lines">
-                            Lines <i class="fas fa-sort sort-icon"></i>
+                          <th scope="col" class="sortable" data-column="codelines">
+                            Code Lines <i class="fas fa-sort-down sort-icon"></i>
                           </th>
                           <th scope="col" class="sortable" data-column="blanklines">
                             Blank Lines <i class="fas fa-sort sort-icon"></i>
@@ -2757,8 +2754,8 @@ const htmlTemplate = `
                           <th scope="col" class="sortable" data-column="comments">
                             Comments <i class="fas fa-sort sort-icon"></i>
                           </th>
-                          <th scope="col" class="sortable" data-column="codelines">
-                            Code Lines <i class="fas fa-sort-down sort-icon"></i>
+                          <th scope="col" class="sortable" data-column="lines">
+                            Lines <i class="fas fa-sort sort-icon"></i>
                           </th>
                         </tr>
                       </thead>
@@ -2778,10 +2775,10 @@ const htmlTemplate = `
                           </td>
                           <td>{{.Branch}}</td>
                           <td class="top-languages">{{template "languageChips" .}}</td>
-                          <td>{{.LinesF}}</td>
+                          <td><strong>{{.CodeLinesF}}</strong></td>
                           <td>{{.BlankLinesF}}</td>
                           <td>{{.CommentsF}}</td>
-                          <td><strong>{{.CodeLinesF}}</strong></td>
+                          <td>{{.LinesF}}</td>
                         </tr>
                         {{end}}
                       </tbody>
@@ -2790,10 +2787,10 @@ const htmlTemplate = `
                           <td></td>
                           <td><strong>Total</strong></td>
                           <td colspan="3"><strong id="totalRepoCount">{{len .Repositories}} repositories</strong></td>
-                          <td id="totalLines"><strong>-</strong></td>
+                          <td id="totalCodeLines"><strong>-</strong></td>
                           <td id="totalBlankLines"><strong>-</strong></td>
                           <td id="totalComments"><strong>-</strong></td>
-                          <td id="totalCodeLines"><strong>-</strong></td>
+                          <td id="totalLines"><strong>-</strong></td>
                         </tr>
                       </tfoot>
                     </table>
@@ -3098,14 +3095,6 @@ const htmlTemplate = `
             return keys.every(k => persistedDeselected.has(k));
         }
 
-        // Every language switch reloads the page, which would silently discard repository
-        // checkboxes changed but not yet applied. Switches refuse while there are some.
-        const UNAPPLIED_SELECTION_MESSAGE = '<i class="fas fa-exclamation-triangle"></i> ' +
-            'Apply or reset your repository selection first — switching a language reloads the page and would discard it.';
-        function hasUnappliedSelection() {
-            return !sameAsPersisted(currentDeselectedKeys());
-        }
-
         function showSelectionStatus(message, variant) {
             const el = document.getElementById('selectionStatus');
             el.className = 'alert alert-' + variant + ' py-2 small';
@@ -3121,11 +3110,7 @@ const htmlTemplate = `
                 counted + ' of ' + total + ' repositories counted' +
                 (keys.length ? ' · ' + keys.length + ' deselected' : '');
 
-            // Deselecting everything would leave a zero-LOC report with no way back
-            // from this page, so it is blocked here as well as server-side.
-            const apply = document.getElementById('btnApplySelection');
-            apply.disabled = sameAsPersisted(keys) || counted === 0;
-            apply.title = counted === 0 ? 'At least one repository must remain counted' : '';
+            document.getElementById('btnResetSelection').disabled = keys.length === 0;
 
             const box = document.getElementById('selectAllCheckbox');
             box.checked = keys.length === 0;
@@ -3134,57 +3119,74 @@ const htmlTemplate = `
             calculateRepositoryTotals();
         }
 
-        async function submitSelection(keys) {
-            const apply = document.getElementById('btnApplySelection');
-            const reset = document.getElementById('btnResetSelection');
-            apply.disabled = true;
-            reset.disabled = true;
-            showSelectionStatus('<i class="fas fa-spinner fa-spin"></i> Applying selection…', 'info');
+        function setSelectionControlsDisabled(disabled) {
+            document.querySelectorAll('#repositoryTableBody .repo-select, #selectAllCheckbox').forEach(box => { box.disabled = disabled; });
+            document.getElementById('btnResetSelection').disabled = disabled || currentDeselectedKeys().length === 0;
+        }
 
+        // Every change applies at once. revert undoes the checkbox change if the server
+        // refuses it, so the boxes never show a selection that is not the saved one.
+        async function applySelection(keys, revert) {
+            const total = document.querySelectorAll('#repositoryTableBody .repo-select').length;
+            // Deselecting everything would leave a zero-LOC report with no way back from
+            // this page, so it is refused here as well as server-side.
+            if (keys.length === total) {
+                revert();
+                refreshSelectionUI();
+                showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> At least one repository must remain counted.', 'warning');
+                return;
+            }
+            if (sameAsPersisted(keys)) {
+                refreshSelectionUI();
+                return;
+            }
+
+            refreshSelectionUI();
+            setSelectionControlsDisabled(true);
+            showSelectionStatus('<i class="fas fa-spinner fa-spin"></i> Recounting totals…', 'info');
             try {
                 const res = await fetch('/api/deselected', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({Keys: keys})
                 });
-                if (!res.ok) {
-                    showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> ' +
-                        (await res.text() || 'Could not apply the selection.'), 'danger');
-                    refreshSelectionUI();
-                    reset.disabled = false;
-                    return;
-                }
-                // Reload so the page, the chart, the language breakdown and the
-                // download links all come from the freshly regenerated reports.
+                if (!res.ok) throw new Error((await res.text()) || 'Could not apply the selection.');
+                // Reload so the page, the chart, the language breakdown and the download
+                // links all come from the new selection; the row order is kept.
                 window.location.reload();
             } catch (err) {
-                showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> ' + err, 'danger');
+                revert();
+                setSelectionControlsDisabled(false);
                 refreshSelectionUI();
-                reset.disabled = false;
+                showSelectionStatus('<i class="fas fa-exclamation-triangle"></i> ' +
+                    String(err.message || err).replace(/</g, '&lt;'), 'danger');
             }
         }
 
+        // Remembers every box's state so a refused change can be put back exactly.
+        function snapshotBoxes() {
+            const boxes = Array.from(document.querySelectorAll('#repositoryTableBody .repo-select'));
+            const states = boxes.map(box => box.checked);
+            return () => boxes.forEach((box, i) => { box.checked = states[i]; });
+        }
+
         document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => {
-            box.addEventListener('change', refreshSelectionUI);
+            box.addEventListener('change', function() {
+                applySelection(currentDeselectedKeys(), () => { box.checked = !box.checked; });
+            });
         });
 
         document.getElementById('selectAllCheckbox').addEventListener('change', function() {
+            const revert = snapshotBoxes();
             const checked = this.checked;
             document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => { box.checked = checked; });
-            refreshSelectionUI();
-        });
-
-        document.getElementById('btnSelectAll').addEventListener('click', function() {
-            document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => { box.checked = true; });
-            refreshSelectionUI();
-        });
-
-        document.getElementById('btnApplySelection').addEventListener('click', function() {
-            submitSelection(currentDeselectedKeys());
+            applySelection(currentDeselectedKeys(), revert);
         });
 
         document.getElementById('btnResetSelection').addEventListener('click', function() {
-            submitSelection([]);
+            const revert = snapshotBoxes();
+            document.querySelectorAll('#repositoryTableBody .repo-select').forEach(box => { box.checked = true; });
+            applySelection([], revert);
         });
 
         refreshSelectionUI();
@@ -3207,11 +3209,6 @@ const htmlTemplate = `
         }
 
         async function submitLanguageSelection(excluded, onFailure) {
-            if (hasUnappliedSelection()) {
-                if (onFailure) onFailure();
-                showLanguageStatus(UNAPPLIED_SELECTION_MESSAGE);
-                return;
-            }
             setLanguageTogglesDisabled(true);
             showLanguageStatus('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
             try {
@@ -3515,11 +3512,6 @@ const htmlTemplate = `
         }
 
         async function submitRepoLanguageChange(change, onFailure, report) {
-            if (hasUnappliedSelection()) {
-                if (onFailure) onFailure();
-                report(UNAPPLIED_SELECTION_MESSAGE, 'danger');
-                return;
-            }
             repoLanguageToggles.forEach(box => { box.disabled = true; });
             report('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
             try {

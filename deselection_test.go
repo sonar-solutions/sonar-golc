@@ -1006,6 +1006,32 @@ func TestRepositoryTableColumnCountsLineUp(t *testing.T) {
 	if headerCells != footerCells+spanned {
 		t.Errorf("footer spans %d columns but the header has %d", footerCells+spanned, headerCells)
 	}
+
+	// Code Lines follows Top Languages and Lines closes the row, in the header, the rows
+	// and the totals alike.
+	order := func(text string, marks ...string) bool {
+		last := -1
+		for _, m := range marks {
+			i := strings.Index(text, m)
+			if i <= last {
+				return false
+			}
+			last = i
+		}
+		return true
+	}
+	if !order(header, `data-column="language"`, `data-column="codelines"`, `data-column="blanklines"`, `data-column="comments"`, `data-column="lines"`) {
+		t.Error("header columns are not Top Languages, Code Lines, Blank Lines, Comments, Lines")
+	}
+	if !order(footer, `id="totalCodeLines"`, `id="totalBlankLines"`, `id="totalComments"`, `id="totalLines"`) {
+		t.Error("totals row does not follow the header's column order")
+	}
+	row := section[:strings.Index(section, "</tr>")]
+	afterLanguages := row[strings.Index(row, `class="top-languages"`):]
+	afterLanguages = afterLanguages[strings.Index(afterLanguages, "</td>")+len("</td>"):]
+	if !strings.HasPrefix(strings.TrimSpace(afterLanguages), "<td><strong>") {
+		t.Error("a repository row should put the bold Code Lines right after Top Languages")
+	}
 }
 
 func TestPartitionDeselectedPage(t *testing.T) {
@@ -1046,8 +1072,14 @@ func TestRepositoryTableRendersSelectionControls(t *testing.T) {
 	pd.RawTotalLinesOfCode = rawTotalLOC
 	out := renderTemplate(t, pd)
 
+	// No Apply button: a checkbox applies as soon as it changes.
+	for _, gone := range []string{`id="btnApplySelection"`, `id="btnSelectAll"`, "Apply selection"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("rendered page still has %q", gone)
+		}
+	}
 	for _, want := range []string{
-		`id="btnApplySelection"`,
+		"applySelection(currentDeselectedKeys(), () => { box.checked = !box.checked; });",
 		`id="btnResetSelection"`,
 		`id="selectAllCheckbox"`,
 		`class="form-check-input repo-select"`,

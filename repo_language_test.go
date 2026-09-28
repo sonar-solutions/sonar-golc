@@ -211,23 +211,18 @@ func TestLastLanguageOfTheLastRepositoryCannotDeselectIt(t *testing.T) {
 	}
 }
 
-func TestLanguageSwitchesGuardUnappliedSelection(t *testing.T) {
+func TestLanguageSwitchesKeepTheirConfirmFlow(t *testing.T) {
 	setupLanguageFixture(t)
 	out := renderTemplate(t, snapshot())
-	// Switching reloads the page; unapplied repository checkboxes must not be lost to it.
-	for _, want := range []string{
-		"function hasUnappliedSelection()",
-		"if (hasUnappliedSelection()) {",
-		"Apply or reset your repository selection first",
-		"res.status === 409",
-		"Deselect: true",
-	} {
+	// A checkbox applies at once, so nothing can be left unapplied for a switch's reload
+	// to discard - the guard that protected against that is gone with the Apply button.
+	if strings.Contains(out, "hasUnappliedSelection") {
+		t.Error("the unapplied-selection guard should be gone")
+	}
+	for _, want := range []string{"res.status === 409", "Deselect: true"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("page script missing %q", want)
 		}
-	}
-	if n := strings.Count(out, "if (hasUnappliedSelection()) {"); n != 2 {
-		t.Errorf("guard appears %d times, want 2 (Languages card and repository chips)", n)
 	}
 }
 
