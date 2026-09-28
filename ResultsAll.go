@@ -2146,15 +2146,17 @@ const htmlTemplate = `
       }
       /* Language bar chart */
       .lang-bar-row { margin-bottom: 0.6rem; }
-      .lang-bar-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px; gap:4px; }
+      .lang-bar-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px; }
       .lang-bar-name { font-weight:600; font-size:0.85rem; max-width:56%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .lang-bar-meta { font-size:0.75rem; opacity:0.85; white-space:nowrap; text-align:right; }
       .lang-bar-track { background:rgba(255,255,255,.18); border-radius:3px; height:5px; overflow:hidden; }
       .lang-bar-fill { background:rgba(255,255,255,.85); border-radius:3px; height:5px; transition:width .4s ease; }
       .lang-bar-title { display:flex; align-items:center; gap:0.45rem; min-width:0; max-width:62%; }
       .lang-bar-title .lang-bar-name { max-width:none; }
-      .lang-switch.form-check { margin:0; padding-left:2.1em; min-height:0; line-height:1; }
-      .lang-switch .form-check-input { cursor:pointer; margin-top:0; background-color:rgba(255,255,255,.25); border-color:rgba(255,255,255,.7); }
+      /* Bootstrap floats a switch into padding it reserves on the left (margin-left:-2.5em);
+         dropping both keeps the switch inside the card, flush with the bars and summary. */
+      .lang-switch.form-check { display:flex; align-items:center; flex-shrink:0; margin:0; padding-left:0; min-height:0; line-height:1; }
+      .lang-switch .form-check-input { float:none; margin:0; cursor:pointer; background-color:rgba(255,255,255,.25); border-color:rgba(255,255,255,.7); }
       .lang-switch .form-check-input:checked { background-color:#fff; border-color:#fff;
         background-image:url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%230073ba'/%3e%3c/svg%3e"); }
       .lang-switch .form-check-input:focus { box-shadow:0 0 0 .2rem rgba(255,255,255,.35); }
