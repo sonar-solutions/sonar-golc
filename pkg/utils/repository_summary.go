@@ -15,13 +15,15 @@ import (
 
 // TopLanguagesShown is how many of a repository's largest languages are surfaced
 // alongside its totals.
-const TopLanguagesShown = 3
+const TopLanguagesShown = 5
 
 // LanguageShare is one language's contribution to a single repository.
 type LanguageShare struct {
 	Language   string `json:"Language"`
 	CodeLines  int    `json:"CodeLines"`
 	CodeLinesF string `json:"CodeLinesF"`
+	// Excluded marks a language the repository excludes of its own; see RankLanguageChips.
+	Excluded bool `json:"Excluded,omitempty"`
 }
 
 // RankTopLanguages returns a repository's largest languages, biggest first, capped at
@@ -46,6 +48,37 @@ func RankTopLanguages(languages []LanguageShare, limit int, excluded LanguageExc
 		})
 	}
 
+	return rankShares(ranked, limit)
+}
+
+// RankLanguageChips returns the languages the results page offers a switch for in a
+// repository's row: its largest languages, biggest first, capped at limit.
+//
+// Unlike RankTopLanguages it keeps the languages the repository excludes of its own,
+// flagged Excluded, so they can be switched back on from the row. Languages excluded
+// globally are left out - they are switched on the Languages card, not per repository -
+// and would otherwise crowd a repository's own languages out of the limit. excluded is
+// expected to be scoped to the repository with ForRepo.
+func RankLanguageChips(languages []LanguageShare, limit int, excluded LanguageExclusion) []LanguageShare {
+	ranked := make([]LanguageShare, 0, len(languages))
+	for _, lang := range languages {
+		name := strings.TrimSpace(lang.Language)
+		if name == "" || excluded.ExcludesEverywhere(name) || lang.CodeLines <= 0 {
+			continue
+		}
+		ranked = append(ranked, LanguageShare{
+			Language:   name,
+			CodeLines:  lang.CodeLines,
+			CodeLinesF: FormatCodeLines(float64(lang.CodeLines)),
+			Excluded:   excluded.ExcludedHere(name),
+		})
+	}
+	return rankShares(ranked, limit)
+}
+
+// rankShares orders languages biggest first, ties by name so the output is stable across
+// runs, and caps the list at limit.
+func rankShares(ranked []LanguageShare, limit int) []LanguageShare {
 	sort.Slice(ranked, func(i, j int) bool {
 		if ranked[i].CodeLines != ranked[j].CodeLines {
 			return ranked[i].CodeLines > ranked[j].CodeLines
@@ -77,8 +110,13 @@ type RepositoryData struct {
 	CommentsF   string `json:"CommentsF"`
 	CodeLinesF  string `json:"CodeLinesF"`
 	// TopLanguages are the repository's largest languages, biggest first, excluding the
-	// language held out of the totals. Empty when no by-language result file was found.
+	// languages held out of its totals. Empty when no by-language result file was found.
 	TopLanguages []LanguageShare `json:"TopLanguages,omitempty"`
+	// LanguageChips are the languages its row on the results page offers a switch for -
+	// see RankLanguageChips. Page-only, so not written to the reports.
+	LanguageChips []LanguageShare `json:"-"`
+	// Languages names every language the repository has, sorted. Page-only.
+	Languages []string `json:"-"`
 	// Deselected marks a row excluded from the totals. Set only on the results page's
 	// table view, where counted and deselected rows are interleaved so a deselected
 	// repository keeps its ranked position.

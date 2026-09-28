@@ -360,8 +360,12 @@ func TestRepositoryCSVRowPadsMissingLanguages(t *testing.T) {
 	if len(full) != len(sparse) || len(full) != len(one) {
 		t.Fatalf("row widths differ: full=%d sparse=%d one=%d", len(full), len(sparse), len(one))
 	}
-	if full[len(full)-2] != "XML" {
-		t.Errorf("third language should be in the penultimate column, got %q", full[len(full)-2])
+	// The third language sits in the third language pair, after the seven fixed columns.
+	if got := full[7+2*2]; got != "XML" {
+		t.Errorf("third language should be in the third language column, got %q", got)
+	}
+	if full[len(full)-2] != "" {
+		t.Errorf("unused language columns should be empty, got %q", full[len(full)-2])
 	}
 	for _, cell := range sparse[len(sparse)-TopLanguagesShown*2:] {
 		if cell != "" {

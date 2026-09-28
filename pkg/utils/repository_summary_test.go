@@ -364,7 +364,8 @@ func TestGenerateRepositoryCSVReport(t *testing.T) {
 	languagePadding := strings.Repeat(",", TopLanguagesShown*2)
 	expectedStrings := []string{
 		"#,Repository,Branch,Lines,Blank Lines,Comments,Code Lines,Language 1,Language 1 Code Lines," +
-			"Language 2,Language 2 Code Lines,Language 3,Language 3 Code Lines",
+			"Language 2,Language 2 Code Lines,Language 3,Language 3 Code Lines," +
+			"Language 4,Language 4 Code Lines,Language 5,Language 5 Code Lines",
 		"1,repo1,main,100,10,20,70" + languagePadding,
 		"2,repo2,master,200,15,25,160" + languagePadding,
 		"TOTAL,2 repositories,,300,25,45,230",

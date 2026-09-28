@@ -129,7 +129,7 @@ func TestAccumulateLanguageTotalsFromFile(t *testing.T) {
 		},
 	})
 	totals := map[string]int{}
-	fileLOC, primary, err := accumulateLanguageTotalsFromFile(path, totals, DefaultLanguageExclusion())
+	fileLOC, primary, err := accumulateLanguageTotalsFromFile(path, totals, map[string]int{}, DefaultLanguageExclusion())
 	if err != nil {
 		t.Fatalf("accumulateLanguageTotalsFromFile error: %v", err)
 	}

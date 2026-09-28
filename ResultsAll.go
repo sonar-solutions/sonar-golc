@@ -103,6 +103,16 @@ type LanguageData struct {
 	// OnlyDeselected marks a language found only in deselected repositories. It is listed
 	// with zero lines so it still has a switch - see withLanguagesOnlyInDeselected.
 	OnlyDeselected bool `json:"OnlyDeselected,omitempty"`
+	// CountedLines is how much of CodeLines counts toward the total: less than CodeLines
+	// when some repositories exclude the language of their own, ExcludedInRepos of them.
+	CountedLines    int `json:"CountedLines"`
+	ExcludedInRepos int `json:"ExcludedInRepos,omitempty"`
+}
+
+// PartlyExcluded reports whether some repositories exclude the language of their own
+// while it still counts in others.
+func (l LanguageData) PartlyExcluded() bool {
+	return !l.Excluded && l.ExcludedInRepos > 0
 }
 
 // The repository row, its inventory and the platform naming rules all live in pkg/utils
@@ -130,6 +140,9 @@ type RepositoryLanguageData struct {
 	CommentsF   string `json:"CommentsF"`
 	CodeLinesF  string `json:"CodeLinesF"`
 	Excluded    bool   `json:"Excluded,omitempty"`
+	// Everywhere marks a language the global set excludes, which this repository's own
+	// switch cannot change - see utils.LanguageExclusion.
+	Everywhere bool `json:"Everywhere,omitempty"`
 }
 
 type BranchData struct {
@@ -176,6 +189,8 @@ type RepositoryDetailData struct {
 	PlatformIcon     string                   `json:"PlatformIcon"`
 	RepositoryURL    string                   `json:"RepositoryURL"`
 	NoteLOCExcluded  string                   `json:"NoteLOCExcluded"`
+	// RepoKey identifies the repository to /api/repo-languages.
+	RepoKey string `json:"RepoKey"`
 }
 
 type PageData struct {
@@ -194,6 +209,7 @@ type PageData struct {
 	ExcludedLanguagesIsDefault bool
 	ExcludedLanguagesCodeLines string // formatted LOC the excluded languages account for
 	DefaultExcludedLanguages   []string
+	ReposWithOwnExclusions     int // repositories excluding languages of their own
 
 	// SelectionActive is true when either selection departs from the full scan, which is
 	// when the customized reports are offered. SelectionLabel says how, for their heading.
@@ -589,7 +605,10 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		return nil, fmt.Errorf("error decoding GlobalReport.json: %v", err)
 	}
 
-	excluded := utils.LoadLanguageExclusion(resultsBaseDir)
+	// The repository counts under the global set plus its own exclusions, and its switches
+	// address it by the same key the results page uses.
+	repoKey := utils.DeselectionKeyForRepo(platform, firstPart, repoName, branchName)
+	excluded := utils.LoadLanguageExclusion(resultsBaseDir).ForRepo(repoKey)
 
 	// Process language data to add formatted fields
 	var formattedLanguages []RepositoryLanguageData
@@ -607,6 +626,7 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 			CommentsF:   utils.FormatCodeLines(float64(lang.Comments)),
 			CodeLinesF:  utils.FormatCodeLines(float64(lang.CodeLines)),
 			Excluded:    excluded.Excludes(lang.Language),
+			Everywhere:  excluded.ExcludesEverywhere(lang.Language),
 		}
 		formattedLanguages = append(formattedLanguages, formattedLang)
 	}
@@ -672,7 +692,8 @@ func getRepositoryDetailData(repoName, branchName string) (*RepositoryDetailData
 		Platform:         platform,
 		PlatformIcon:     platformIcon,
 		RepositoryURL:    repositoryURL,
-		NoteLOCExcluded:  excluded.Note(),
+		NoteLOCExcluded:  excluded.RepoNote(),
+		RepoKey:          repoKey,
 	}
 
 	return repoDetail, nil
@@ -767,28 +788,40 @@ func zipResults(w http.ResponseWriter, r *http.Request) {
 // buildLanguageSummary converts raw language data into a sorted, percentage-annotated
 // slice. Excluded languages stay listed, so they can be switched back on, but take no
 // share of the total.
-func buildLanguageSummary(rawData []LanguageData, excluded utils.LanguageExclusion) []LanguageData {
+//
+// counted holds each language's lines that count, summed over the repositories' own
+// counts, and excludedIn how many counted repositories exclude it of their own. With a
+// nil counted - an aggregate file with no per-repository detail - a language counts in
+// full unless the global set excludes it.
+func buildLanguageSummary(rawData []LanguageData, excluded utils.LanguageExclusion, counted, excludedIn map[string]int) []LanguageData {
 	totals := make(map[string]int)
 	for _, r := range rawData {
 		totals[r.Language] += r.CodeLines
 	}
 
-	counted := 0
+	countedTotal := 0
 	var languages []LanguageData
 	for lang, total := range totals {
-		isExcluded := excluded.Excludes(lang)
-		if !isExcluded {
-			counted += total
+		isExcluded := excluded.ExcludesEverywhere(lang)
+		countedLines := total
+		switch {
+		case isExcluded:
+			countedLines = 0
+		case counted != nil:
+			countedLines = counted[lang]
 		}
+		countedTotal += countedLines
 		languages = append(languages, LanguageData{
-			Language:   lang,
-			CodeLines:  total,
-			CodeLinesF: utils.FormatCodeLines(float64(total)),
-			Excluded:   isExcluded,
+			Language:        lang,
+			CodeLines:       total,
+			CodeLinesF:      utils.FormatCodeLines(float64(total)),
+			Excluded:        isExcluded,
+			CountedLines:    countedLines,
+			ExcludedInRepos: excludedIn[lang],
 		})
 	}
 
-	applyLanguagePercentages(languages, counted)
+	applyLanguagePercentages(languages, countedTotal)
 
 	// Ties break on name: several languages at the same size would otherwise swap places
 	// between reloads, and with a switch on every row that reads as the list jumping.
@@ -837,14 +870,14 @@ func withLanguagesOnlyInDeselected(languages []LanguageData, excluded utils.Lang
 	return languages, nil
 }
 
-// applyLanguagePercentages sets the Percentage field for each language entry, as a share
-// of the counted total. Excluded languages get zero.
+// applyLanguagePercentages sets the Percentage field for each language entry, as its
+// counted lines' share of the counted total. Excluded languages get zero.
 func applyLanguagePercentages(languages []LanguageData, countedTotal int) {
 	for i := range languages {
 		if languages[i].Excluded || countedTotal == 0 {
 			languages[i].Percentage = 0
 		} else {
-			languages[i].Percentage = float64(languages[i].CodeLines) / float64(countedTotal) * 100
+			languages[i].Percentage = float64(languages[i].CountedLines) / float64(countedTotal) * 100
 		}
 	}
 }
@@ -864,9 +897,20 @@ func loadApplicationData() (PageData, error) {
 	//
 	// Locals, not the package vars: publish is the only writer of those, so a failed load
 	// cannot leave the served view half-updated.
-	totals, _, err := utils.CollectResultTotals(resultsBaseDir, deselectedSet, excluded)
+	totals, repoTotals, err := utils.CollectResultTotals(resultsBaseDir, deselectedSet, excluded)
 	if err != nil {
 		return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
+	}
+	// What each language counts for, and how many counted repositories exclude it of
+	// their own: the Languages card shows a language excluded by some repositories as
+	// partly counted rather than all or nothing.
+	countedByLanguage := utils.CountedByLanguage(repoTotals)
+	excludedIn := make(map[string]int)
+	repoExclusions := excluded.RepoExclusions()
+	for _, rt := range repoTotals {
+		for _, lang := range repoExclusions[rt.Key] {
+			excludedIn[lang]++
+		}
 	}
 	rawLanguages := make([]LanguageData, 0, len(totals))
 	for language, codeLines := range totals {
@@ -890,9 +934,10 @@ func loadApplicationData() (PageData, error) {
 				rawLanguages = nil
 			}
 		}
+		countedByLanguage = nil // the aggregate carries no per-repository detail
 	}
 
-	languages := buildLanguageSummary(rawLanguages, excluded)
+	languages := buildLanguageSummary(rawLanguages, excluded, countedByLanguage, excludedIn)
 	if len(deselectedSet) > 0 {
 		languages, err = withLanguagesOnlyInDeselected(languages, excluded)
 		if err != nil {
@@ -925,15 +970,13 @@ func loadApplicationData() (PageData, error) {
 	if !excluded.Matches(info.ExcludedLanguages) {
 		// GlobalReport.json was counted under another language selection - the defaults,
 		// or an older version's - so the whole-scan figure is recounted under this one.
-		allTotals, _, err := utils.CollectResultTotals(resultsBaseDir, nil, excluded)
+		_, allRepoTotals, err := utils.CollectResultTotals(resultsBaseDir, nil, excluded)
 		if err != nil {
 			return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
 		}
 		all := 0
-		for lang, lines := range allTotals {
-			if !excluded.Excludes(lang) {
-				all += lines
-			}
+		for _, rt := range allRepoTotals {
+			all += rt.CodeLines
 		}
 		rawTotalLOC = utils.FormatCodeLines(float64(all))
 	}
@@ -983,7 +1026,8 @@ func loadApplicationData() (PageData, error) {
 		Platform:        detectedPlatform,
 
 		ExcludedLanguages:          excludedPresent,
-		ExcludedLanguagesIsDefault: excluded.IsDefault(),
+		ExcludedLanguagesIsDefault: excluded.GlobalIsDefault(),
+		ReposWithOwnExclusions:     len(repoExclusions),
 		ExcludedLanguagesCodeLines: utils.FormatCodeLines(float64(excludedCodeLines)),
 		DefaultExcludedLanguages:   utils.DefaultLanguageExclusion().Languages(),
 		SelectionActive:            len(deselected) > 0 || !excluded.IsDefault(),
@@ -1012,12 +1056,18 @@ func selectionLabel(deselectedCount int, excluded utils.LanguageExclusion, exclu
 	case deselectedCount > 1:
 		parts = append(parts, fmt.Sprintf("%d repositories deselected", deselectedCount))
 	}
-	if !excluded.IsDefault() {
+	if !excluded.GlobalIsDefault() {
 		if len(excludedPresent) == 0 {
 			parts = append(parts, "every language counted")
 		} else {
 			parts = append(parts, strings.Join(excludedPresent, ", ")+" excluded")
 		}
+	}
+	switch n := len(excluded.RepoExclusions()); {
+	case n == 1:
+		parts = append(parts, "1 repository with its own language exclusions")
+	case n > 1:
+		parts = append(parts, fmt.Sprintf("%d repositories with their own language exclusions", n))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -1075,9 +1125,7 @@ func adjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, kept []Reposit
 
 	total := 0
 	for _, lang := range languages {
-		if !excluded.Excludes(lang.Language) {
-			total += lang.CodeLines
-		}
+		total += lang.CountedLines
 	}
 	ginfo.TotalLinesOfCode = utils.FormatCodeLines(float64(total))
 
@@ -1211,7 +1259,7 @@ func reportStamp(v reportVariant, deselected []utils.DeselectedRepo, excluded ut
 	}
 
 	sum := sha256.Sum256([]byte(v.name + "\x00" + scanID + "\x00" + strings.Join(keys, "\x00") +
-		"\x00languages\x00" + strings.Join(excluded.Languages(), "\x00")))
+		"\x00languages\x00" + excluded.Fingerprint()))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -1591,7 +1639,8 @@ func applyLanguageExclusion(requested []string) (*LanguageExclusionResponse, err
 			kept = append(kept, lang)
 		}
 	}
-	excluded := utils.NewLanguageExclusion(kept)
+	// Only the global set changes here; each repository keeps its own exclusions.
+	excluded := utils.NewLanguageExclusion(kept).WithRepoExclusions(utils.LoadLanguageExclusion(resultsBaseDir).RepoExclusions())
 
 	counted := 0
 	for _, lang := range available {
@@ -1646,6 +1695,197 @@ func languageExclusionState(excluded utils.LanguageExclusion, ignored int) (*Lan
 		RawTotalLinesOfCode: pd.RawTotalLinesOfCode,
 		Ignored:             ignored,
 	}, nil
+}
+
+// RepoLanguageRequest is the payload of POST /api/repo-languages. It changes one thing:
+// one language of one repository (Key, Language, Counted), every language of one
+// repository back to counted (Key, Reset), or every repository's own exclusions (ResetAll).
+//
+// One language at a time rather than a repository's whole list, because the page never
+// shows a whole list: a row offers switches for its top languages only. A list built from
+// what the row shows would drop the exclusions it does not show.
+type RepoLanguageRequest struct {
+	Key      string `json:"Key"`
+	Language string `json:"Language"`
+	Counted  *bool  `json:"Counted"`
+	Reset    bool   `json:"Reset"`
+	ResetAll bool   `json:"ResetAll"`
+}
+
+// RepoLanguageResponse reports the repository's state after the change.
+type RepoLanguageResponse struct {
+	Key string `json:"Key,omitempty"`
+	// ExcludedLanguages is the repository's own exclusions, beyond the global set.
+	ExcludedLanguages      []string `json:"ExcludedLanguages"`
+	CodeLines              int      `json:"CodeLines"`
+	TotalLinesOfCode       string   `json:"TotalLinesOfCode"`
+	ReposWithOwnExclusions int      `json:"ReposWithOwnExclusions"`
+}
+
+// errRepoLanguageRequest is a request that is well-formed but cannot be carried out,
+// answered with 422 rather than 500 for the reason errAllDeselected gives.
+type errRepoLanguageRequest struct{ msg string }
+
+func (e errRepoLanguageRequest) Error() string { return e.msg }
+
+// errRepoLanguageNotFound names a repository or language the scan does not have.
+type errRepoLanguageNotFound struct{ msg string }
+
+func (e errRepoLanguageNotFound) Error() string { return e.msg }
+
+// handleRepoLanguages applies one change to a repository's own language exclusions.
+func handleRepoLanguages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req RepoLanguageRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if !req.ResetAll && (req.Key == "" || (!req.Reset && (strings.TrimSpace(req.Language) == "" || req.Counted == nil))) {
+		http.Error(w, "a change needs Key with Language and Counted, Key with Reset, or ResetAll", http.StatusBadRequest)
+		return
+	}
+
+	selectionMu.Lock()
+	defer selectionMu.Unlock()
+
+	resp, err := applyRepoLanguageChange(req)
+	var unprocessable errRepoLanguageRequest
+	var notFound errRepoLanguageNotFound
+	switch {
+	case errors.As(err, &unprocessable):
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	case errors.As(err, &notFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	go rebuildReportsInBackground()
+
+	w.Header().Set(contentTypeHeader, applicationJSONType)
+	json.NewEncoder(w).Encode(resp)
+}
+
+// applyRepoLanguageChange validates and persists one change, then republishes the page
+// data. Callers must hold selectionMu.
+func applyRepoLanguageChange(req RepoLanguageRequest) (*RepoLanguageResponse, error) {
+	current := utils.LoadLanguageExclusion(resultsBaseDir)
+	byRepo := current.RepoExclusions()
+
+	switch {
+	case req.ResetAll:
+		byRepo = nil
+
+	default:
+		// Every analyzed repository, deselected ones included: a deselected repository's
+		// detail page still offers its switches.
+		all, err := getRepositoryData()
+		if err != nil {
+			return nil, fmt.Errorf("cannot read repository data: %w", err)
+		}
+		var repo *RepositoryData
+		for i := range all {
+			if all[i].Key == req.Key {
+				repo = &all[i]
+				break
+			}
+		}
+		if repo == nil {
+			return nil, errRepoLanguageNotFound{fmt.Sprintf("no analyzed repository has the key %q", req.Key)}
+		}
+
+		if req.Reset {
+			delete(byRepo, req.Key)
+			break
+		}
+
+		lang := strings.TrimSpace(req.Language)
+		has := false
+		for _, l := range repo.Languages {
+			if l == lang {
+				has = true
+				break
+			}
+		}
+		if !has {
+			return nil, errRepoLanguageNotFound{fmt.Sprintf("%s has no %s code", repo.Repository, lang)}
+		}
+		if current.ExcludesEverywhere(lang) {
+			return nil, errRepoLanguageRequest{fmt.Sprintf(
+				"%s is excluded for all repositories — switch it on in the Languages card first", lang)}
+		}
+
+		own := make(map[string]bool)
+		for _, l := range byRepo[req.Key] {
+			own[l] = true
+		}
+		if *req.Counted {
+			delete(own, lang)
+		} else {
+			own[lang] = true
+		}
+
+		// Excluding every language a repository counts leaves it at zero, which is what
+		// deselecting it is for - and a deselection says so in every report.
+		counted := 0
+		for _, l := range repo.Languages {
+			if !current.ExcludesEverywhere(l) && !own[l] {
+				counted++
+			}
+		}
+		if counted == 0 {
+			return nil, errRepoLanguageRequest{fmt.Sprintf(
+				"cannot exclude every language of %s — deselect the repository instead", repo.Repository)}
+		}
+
+		langs := make([]string, 0, len(own))
+		for l := range own {
+			langs = append(langs, l)
+		}
+		if byRepo == nil {
+			byRepo = map[string][]string{}
+		}
+		byRepo[req.Key] = langs
+	}
+
+	updated := current.WithRepoExclusions(byRepo)
+	if err := utils.SaveRepoLanguageExclusions(resultsBaseDir, updated); err != nil {
+		return nil, fmt.Errorf("cannot save repository language selection: %w", err)
+	}
+	if !selectionActive(utils.LoadDeselectedRepos(resultsBaseDir), updated) {
+		if err := clearCustomizedReportsLocked(); err != nil {
+			return nil, err
+		}
+	}
+
+	pd, err := loadApplicationData()
+	if err != nil {
+		return nil, fmt.Errorf("cannot reload results: %w", err)
+	}
+	publish(pd)
+
+	resp := &RepoLanguageResponse{
+		Key:                    req.Key,
+		ExcludedLanguages:      updated.RepoExclusions()[req.Key],
+		TotalLinesOfCode:       pd.GlobalReport.TotalLinesOfCode,
+		ReposWithOwnExclusions: pd.ReposWithOwnExclusions,
+	}
+	if resp.ExcludedLanguages == nil {
+		resp.ExcludedLanguages = []string{}
+	}
+	for _, row := range pd.TableRows {
+		if row.Key == req.Key {
+			resp.CodeLines = row.CodeLines
+		}
+	}
+	return resp, nil
 }
 
 // selectionActive reports whether the page's totals depart from the full scan: some
@@ -1817,6 +2057,7 @@ func setupHTTPHandlers(pageData PageData) {
 
 	http.HandleFunc("/api/deselected", handleDeselected)
 	http.HandleFunc("/api/excluded-languages", handleExcludedLanguages)
+	http.HandleFunc("/api/repo-languages", handleRepoLanguages)
 
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -2169,6 +2410,16 @@ const htmlTemplate = `
       .lang-selection-summary { font-size:0.74rem; background:rgba(0,0,0,.14); border-radius:4px; padding:0.4rem 0.55rem; margin-bottom:0.7rem; line-height:1.35; }
       .lang-selection-summary a { color:#fff; text-decoration:underline; cursor:pointer; white-space:nowrap; }
       .lang-selection-status { font-size:0.74rem; margin-top:0.35rem; }
+      .lang-partly-badge { font-size:0.62rem; font-weight:600; padding:1px 5px; border-radius:3px; background:rgba(0,0,0,.14); margin-right:4px; }
+      .repo-lang-chips { display:flex; flex-wrap:wrap; gap:4px; }
+      .repo-lang-chip { display:inline-flex; align-items:center; gap:4px; margin:0; padding:1px 7px 1px 4px; border:1px solid #d5dde8;
+        border-radius:999px; background:#fff; font-size:0.8rem; line-height:1.5; cursor:pointer; white-space:nowrap; }
+      .repo-lang-chip .form-check-input { float:none; margin:0; width:0.85rem; height:0.85rem; cursor:pointer; }
+      .repo-lang-chip .form-check-input:disabled { cursor:progress; }
+      .repo-lang-name { font-weight:500; }
+      .repo-lang-loc { color:#6c757d; font-size:0.85em; }
+      .repo-lang-chip.excluded { background:#f1f3f5; border-style:dashed; }
+      .repo-lang-chip.excluded .repo-lang-name { text-decoration:line-through; color:#8a939d; }
       .lang-selection-status:empty { display:none; }
       /* Reports dropdown — sharp rectangular corners */
       .dropdown-menu { border-radius: 4px !important; }
@@ -2274,6 +2525,12 @@ const htmlTemplate = `
                       {{if not .ExcludedLanguagesIsDefault}}
                         · <a id="btnResetLanguages" role="button" title="Exclude {{range $i, $l := .DefaultExcludedLanguages}}{{if $i}} and {{end}}{{$l}}{{end}} again, as SonarQube does with default settings">Reset to SonarQube defaults</a>
                       {{end}}
+                      {{if .ReposWithOwnExclusions}}
+                        <div style="margin-top:0.25rem;">
+                          <i class="fas fa-code-branch"></i> {{.ReposWithOwnExclusions}} {{if eq .ReposWithOwnExclusions 1}}repository excludes languages of its own{{else}}repositories exclude languages of their own{{end}}
+                          · <a id="btnResetRepoLanguages" role="button" title="Count every language again in every repository, apart from those excluded for all of them">Reset them</a>
+                        </div>
+                      {{end}}
                       <div class="lang-selection-status" id="langSelectionStatus" role="status" aria-live="polite"></div>
                     </div>
                     {{range .Languages}}
@@ -2287,7 +2544,7 @@ const htmlTemplate = `
                           </span>
                           <span class="lang-bar-name" title="{{.Language}}">{{.Language}}</span>
                         </span>
-                        <span class="lang-bar-meta"{{if .OnlyDeselected}} title="Found only in deselected repositories, so it adds nothing to the current total"{{end}}>{{if .Excluded}}<span class="lang-excluded-badge">excluded</span>{{else if not .OnlyDeselected}}{{printf "%.1f" .Percentage}}% · {{end}}{{if .OnlyDeselected}}only in deselected repositories{{else}}{{.CodeLinesF}} LOC{{end}}</span>
+                        <span class="lang-bar-meta"{{if .OnlyDeselected}} title="Found only in deselected repositories, so it adds nothing to the current total"{{else if .PartlyExcluded}} title="{{.ExcludedInRepos}} {{if eq .ExcludedInRepos 1}}repository excludes{{else}}repositories exclude{{end}} {{.Language}} of its own, so only part of its lines count"{{end}}>{{if .Excluded}}<span class="lang-excluded-badge">excluded</span>{{else if not .OnlyDeselected}}{{if .PartlyExcluded}}<span class="lang-partly-badge">excl. in {{.ExcludedInRepos}}</span>{{end}}{{printf "%.1f" .Percentage}}% · {{end}}{{if .OnlyDeselected}}only in deselected repositories{{else}}{{.CodeLinesF}} LOC{{end}}</span>
                       </div>
                       <div class="lang-bar-track">
                         <div class="lang-bar-fill" style="width:{{printf "%.1f" .RelativePct}}%;"></div>
@@ -2352,7 +2609,7 @@ const htmlTemplate = `
                         <tr>
                           <th scope="col" style="width:2.5rem;">
                             <input type="checkbox" id="selectAllCheckbox" class="form-check-input" checked
-                                   title="Select or deselect every repository" aria-label="Select all repositories">
+                                   title="Select or deselect every repository, on every page" aria-label="Select all repositories, on every page">
                           </th>
                           <th scope="col">#</th>
                           <th scope="col" class="sortable" data-column="repository">
@@ -2362,7 +2619,7 @@ const htmlTemplate = `
                             Branch <i class="fas fa-sort sort-icon"></i>
                           </th>
                           <th scope="col" class="sortable" data-column="language"
-                              title="The {{.TopLanguagesShown}} largest languages by code lines. Excluded languages are left out, matching the Code Lines column.">
+                              title="The {{.TopLanguagesShown}} largest languages by code lines. Switch one off to leave it out of that repository's Code Lines; languages excluded for every repository are switched in the Languages card.">
                             Top Languages <i class="fas fa-sort sort-icon"></i>
                           </th>
                           <th scope="col" class="sortable" data-column="lines">
@@ -2394,7 +2651,7 @@ const htmlTemplate = `
                             {{if .Deselected}}<span class="badge bg-secondary ms-1" style="font-size:0.65em;">deselected</span>{{end}}
                           </td>
                           <td>{{.Branch}}</td>
-                          <td class="top-languages">{{template "topLanguages" .TopLanguages}}</td>
+                          <td class="top-languages">{{template "languageChips" .}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>
                           <td>{{.CommentsF}}</td>
@@ -2414,6 +2671,14 @@ const htmlTemplate = `
                         </tr>
                       </tfoot>
                     </table>
+                    <!-- Pagination: every repository stays in the table, so sorting, the
+                         totals row and the selection keep covering all of them; only 50
+                         rows are shown at a time. -->
+                    <nav id="repoPager" class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3" aria-label="Repository pages" hidden>
+                      <span id="repoPagerInfo" class="text-muted small"></span>
+                      <ul class="pagination pagination-sm mb-0" id="repoPagerList"></ul>
+                    </nav>
+                    <div id="repoLangStatus" class="small mt-2" role="status" aria-live="polite"></div>
                   </div>
                 </div>
               </div>
@@ -2601,7 +2866,7 @@ const htmlTemplate = `
                 labels: [{{range .Languages}}{{if and (not .Excluded) (not .OnlyDeselected)}}"{{.Language}}",{{end}}{{end}}],
                 datasets: [{
                     label: 'LOC ',
-                    data: [{{range .Languages}}{{if and (not .Excluded) (not .OnlyDeselected)}}{{.CodeLines}},{{end}}{{end}}],
+                    data: [{{range .Languages}}{{if and (not .Excluded) (not .OnlyDeselected)}}{{.CountedLines}},{{end}}{{end}}],
                     backgroundColor: [
                         'rgba(255, 99, 132, 0.5)',
                         'rgba(54, 162, 235, 0.5)',
@@ -2909,12 +3174,17 @@ const htmlTemplate = `
             updateSortingIcons('codelines', 'desc');
         });
         
-        function sortTable(column) {
+        // direction is given when restoring a saved sort; a header click leaves it out
+        // and toggles instead. page is the page to show afterwards, 1 unless restoring.
+        function sortTable(column, direction, page) {
             const tbody = document.getElementById('repositoryTableBody');
             const rows = Array.from(tbody.querySelectorAll('tr'));
             
             // Determine sort direction
-            if (currentSort.column === column) {
+            if (direction) {
+                currentSort.column = column;
+                currentSort.direction = direction;
+            } else if (currentSort.column === column) {
                 currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
             } else {
                 currentSort.direction = 'desc'; // Default to descending for new column
@@ -2953,6 +3223,9 @@ const htmlTemplate = `
             
             // Update sort icons
             updateSortingIcons(column, currentSort.direction);
+
+            // A new order starts from its first page.
+            showPage(page || 1);
         }
         
         // Add click handlers to sortable columns
@@ -2962,14 +3235,152 @@ const htmlTemplate = `
             });
         });
 
+        // ─── Pagination ──────────────────────────────────────────────────────
+        // Every repository stays in the table and only PAGE_SIZE rows are shown, so the
+        // sort, the totals row and the selection checkboxes keep covering all of them.
+        // The page and sort survive the reload a selection change triggers, so a change
+        // made on page 4 does not land back on page 1.
+        const PAGE_SIZE = 50;
+        const TABLE_STATE_KEY = 'golc.repositoryTable';
+        let currentPage = 1;
+
+        function repositoryRows() {
+            return Array.from(document.querySelectorAll('#repositoryTableBody tr'));
+        }
+
+        function saveTableState() {
+            try {
+                sessionStorage.setItem(TABLE_STATE_KEY, JSON.stringify({
+                    page: currentPage, column: currentSort.column, direction: currentSort.direction
+                }));
+            } catch (e) { /* storage unavailable: the page still works, it just forgets */ }
+        }
+
+        function loadTableState() {
+            try { return JSON.parse(sessionStorage.getItem(TABLE_STATE_KEY) || 'null'); }
+            catch (e) { return null; }
+        }
+
+        function showPage(page) {
+            const rows = repositoryRows();
+            const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+            currentPage = Math.min(Math.max(1, page), pages);
+            const start = (currentPage - 1) * PAGE_SIZE;
+            const end = start + PAGE_SIZE;
+            rows.forEach((row, i) => { row.hidden = i < start || i >= end; });
+            renderPager(rows.length, pages, start, Math.min(end, rows.length));
+            saveTableState();
+        }
+
+        // Page numbers shown: the first, the last, and two either side of the current one,
+        // with a gap marker where pages are skipped.
+        function pagerNumbers(pages) {
+            const shown = [];
+            for (let p = 1; p <= pages; p++) {
+                if (p === 1 || p === pages || Math.abs(p - currentPage) <= 2) {
+                    if (shown.length && p - shown[shown.length - 1] > 1) shown.push(null);
+                    shown.push(p);
+                }
+            }
+            return shown;
+        }
+
+        function renderPager(total, pages, start, end) {
+            const pager = document.getElementById('repoPager');
+            pager.hidden = total <= PAGE_SIZE;
+            if (pager.hidden) return;
+
+            document.getElementById('repoPagerInfo').textContent =
+                'Showing ' + (start + 1) + '–' + end + ' of ' + formatNumber(total) + ' repositories';
+
+            const list = document.getElementById('repoPagerList');
+            list.innerHTML = '';
+            const item = (label, page, disabled, active) => {
+                const li = document.createElement('li');
+                li.className = 'page-item' + (disabled ? ' disabled' : '') + (active ? ' active' : '');
+                const a = document.createElement(disabled || active ? 'span' : 'a');
+                a.className = 'page-link';
+                a.textContent = label;
+                if (active) a.setAttribute('aria-current', 'page');
+                if (!disabled && !active) {
+                    a.href = '#repository-section';
+                    a.addEventListener('click', event => {
+                        event.preventDefault();
+                        showPage(page);
+                        const table = document.getElementById('repositoryTableBody').closest('table');
+                        if (table && table.getBoundingClientRect().top < 0) table.scrollIntoView({block: 'start'});
+                    });
+                }
+                li.appendChild(a);
+                list.appendChild(li);
+            };
+            item('« Prev', currentPage - 1, currentPage === 1, false);
+            pagerNumbers(pages).forEach(p => p === null ? item('…', 0, true, false) : item(String(p), p, false, p === currentPage));
+            item('Next »', currentPage + 1, currentPage === pages, false);
+        }
+
+        const savedTable = loadTableState();
+        if (savedTable && savedTable.column &&
+            (savedTable.column !== currentSort.column || savedTable.direction !== currentSort.direction)) {
+            sortTable(savedTable.column, savedTable.direction, savedTable.page);
+        } else {
+            showPage(savedTable ? savedTable.page : 1);
+        }
+
+        // ─── Per-repository language switches ────────────────────────────────
+        // Each chip changes one language of one repository and is applied immediately.
+        // One change per request, so languages a row does not show - beyond its top five
+        // - are never touched by a switch on it.
+        const repoLanguageToggles = document.querySelectorAll('.repo-lang-toggle');
+
+        function showRepoLanguageStatus(html, variant) {
+            const el = document.getElementById('repoLangStatus');
+            el.className = 'small mt-2' + (variant ? ' text-' + variant : '');
+            el.innerHTML = html;
+        }
+
+        async function submitRepoLanguageChange(change, onFailure, report) {
+            repoLanguageToggles.forEach(box => { box.disabled = true; });
+            report('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
+            try {
+                const res = await fetch('/api/repo-languages', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(change)
+                });
+                if (!res.ok) throw new Error((await res.text()) || res.statusText);
+                window.location.reload();
+            } catch (err) {
+                if (onFailure) onFailure();
+                repoLanguageToggles.forEach(box => { box.disabled = false; });
+                report('<i class="fas fa-exclamation-triangle"></i> Could not apply: ' +
+                    String(err.message || err).replace(/</g, '&lt;'), 'danger');
+            }
+        }
+
+        repoLanguageToggles.forEach(box => {
+            box.addEventListener('change', function() {
+                submitRepoLanguageChange({Key: box.dataset.key, Language: box.value, Counted: box.checked},
+                    () => { box.checked = !box.checked; }, showRepoLanguageStatus);
+            });
+        });
+
+        const resetRepoLanguages = document.getElementById('btnResetRepoLanguages');
+        if (resetRepoLanguages) {
+            resetRepoLanguages.addEventListener('click', () =>
+                submitRepoLanguageChange({ResetAll: true}, null, html => showLanguageStatus(html)));
+        }
+
     </script>
   </body>
 </html>
 
-{{/* Renders a repository's largest languages as "Go 12.3K · Java 4.1K · XML 900".
-     An em dash when the by-language result file was missing, so "unknown" is visibly
-     unknown rather than an empty-looking cell. */}}
-{{define "topLanguages"}}{{if .}}{{range $i, $lang := .}}{{if $i}} <span class="text-muted">·</span> {{end}}<span style="font-weight:500;">{{$lang.Language}}</span>&nbsp;<span class="text-muted" style="font-size:0.85em;">{{$lang.CodeLinesF}}</span>{{end}}{{else}}<span class="text-muted">&mdash;</span>{{end}}{{end}}
+{{/* Renders a repository's largest languages as switchable chips - "Go 12.3K", "Java
+     4.1K" - each counted or excluded for this repository alone. Languages excluded for
+     every repository are not offered here: the Languages card switches those. An em dash
+     when the repository has no such language, so "unknown" is visibly unknown rather
+     than an empty-looking cell. */}}
+{{define "languageChips"}}{{if .LanguageChips}}<div class="repo-lang-chips">{{range .LanguageChips}}<label class="repo-lang-chip{{if .Excluded}} excluded{{end}}" title="{{if .Excluded}}Excluded from {{$.Repository}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$.Repository}}'s total{{end}}"><input type="checkbox" class="form-check-input repo-lang-toggle" data-key="{{$.Key}}" value="{{.Language}}" aria-label="Count {{.Language}} in {{$.Repository}}"{{if not .Excluded}} checked{{end}}><span class="repo-lang-name">{{.Language}}</span><span class="repo-lang-loc">{{.CodeLinesF}}</span></label>{{end}}</div>{{else}}<span class="text-muted">&mdash;</span>{{end}}{{end}}
 `
 
 // Repository Detail HTML template
@@ -3144,6 +3555,7 @@ const repositoryDetailTemplate = `
                     <table class="table table-striped lang-table">
                       <thead>
                         <tr>
+                          <th style="width:4.5rem;" title="Switch a language off to leave it out of this repository's Code Lines">Counted</th>
                           <th>Language</th>
                           <th>Files</th>
                           <th>Total Lines</th>
@@ -3153,9 +3565,18 @@ const repositoryDetailTemplate = `
                         </tr>
                       </thead>
                       <tbody>
+                        {{$repo := .Repository}}{{$key := .RepoKey}}
                         {{range .Languages}}
-                        <tr{{if .Excluded}} class="text-muted" title="Left out of the Code Lines total — change this on the results page"{{end}}>
-                          <td><strong>{{.Language}}</strong>{{if .Excluded}} <span class="badge bg-secondary" style="font-size:0.65em;">excluded</span>{{end}}</td>
+                        <tr{{if .Excluded}} class="text-muted"{{end}}>
+                          <td>
+                            {{/* A language excluded for every repository is switched in the
+                                 results page's Languages card, so its switch here is locked. */}}
+                            <div class="form-check form-switch m-0" title="{{if .Everywhere}}Excluded for all repositories — switch it on in the Languages card on the results page{{else if .Excluded}}Excluded from {{$repo}} only — switch on to count it again{{else}}Switch off to leave {{.Language}} out of {{$repo}}'s total{{end}}">
+                              <input class="form-check-input detail-lang-toggle" type="checkbox" role="switch" data-key="{{$key}}" value="{{.Language}}"
+                                     aria-label="Count {{.Language}} in {{$repo}}"{{if not .Excluded}} checked{{end}}{{if .Everywhere}} disabled{{end}}>
+                            </div>
+                          </td>
+                          <td><strong>{{.Language}}</strong>{{if .Everywhere}} <span class="badge bg-secondary" style="font-size:0.65em;">excluded for all repositories</span>{{else if .Excluded}} <span class="badge bg-warning text-dark" style="font-size:0.65em;">excluded here</span>{{end}}</td>
                           <td>{{.FilesF}}</td>
                           <td>{{.LinesF}}</td>
                           <td>{{.BlankLinesF}}</td>
@@ -3165,6 +3586,7 @@ const repositoryDetailTemplate = `
                         {{end}}
                       </tbody>
                     </table>
+                    <div id="detailLangStatus" class="small" role="status" aria-live="polite"></div>
                   </div>
                 </div>
               </div>
@@ -3424,6 +3846,40 @@ const repositoryDetailTemplate = `
 
     </main>
 
+    <script>
+      // Each switch changes one language of this repository, applied immediately. The page
+      // reloads so the totals above come from the recount.
+      (function(){
+        var toggles = document.querySelectorAll('.detail-lang-toggle');
+        function status(html, danger) {
+          var el = document.getElementById('detailLangStatus');
+          if (!el) return;
+          el.className = 'small' + (danger ? ' text-danger' : '');
+          el.innerHTML = html;
+        }
+        toggles.forEach(function(box) {
+          box.addEventListener('change', function() {
+            toggles.forEach(function(b) { b.disabled = true; });
+            status('<i class="fas fa-spinner fa-spin"></i> Recounting totals…');
+            fetch('/api/repo-languages', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({Key: box.dataset.key, Language: box.value, Counted: box.checked})
+            }).then(function(res) {
+              if (res.ok) { window.location.reload(); return; }
+              return res.text().then(function(text) { throw new Error(text || res.statusText); });
+            }).catch(function(err) {
+              box.checked = !box.checked;
+              toggles.forEach(function(b) { b.disabled = b.hasAttribute('data-locked'); });
+              status('<i class="fas fa-exclamation-triangle"></i> Could not apply: ' +
+                String(err.message || err).replace(/</g, '&lt;'), true);
+            });
+          });
+          // Switches locked by the template stay locked after a failed request.
+          if (box.disabled) box.setAttribute('data-locked', '');
+        });
+      })();
+    </script>
     <script src="/dist/vendors/bootstrap/js/bootstrap.bundle.min.js"></script>
   </body>
 </html>

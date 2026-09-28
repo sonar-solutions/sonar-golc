@@ -27,6 +27,50 @@ type LanguageData struct {
 	CodeLinesF string  `json:"CodeLinesF"`
 	// Excluded marks a language left out of the totals; its Percentage is then zero.
 	Excluded bool `json:"Excluded,omitempty"`
+	// CountedLines is how much of CodeLines counts toward the total. It differs from
+	// CodeLines when some repositories exclude the language of their own; see counted.
+	CountedLines int `json:"CountedLines,omitempty"`
+	hasCounted   bool
+}
+
+// counted returns the language's lines that count toward the total: CountedLines when
+// the per-repository recount set it, otherwise all or none of them by the global set.
+func (l LanguageData) counted(excluded LanguageExclusion) int {
+	if l.hasCounted {
+		return l.CountedLines
+	}
+	if excluded.ExcludesEverywhere(l.Language) {
+		return 0
+	}
+	return l.CodeLines
+}
+
+// PartlyExcluded reports whether some, but not all, of the language's lines count - it is
+// excluded by some repositories of their own and counted in others.
+func (l LanguageData) PartlyExcluded() bool {
+	return l.hasCounted && !l.Excluded && l.CountedLines < l.CodeLines
+}
+
+// withCountedLines records, for each language, how many of its lines count toward the
+// total, summed over the repositories' own counts.
+func withCountedLines(languages []LanguageData, repoTotals []RepoTotal) []LanguageData {
+	counted := CountedByLanguage(repoTotals)
+	for i := range languages {
+		languages[i].CountedLines = counted[languages[i].Language]
+		languages[i].hasCounted = true
+	}
+	return languages
+}
+
+// CountedByLanguage sums, per language, the lines each repository counts.
+func CountedByLanguage(repoTotals []RepoTotal) map[string]int {
+	counted := make(map[string]int)
+	for _, rt := range repoTotals {
+		for lang, lines := range rt.CountedLanguages {
+			counted[lang] += lines
+		}
+	}
+	return counted
 }
 
 type Globalinfo struct {
@@ -53,14 +97,12 @@ func getTotalCodeLines(languages []LanguageData) int {
 	return total
 }
 
-// getCountedCodeLines returns the sum of CodeLines for every language the selection
-// counts. Used for report totals and percentages.
+// getCountedCodeLines returns the lines that count toward the total, over every language.
+// Used for report totals and percentages.
 func getCountedCodeLines(languages []LanguageData, excluded LanguageExclusion) int {
 	total := 0
 	for _, lang := range languages {
-		if !excluded.Excludes(lang.Language) {
-			total += lang.CodeLines
-		}
+		total += lang.counted(excluded)
 	}
 	return total
 }
@@ -143,13 +185,14 @@ func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 	if !opts.Excluded.Matches(ginfo.ExcludedLanguages) {
 		// GlobalReport.json was counted under another language selection - the defaults,
 		// or an older version's - so the whole-scan figure is recounted under this one.
-		allTotals, _, err := collectResultTotals(directory, nil, opts.Excluded)
+		_, allRepoTotals, err := collectResultTotals(directory, nil, opts.Excluded)
 		if err != nil {
 			loggers.Errorf("❌ Error reading files : %v", err)
 			return err
 		}
-		rawTotalLOC = FormatCodeLines(float64(countedTotal(allTotals, opts.Excluded)))
+		rawTotalLOC = FormatCodeLines(float64(repoTotalsSum(allRepoTotals)))
 	}
+	languages = withCountedLines(languages, repoTotals)
 	ginfo = AdjustGlobalInfo(ginfo, languages, repoTotals, len(deselected), opts.Excluded)
 
 	// Repositories the analysis phase could not complete (clone timeout/failure or
@@ -195,6 +238,9 @@ type RepoTotal struct {
 	// PrimaryLanguageCodeLines is that language's own code lines, reported alongside it
 	// so a reader can see how much of the repository's total it accounts for.
 	PrimaryLanguageCodeLines int
+	// CountedLanguages is each language's lines that count in this repository: zero for
+	// one excluded globally or by the repository itself.
+	CountedLanguages map[string]int
 }
 
 // primaryLanguageCell renders the main language with its own code lines, e.g.
@@ -215,13 +261,11 @@ func collectLanguageTotals(directory string) (map[string]int, error) {
 	return totals, err
 }
 
-// countedTotal sums the per-language totals the selection counts.
-func countedTotal(totals map[string]int, excluded LanguageExclusion) int {
+// repoTotalsSum adds up the repositories' counted lines.
+func repoTotalsSum(repoTotals []RepoTotal) int {
 	total := 0
-	for lang, lines := range totals {
-		if !excluded.Excludes(lang) {
-			total += lines
-		}
+	for _, rt := range repoTotals {
+		total += rt.CodeLines
 	}
 	return total
 }
@@ -262,7 +306,9 @@ func collectResultTotals(directory string, deselected DeselectionSet, excluded L
 			return nil
 		}
 
-		repoLOC, primaryLanguage, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage, excluded)
+		// Each repository counts under the global set plus its own exclusions.
+		counted := make(map[string]int)
+		repoLOC, primaryLanguage, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage, counted, excluded.ForRepo(key))
 		if err != nil {
 			return err
 		}
@@ -280,6 +326,7 @@ func collectResultTotals(directory string, deselected DeselectionSet, excluded L
 			CodeLines:                repoLOC,
 			PrimaryLanguage:          primaryLanguage.Language,
 			PrimaryLanguageCodeLines: primaryLanguage.CodeLines,
+			CountedLanguages:         counted,
 		})
 		return nil
 	})
@@ -306,7 +353,9 @@ func AdjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, repoTotals []R
 	}
 	ginfo.ExcludedLanguages = excluded.Languages()
 
-	ginfo.TotalLinesOfCode = FormatCodeLines(float64(getCountedCodeLines(languages, excluded)))
+	// Summed over the repositories rather than the languages: each repository counted
+	// under its own exclusions, which a per-language sum under the global set cannot see.
+	ginfo.TotalLinesOfCode = FormatCodeLines(float64(repoTotalsSum(repoTotals)))
 
 	maxLOC := 0
 	largest := ""
@@ -370,7 +419,10 @@ func isEligibleResultFile(info os.FileInfo, path string) bool {
 // the languages held out of the total — and its largest counted language with that
 // language's own line count, so a caller tracking per-repository figures does not have to
 // parse the file a second time.
-func accumulateLanguageTotalsFromFile(path string, totals map[string]int, excluded LanguageExclusion) (int, LanguageShare, error) {
+//
+// counted receives each language's lines that count under excluded, which is expected to
+// be scoped to this file's repository with ForRepo.
+func accumulateLanguageTotalsFromFile(path string, totals, counted map[string]int, excluded LanguageExclusion) (int, LanguageShare, error) {
 	fileData, err := os.ReadFile(path)
 	if err != nil {
 		return 0, LanguageShare{}, err
@@ -390,6 +442,7 @@ func accumulateLanguageTotalsFromFile(path string, totals map[string]int, exclud
 		totals[lang] += result.CodeLines
 		if !excluded.Excludes(lang) {
 			fileLOC += result.CodeLines
+			counted[lang] += result.CodeLines
 		}
 		shares = append(shares, LanguageShare{Language: lang, CodeLines: result.CodeLines})
 	}
@@ -468,11 +521,11 @@ func prepareLanguagesForPDF(languages []LanguageData, excluded LanguageExclusion
 
 	totalExcl := getCountedCodeLines(languages, excluded)
 	for i := range languages {
-		languages[i].Excluded = excluded.Excludes(languages[i].Language)
+		languages[i].Excluded = excluded.ExcludesEverywhere(languages[i].Language)
 		if languages[i].Excluded || totalExcl == 0 {
 			languages[i].Percentage = 0
 		} else {
-			languages[i].Percentage = float64(languages[i].CodeLines) / float64(totalExcl) * 100
+			languages[i].Percentage = float64(languages[i].counted(excluded)) / float64(totalExcl) * 100
 		}
 		languages[i].CodeLinesF = FormatCodeLines(float64(languages[i].CodeLines))
 	}
@@ -521,6 +574,8 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 	langDisplay := lang.Language
 	if lang.Excluded {
 		langDisplay = lang.Language + " (excl.)"
+	} else if lang.PartlyExcluded() {
+		langDisplay = lang.Language + " (partly excl.)"
 	}
 	pdf.SetFont("Helvetica", "B", 8)
 	pdf.SetTextColor(20, 20, 30)
@@ -886,6 +941,74 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 //
 // This section is what keeps a filtered PDF honest: a reader must be able to see
 // that the headline LOC is not the whole scan, and what the whole scan came to.
+// renderRepoLanguageExclusionsSection lists the languages individual repositories exclude
+// of their own, so a selection report states every line it leaves out - not only the
+// globally excluded languages its footer names. Deselected repositories are left out:
+// they count nothing already, and the section above lists them. Renders nothing when no
+// counted repository excludes anything of its own.
+func renderRepoLanguageExclusionsSection(pdf *gofpdf.Fpdf, tr func(string) string, excluded LanguageExclusion, repoTotals []RepoTotal, marginL, contentW float64) {
+	byRepo := excluded.RepoExclusions()
+	type row struct{ repo, branch, languages string }
+	var rows []row
+	for _, rt := range repoTotals {
+		if langs := byRepo[rt.Key]; len(langs) > 0 {
+			rows = append(rows, row{rt.Repo, rt.Branch, joinLanguages(langs)})
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].repo < rows[j].repo })
+
+	pdf.Ln(8)
+	pdf.SetFillColor(72, 84, 104)
+	pdf.Rect(marginL, pdf.GetY(), contentW, 8, "F")
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetX(marginL + 2)
+	pdf.CellFormat(contentW-2, 8, fmt.Sprintf("Per-repository Language Exclusions (%d)", len(rows)), "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+
+	pdf.SetFont("Helvetica", "I", 8)
+	pdf.SetTextColor(90, 90, 100)
+	pdf.SetX(marginL)
+	pdf.MultiCell(contentW, 4, tr(
+		"These repositories leave out the languages below from their own totals, on top of those excluded for every repository."),
+		"", "L", false)
+	pdf.Ln(1)
+
+	const (
+		colRepo   = 70.0
+		colBranch = 35.0
+	)
+	colLangs := contentW - colRepo - colBranch
+	drawHeaders := func() {
+		pdf.SetFillColor(223, 227, 234)
+		pdf.SetFont("Helvetica", "B", 8)
+		pdf.SetTextColor(45, 52, 64)
+		pdf.SetX(marginL)
+		pdf.CellFormat(colRepo, 6, "REPOSITORY", "0", 0, "L", true, 0, "")
+		pdf.CellFormat(colBranch, 6, "BRANCH", "0", 0, "L", true, 0, "")
+		pdf.CellFormat(colLangs, 6, "EXCLUDED LANGUAGES", "0", 1, "L", true, 0, "")
+	}
+	drawHeaders()
+
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetTextColor(40, 40, 50)
+	for _, r := range rows {
+		if pdf.GetY() > 270 {
+			pdf.AddPage()
+			drawHeaders()
+			pdf.SetFont("Helvetica", "", 8)
+			pdf.SetTextColor(40, 40, 50)
+		}
+		pdf.SetX(marginL)
+		pdf.CellFormat(colRepo, 6, fitToWidth(pdf, tr(r.repo), colRepo-2), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colBranch, 6, fitToWidth(pdf, tr(r.branch), colBranch-2), "0", 0, "L", false, 0, "")
+		pdf.CellFormat(colLangs, 6, fitToWidth(pdf, tr(r.languages), colLangs-2), "0", 1, "L", false, 0, "")
+	}
+}
+
 func renderDeselectedReposSection(pdf *gofpdf.Fpdf, tr func(string) string, deselected []DeselectedRepo, rawTotalLOC string, marginL, contentW float64) {
 	if len(deselected) == 0 {
 		return
@@ -1153,6 +1276,7 @@ func renderGlobalPDF(content globalPDFContent) error {
 
 	// ── Deselected repositories section ──────────────────────────────
 	renderDeselectedReposSection(pdf, tr, deselected, rawTotalLOC, marginL, contentW)
+	renderRepoLanguageExclusionsSection(pdf, tr, content.Excluded, content.RepoTotals, marginL, contentW)
 
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 		loggers.Errorf("Error creating PDF output directory: %v", err)

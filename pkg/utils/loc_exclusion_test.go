@@ -130,7 +130,7 @@ func TestReadRepositoryDataSubtractsEveryExcludedLanguage(t *testing.T) {
 	}{
 		{"defaults", DefaultLanguageExclusion(), 1100, "Go,Kubernetes"},
 		{"JSON only", NewLanguageExclusion([]string{"JSON"}), 1400, "Go,YAML,Kubernetes"},
-		{"nothing", NewLanguageExclusion(nil), 1600, "Go,YAML,JSON"},
+		{"nothing", NewLanguageExclusion(nil), 1600, "Go,YAML,JSON,Kubernetes"},
 	}
 	for _, c := range cases {
 		repos, err := ReadRepositoryDataWith(base, c.excluded)
@@ -262,5 +262,162 @@ func TestFooterNoteKeepsTheLanguageListWhole(t *testing.T) {
 	}
 	if strings.Contains(got, "...") {
 		t.Error("the note must not be truncated")
+	}
+}
+
+func TestRepoExclusionsScopeToTheirRepository(t *testing.T) {
+	e := DefaultLanguageExclusion().WithRepoExclusions(map[string][]string{
+		"acme__svc__main":   {"Kubernetes", "YAML"}, // YAML is already global: dropped
+		"acme__empty__main": {"JSON"},               // nothing left: the repo is dropped
+	})
+
+	if got := e.RepoExclusions(); len(got) != 1 || strings.Join(got["acme__svc__main"], ",") != "Kubernetes" {
+		t.Fatalf("RepoExclusions = %v, want only svc excluding Kubernetes", got)
+	}
+	if e.Excludes("Kubernetes") {
+		t.Error("an unscoped selection should not apply a repository's own exclusions")
+	}
+	svc := e.ForRepo("acme__svc__main")
+	if !svc.Excludes("Kubernetes") || !svc.ExcludedHere("Kubernetes") || svc.ExcludesEverywhere("Kubernetes") {
+		t.Error("svc should exclude Kubernetes of its own")
+	}
+	if !svc.Excludes("YAML") || svc.ExcludedHere("YAML") || !svc.ExcludesEverywhere("YAML") {
+		t.Error("svc should exclude YAML through the global set, not of its own")
+	}
+	if e.ForRepo("acme__other__main").Excludes("Kubernetes") {
+		t.Error("another repository should not inherit svc's exclusions")
+	}
+
+	// A per-repository exclusion is a departure from the full scan, but not from the
+	// default global set.
+	if e.IsDefault() || !e.GlobalIsDefault() {
+		t.Errorf("IsDefault = %v, GlobalIsDefault = %v; want false, true", e.IsDefault(), e.GlobalIsDefault())
+	}
+	if e.Matches(DefaultExcludedLanguages) {
+		t.Error("a GlobalReport.json total cannot describe per-repository exclusions")
+	}
+	if e.Fingerprint() == DefaultLanguageExclusion().Fingerprint() {
+		t.Error("the fingerprint must change with a per-repository exclusion")
+	}
+	if !strings.HasSuffix(e.Note(), " 1 repository also excludes languages of its own.") {
+		t.Errorf("Note = %q, want it to mention the repository", e.Note())
+	}
+}
+
+func TestSaveLoadAndClearRepoExclusions(t *testing.T) {
+	base := t.TempDir()
+	e := NewLanguageExclusion([]string{"JSON"}).WithRepoExclusions(map[string][]string{"k": {"Go"}})
+	if err := SaveLanguageExclusion(base, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRepoLanguageExclusions(base, e); err != nil {
+		t.Fatal(err)
+	}
+
+	got := LoadLanguageExclusion(base)
+	if strings.Join(got.Languages(), ",") != "JSON" || strings.Join(got.RepoExclusions()["k"], ",") != "Go" {
+		t.Errorf("reloaded global %v, per-repo %v", got.Languages(), got.RepoExclusions())
+	}
+
+	if err := ClearLanguageExclusion(base); err != nil {
+		t.Fatal(err)
+	}
+	if !LoadLanguageExclusion(base).IsDefault() {
+		t.Error("a new scan should clear per-repository exclusions along with the global set")
+	}
+}
+
+func TestRankLanguageChipsKeepsARepositorysOwnExclusions(t *testing.T) {
+	shares := []LanguageShare{
+		{Language: "JSON", CodeLines: 9000}, // global: never a chip
+		{Language: "Go", CodeLines: 700},
+		{Language: "Kubernetes", CodeLines: 100},
+		{Language: "Shell", CodeLines: 50},
+	}
+	scoped := DefaultLanguageExclusion().WithRepoExclusions(map[string][]string{"k": {"Kubernetes"}}).ForRepo("k")
+
+	chips := RankLanguageChips(shares, 5, scoped)
+	var got []string
+	for _, c := range chips {
+		name := c.Language
+		if c.Excluded {
+			name += "(off)"
+		}
+		got = append(got, name)
+	}
+	if strings.Join(got, ",") != "Go,Kubernetes(off),Shell" {
+		t.Errorf("chips = %v, want Go,Kubernetes(off),Shell", got)
+	}
+	// The report ranking leaves the repository's own exclusion out altogether.
+	top := RankTopLanguages(shares, 5, scoped)
+	if len(top) != 2 || top[0].Language != "Go" || top[1].Language != "Shell" {
+		t.Errorf("RankTopLanguages = %+v, want Go and Shell", top)
+	}
+}
+
+func TestReadRepositoryDataAppliesRepoExclusions(t *testing.T) {
+	base := t.TempDir()
+	branch := ProjectBranch{Org: "acme", RepoSlug: "svc", MainBranch: testBranchMain}
+	writeRepoFixture(t, base, "github", branch, 1600, []LanguageShare{
+		{Language: "Go", CodeLines: 1000},
+		{Language: "YAML", CodeLines: 300},
+		{Language: "JSON", CodeLines: 200},
+		{Language: "Kubernetes", CodeLines: 100},
+	})
+	key := DeselectionKey("acme", "svc", testBranchMain)
+	excluded := DefaultLanguageExclusion().WithRepoExclusions(map[string][]string{key: {"Kubernetes"}})
+
+	repos, err := ReadRepositoryDataWith(base, excluded)
+	if err != nil {
+		t.Fatalf("ReadRepositoryDataWith: %v", err)
+	}
+	repo := repos[0]
+	if repo.CodeLines != 1000 {
+		t.Errorf("CodeLines = %d, want 1000 (Go only: JSON and YAML global, Kubernetes its own)", repo.CodeLines)
+	}
+	if len(repo.TopLanguages) != 1 || repo.TopLanguages[0].Language != "Go" {
+		t.Errorf("TopLanguages = %+v, want Go alone", repo.TopLanguages)
+	}
+	if len(repo.LanguageChips) != 2 || !repo.LanguageChips[1].Excluded {
+		t.Errorf("LanguageChips = %+v, want Go and an excluded Kubernetes", repo.LanguageChips)
+	}
+	if strings.Join(repo.Languages, ",") != "Go,JSON,Kubernetes,YAML" {
+		t.Errorf("Languages = %v", repo.Languages)
+	}
+}
+
+func TestCollectResultTotalsCountsEachRepositoryUnderItsOwnExclusions(t *testing.T) {
+	base := t.TempDir()
+	for _, repo := range []string{"a", "b"} {
+		writeRepoFixture(t, base, "github", ProjectBranch{Org: "acme", RepoSlug: repo, MainBranch: testBranchMain}, 150,
+			[]LanguageShare{{Language: "Go", CodeLines: 100}, {Language: "Shell", CodeLines: 50}})
+	}
+	excluded := DefaultLanguageExclusion().WithRepoExclusions(map[string][]string{
+		DeselectionKey("acme", "a", testBranchMain): {"Shell"},
+	})
+
+	totals, repoTotals, err := CollectResultTotals(base, nil, excluded)
+	if err != nil {
+		t.Fatalf("CollectResultTotals: %v", err)
+	}
+	if totals["Shell"] != 100 {
+		t.Errorf("totals[Shell] = %d, want every line listed", totals["Shell"])
+	}
+	if counted := CountedByLanguage(repoTotals); counted["Shell"] != 50 || counted["Go"] != 200 {
+		t.Errorf("CountedByLanguage = %v, want Shell counted in b only", counted)
+	}
+	if repoTotalsSum(repoTotals) != 250 {
+		t.Errorf("sum = %d, want 250", repoTotalsSum(repoTotals))
+	}
+}
+
+func TestRepoNoteNamesTheRepositorysOwnExclusions(t *testing.T) {
+	e := DefaultLanguageExclusion().WithRepoExclusions(map[string][]string{"k": {"Python", "Shell"}})
+	want := "JSON and YAML are excluded from the total to reproduce standard SonarQube behavior. This repository also excludes Python and Shell."
+	if got := e.ForRepo("k").RepoNote(); got != want {
+		t.Errorf("RepoNote = %q, want %q", got, want)
+	}
+	if got := e.ForRepo("other").RepoNote(); got != DefaultLanguageExclusion().Note() {
+		t.Errorf("a repository without exclusions of its own got %q", got)
 	}
 }
