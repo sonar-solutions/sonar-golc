@@ -98,7 +98,10 @@ Bitbucket app passwords were permanently disabled on 9 June 2026. Create an
 choose **Bitbucket** as the app, and select the two scopes above. Enter your Atlassian
 account email in the **Email address** field.
 
-A workspace, project or repository access token also works: leave **Email address** empty.
+A workspace access token with **Projects: Read** and **Repositories: Read** also works:
+leave **Email address** empty. A project access token with the same permissions only
+reaches its own project, so also set **Specific project key**. Repository access tokens
+are not supported — they cannot read the project, which every scan looks up first.
 
 #### Bitbucket Data Center
 
