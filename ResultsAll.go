@@ -2215,9 +2215,14 @@ const htmlTemplate = `
       <div class="bg-dark"><img class="img-fluid position-absolute end-0" src="dist/img/bg.png" alt="" />
       <section>
         <div class="container">
-          <div class="row align-items-center py-lg-8 py-6" style="margin-top: -5%">
-            <div class="col-lg-6 text-center text-lg-start">
+          <div class="row align-items-start py-lg-8 py-6" style="margin-top: -5%">
+            <!-- The title spans the row so both cards below start at the same height;
+                 with it inside the left column, the right column was centred against the
+                 title, card and chart together and its card sat lower. -->
+            <div class="col-12 text-center text-lg-start">
               <h1 class="text-white fs-5 fs-xl-6">Results</h1>
+            </div>
+            <div class="col-lg-6 text-center text-lg-start">
                 <div class="card text-white bg-primary mb-4" style="max-width: 24rem;">
                   <h5 class="card-header text-white" style="padding: 1rem 1rem;"> <i class="fas fa-chart-line"></i> Organization: {{.GlobalReport.Organization}}
                     {{if eq .GlobalReport.DevOpsPlatform "bitbucket_dc"}}
