@@ -791,3 +791,31 @@ func TestRemoveLegacySummaryPDFIsIdempotent(t *testing.T) {
 		t.Errorf("removing a file that is not there should succeed, got %v", err)
 	}
 }
+
+func TestLegacySummaryPDFThatCannotBeRemovedDoesNotStopTheReports(t *testing.T) {
+	// Something that cannot simply be deleted where the old PDF was - a non-empty
+	// directory - is reported, and the CSV and JSON are still written.
+	base := t.TempDir()
+	blocker := legacySummaryPDFPath(filepath.Join(base, "Results"))
+	if err := os.MkdirAll(filepath.Join(blocker, "inside"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveLegacySummaryPDF(filepath.Join(base, "Results")); err == nil {
+		t.Error("a path that cannot be removed should be reported")
+	}
+
+	origWD, _ := os.Getwd()
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+	branch := ProjectBranch{Org: "acme", RepoSlug: "svc", MainBranch: testBranchMain}
+	writeRepoFixture(t, "Results", "github", branch, 100, []LanguageShare{{Language: "Go", CodeLines: 100}})
+
+	if err := GenerateRepositorySummaryReportsWith("Results", SummaryReportOptions{}); err != nil {
+		t.Fatalf("GenerateRepositorySummaryReportsWith: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("Results", "byfile-report", "csv-report", "repository_summary.csv")); err != nil {
+		t.Errorf("the CSV should still be written: %v", err)
+	}
+}
