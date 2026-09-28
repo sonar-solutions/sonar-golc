@@ -236,14 +236,29 @@ func TestFooterNoteKeepsTheLanguageListWhole(t *testing.T) {
 	tr := pdf.UnicodeTranslatorFromDescriptor("")
 
 	many := NewLanguageExclusion([]string{"Azure Pipelines", "CloudFormation", "GitHub Actions", "JSON", "Kubernetes", "YAML"})
+	// The breakdown as rendered: JSON was never scanned and Azure Pipelines is only in a
+	// deselected repository, so four of the six excluded languages have a marked row.
+	breakdown := []LanguageData{
+		{Language: "Go", CodeLines: 900},
+		{Language: "CloudFormation", CodeLines: 40, Excluded: true},
+		{Language: "GitHub Actions", CodeLines: 30, Excluded: true},
+		{Language: "Kubernetes", CodeLines: 20, Excluded: true},
+		{Language: "YAML", CodeLines: 10, Excluded: true},
+	}
 	// The real footer is wide enough for the full list.
-	if got := footerNote(pdf, tr, many, 156); got != many.Note() {
+	if got := footerNote(pdf, tr, many, breakdown, 156); got != many.Note() {
 		t.Errorf("footerNote = %q, want the full note when it fits", got)
 	}
-	// Too narrow: a count, never a list cut part-way.
-	got := footerNote(pdf, tr, many, 60)
-	if got != "6 languages are excluded from the total - marked (excl.) in the Language Breakdown." {
-		t.Errorf("footerNote = %q, want the count fallback", got)
+	// Too narrow: a count of the rows actually marked, never a list cut part-way.
+	got := footerNote(pdf, tr, many, breakdown, 60)
+	if got != "4 languages are excluded from the total - marked (excl.) in the Language Breakdown." {
+		t.Errorf("footerNote = %q, want a count of the four marked rows", got)
+	}
+	if one := footerNote(pdf, tr, many, breakdown[:2], 60); one != "1 language is excluded from the total - marked (excl.) in the Language Breakdown." {
+		t.Errorf("footerNote = %q, want the singular form", one)
+	}
+	if none := footerNote(pdf, tr, many, breakdown[:1], 60); none != "No language in this report is excluded from the total." {
+		t.Errorf("footerNote = %q, want the no-row form", none)
 	}
 	if strings.Contains(got, "...") {
 		t.Error("the note must not be truncated")

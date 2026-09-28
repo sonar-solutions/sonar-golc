@@ -558,13 +558,29 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 // points at the Language Breakdown, where each excluded language is marked "(excl.)".
 // Measured in the current font rather than counted in bytes, so it cannot split a
 // character either.
-func footerNote(pdf *gofpdf.Fpdf, tr func(string) string, excluded LanguageExclusion, width float64) string {
+//
+// The count is of the breakdown's own excluded rows, not of the selection: the selection
+// also holds defaults this scan never found and languages found only in deselected
+// repositories, neither of which has a row to be marked.
+func footerNote(pdf *gofpdf.Fpdf, tr func(string) string, excluded LanguageExclusion, breakdown []LanguageData, width float64) string {
 	note := tr(excluded.Note())
 	if pdf.GetStringWidth(note) <= width {
 		return note
 	}
-	return tr(fmt.Sprintf("%d languages are excluded from the total - marked (excl.) in the Language Breakdown.",
-		len(excluded.Languages())))
+	marked := 0
+	for _, lang := range breakdown {
+		if lang.Excluded {
+			marked++
+		}
+	}
+	switch marked {
+	case 0:
+		return tr("No language in this report is excluded from the total.")
+	case 1:
+		return tr("1 language is excluded from the total - marked (excl.) in the Language Breakdown.")
+	default:
+		return tr(fmt.Sprintf("%d languages are excluded from the total - marked (excl.) in the Language Breakdown.", marked))
+	}
 }
 
 // fitToWidth truncates a cell value with an ellipsis so it fits the given column width.
@@ -1025,7 +1041,7 @@ func renderGlobalPDF(content globalPDFContent) error {
 		pdf.SetFont("Helvetica", "I", 7)
 		pdf.SetTextColor(150, 150, 150)
 		pdf.SetX(marginL)
-		pdf.CellFormat(contentW-22, 4, footerNote(pdf, tr, content.Excluded, contentW-24), "", 0, "L", false, 0, "")
+		pdf.CellFormat(contentW-22, 4, footerNote(pdf, tr, content.Excluded, languages, contentW-24), "", 0, "L", false, 0, "")
 		pdf.SetX(marginL + contentW - 22)
 		pdf.CellFormat(22, 4, fmt.Sprintf("Page %d / {nb}", pdf.PageNo()), "", 0, "R", false, 0, "")
 		pdf.SetTextColor(0, 0, 0)
