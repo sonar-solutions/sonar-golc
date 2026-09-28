@@ -316,7 +316,8 @@ func createRepositoryPDFRow(pdf *gofpdf.Fpdf, tr func(string) string, repo Repos
 	pdf.SetXY(x, y)
 	pdf.CellFormat(colPDFNum, languageLineH, "", "LBR", 0, "C", fill, 0, "")
 	lineW := colPDFRepo + colPDFBranch + 4*colPDFMetric
-	drawLanguageLine(pdf, tr, repo.LanguageChips, pdfLanguageFont, pdfLanguageSize, x+colPDFNum, y, lineW, fill)
+	drawLanguageLine(pdf, tr, repo.LanguageChips, languageFont{pdfLanguageFont, pdfLanguageSize},
+		lineBox{X: x + colPDFNum, Y: y, W: lineW, Fill: fill})
 	pdf.SetXY(x+colPDFNum, y)
 	pdf.CellFormat(lineW, languageLineH, "", "LBR", 1, "L", false, 0, "")
 	pdf.SetFont("Arial", "", 8)

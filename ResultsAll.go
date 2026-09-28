@@ -47,9 +47,12 @@ func getPort() int {
 
 // HTTP header constants
 const (
-	contentTypeHeader   = "Content-Type"
-	applicationJSONType = "application/json"
-	applicationZipType  = "application/zip"
+	contentTypeHeader = "Content-Type"
+	// Error messages the JSON endpoints answer with.
+	msgInvalidRequestBody = "invalid request body"
+	msgMethodNotAllowed   = "method not allowed"
+	applicationJSONType   = "application/json"
+	applicationZipType    = "application/zip"
 )
 
 // Path constants for report directories
@@ -1475,7 +1478,7 @@ func handleDeselected(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req DeselectionRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			http.Error(w, msgInvalidRequestBody, http.StatusBadRequest)
 			return
 		}
 
@@ -1505,7 +1508,7 @@ func handleDeselected(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(resp)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, msgMethodNotAllowed, http.StatusMethodNotAllowed)
 	}
 }
 
@@ -1639,7 +1642,7 @@ func handleExcludedLanguages(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req LanguageExclusionRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			http.Error(w, msgInvalidRequestBody, http.StatusBadRequest)
 			return
 		}
 
@@ -1664,7 +1667,7 @@ func handleExcludedLanguages(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(resp)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, msgMethodNotAllowed, http.StatusMethodNotAllowed)
 	}
 }
 
@@ -1839,12 +1842,12 @@ func (e errRepoLanguageNotFound) Error() string { return e.msg }
 // handleRepoLanguages applies one change to a repository's own language exclusions.
 func handleRepoLanguages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, msgMethodNotAllowed, http.StatusMethodNotAllowed)
 		return
 	}
 	var req RepoLanguageRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		http.Error(w, msgInvalidRequestBody, http.StatusBadRequest)
 		return
 	}
 	if !req.ResetAll && (req.Key == "" || (!req.Reset && (strings.TrimSpace(req.Language) == "" || req.Counted == nil))) {
@@ -2120,7 +2123,7 @@ func deselectionKeysWith(key string, deselected bool) []string {
 // request means a failure part-way cannot leave the page half reset.
 func handleResetSelection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, msgMethodNotAllowed, http.StatusMethodNotAllowed)
 		return
 	}
 

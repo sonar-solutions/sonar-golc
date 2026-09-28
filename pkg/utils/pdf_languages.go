@@ -12,6 +12,19 @@ const languageLineH = 4.5
 // Windows-1252, so the core fonts render it once passed through tr.
 const languageSeparator = " · "
 
+// languageFont is the font a language line is drawn in.
+type languageFont struct {
+	Family string
+	Size   float64
+}
+
+// lineBox places a language line: its top-left corner, its width, and whether its
+// background is filled to match the row above it.
+type lineBox struct {
+	X, Y, W float64
+	Fill    bool
+}
+
 // drawLanguageLine draws a repository's top languages on one line - "Go 1.00K · Kubernetes
 // 100 · YAML 300" - across the given width, as the results page lists them. A language
 // left out of the repository's Code Lines, globally or by the repository itself, is struck
@@ -20,13 +33,14 @@ const languageSeparator = " · "
 // Languages that do not fit are dropped whole and replaced by an ellipsis, rather than one
 // being cut part-way: a half name with its line count missing would read as a different
 // language. A dash when the repository has no language data.
-func drawLanguageLine(pdf *gofpdf.Fpdf, tr func(string) string, langs []LanguageShare,
-	family string, size, x, y, w float64, fill bool) {
+func drawLanguageLine(pdf *gofpdf.Fpdf, tr func(string) string, langs []LanguageShare, font languageFont, box lineBox) {
+	family, size := font.Family, font.Size
+	x, y, w := box.X, box.Y, box.W
 	// Set before the background cell: a cell cannot be drawn without a font, and this must
 	// not depend on what the caller last left selected.
 	pdf.SetFont(family, "", size)
 	pdf.SetXY(x, y)
-	pdf.CellFormat(w, languageLineH, "", "", 0, "L", fill, 0, "")
+	pdf.CellFormat(w, languageLineH, "", "", 0, "L", box.Fill, 0, "")
 
 	const pad = 2.0
 	cursor := x + pad

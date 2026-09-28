@@ -898,7 +898,8 @@ func renderTopRepositoriesSection(pdf *gofpdf.Fpdf, tr func(string) string, repo
 		pdf.CellFormat(colShare, rowH, share, "0", 1, "R", false, 0, "")
 
 		// Its top languages, the excluded ones struck through, under the name.
-		drawLanguageLine(pdf, tr, rt.TopLanguages, "Helvetica", 7, marginL+colNum, rowY+rowH, contentW-colNum, false)
+		drawLanguageLine(pdf, tr, rt.TopLanguages, languageFont{"Helvetica", 7},
+			lineBox{X: marginL + colNum, Y: rowY + rowH, W: contentW - colNum})
 
 		pdf.SetXY(marginL, rowY+rowH+languageLineH)
 	}

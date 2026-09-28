@@ -16,7 +16,7 @@ func languageLinePDF(t *testing.T, langs []LanguageShare, width float64) string 
 	pdf.SetCompression(false)
 	pdf.AddPage()
 	tr := pdf.UnicodeTranslatorFromDescriptor("")
-	drawLanguageLine(pdf, tr, langs, "Helvetica", 7, 15, 20, width, false)
+	drawLanguageLine(pdf, tr, langs, languageFont{"Helvetica", 7}, lineBox{X: 15, Y: 20, W: width})
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
 		t.Fatalf("pdf output: %v", err)
