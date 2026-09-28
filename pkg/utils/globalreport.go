@@ -36,6 +36,9 @@ type Globalinfo struct {
 	LinesOfCodeLargestRepo string `json:"LinesOfCodeLargestRepo"`
 	DevOpsPlatform         string `json:"DevOpsPlatform"`
 	NumberRepos            int    `json:"NumberRepos"`
+	// ExcludedLanguages is the selection the scanner counted TotalLinesOfCode under. Nil
+	// in a file written before it was recorded - see LanguageExclusion.Matches.
+	ExcludedLanguages []string `json:"ExcludedLanguages,omitempty"`
 }
 
 func (l *LanguageData) FormatCodeLines() {
@@ -137,9 +140,9 @@ func CreateGlobalReportWith(directory string, opts GlobalReportOptions) error {
 	// the headline figures must be re-derived from the repositories that survived the
 	// deselection. With an empty set this reproduces the scanned values.
 	rawTotalLOC := ginfo.TotalLinesOfCode
-	if !opts.Excluded.IsDefault() {
-		// GlobalReport.json was written with the default language selection, so the
-		// whole-scan figure has to be recounted under the one in force.
+	if !opts.Excluded.Matches(ginfo.ExcludedLanguages) {
+		// GlobalReport.json was counted under another language selection - the defaults,
+		// or an older version's - so the whole-scan figure is recounted under this one.
 		allTotals, _, err := collectResultTotals(directory, nil, opts.Excluded)
 		if err != nil {
 			loggers.Errorf("❌ Error reading files : %v", err)
@@ -292,13 +295,16 @@ func collectResultTotals(directory string, deselected DeselectionSet, excluded L
 // data; NumberRepos is reduced by the deselected count rather than replaced by
 // len(repoTotals), so the platform-specific meaning of the scanned count is preserved.
 //
-// With nothing deselected and the default languages excluded it returns ginfo untouched
-// rather than recomputing an identical value: the scan's own figures stay
-// authoritative, so these features cannot shift a number on an unfiltered report.
+// With nothing deselected and ginfo already counted under the same language selection
+// it returns ginfo untouched rather than recomputing an identical value: the scan's own
+// figures stay authoritative, so these features cannot shift a number on an unfiltered
+// report. A GlobalReport.json that does not record its selection is recounted, because
+// an older scanner may have counted languages the rows below now leave out.
 func AdjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, repoTotals []RepoTotal, deselectedCount int, excluded LanguageExclusion) Globalinfo {
-	if deselectedCount == 0 && excluded.IsDefault() {
+	if deselectedCount == 0 && excluded.Matches(ginfo.ExcludedLanguages) {
 		return ginfo
 	}
+	ginfo.ExcludedLanguages = excluded.Languages()
 
 	ginfo.TotalLinesOfCode = FormatCodeLines(float64(getCountedCodeLines(languages, excluded)))
 
@@ -544,6 +550,21 @@ func renderLanguageRow(pdf *gofpdf.Fpdf, lang LanguageData, i, maxLOC int, barCo
 	}
 
 	pdf.SetXY(marginL, rowY+rowH)
+}
+
+// footerNote returns the exclusion note sized for the footer. The note lists every
+// excluded language, so rather than cut it mid-list - which would hide exactly what a
+// selection report leaves out - a note that does not fit is replaced by a count that
+// points at the Language Breakdown, where each excluded language is marked "(excl.)".
+// Measured in the current font rather than counted in bytes, so it cannot split a
+// character either.
+func footerNote(pdf *gofpdf.Fpdf, tr func(string) string, excluded LanguageExclusion, width float64) string {
+	note := tr(excluded.Note())
+	if pdf.GetStringWidth(note) <= width {
+		return note
+	}
+	return tr(fmt.Sprintf("%d languages are excluded from the total - marked (excl.) in the Language Breakdown.",
+		len(excluded.Languages())))
 }
 
 // fitToWidth truncates a cell value with an ellipsis so it fits the given column width.
@@ -1004,11 +1025,7 @@ func renderGlobalPDF(content globalPDFContent) error {
 		pdf.SetFont("Helvetica", "I", 7)
 		pdf.SetTextColor(150, 150, 150)
 		pdf.SetX(marginL)
-		note := content.Excluded.Note()
-		if len(note) > 85 {
-			note = note[:82] + "..."
-		}
-		pdf.CellFormat(contentW-22, 4, note, "", 0, "L", false, 0, "")
+		pdf.CellFormat(contentW-22, 4, footerNote(pdf, tr, content.Excluded, contentW-24), "", 0, "L", false, 0, "")
 		pdf.SetX(marginL + contentW - 22)
 		pdf.CellFormat(22, 4, fmt.Sprintf("Page %d / {nb}", pdf.PageNo()), "", 0, "R", false, 0, "")
 		pdf.SetTextColor(0, 0, 0)

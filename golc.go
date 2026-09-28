@@ -39,6 +39,10 @@ type OrganizationData struct {
 	LinesOfCodeLargestRepo string `json:"LinesOfCodeLargestRepo"`
 	DevOpsPlatform         string `json:"DevOpsPlatform"`
 	NumberRepos            int    `json:"NumberRepos"`
+	// ExcludedLanguages records the languages TotalLinesOfCode leaves out, so a reader
+	// can tell a total counted under the current defaults from one written by an earlier
+	// version with different ones.
+	ExcludedLanguages []string `json:"ExcludedLanguages"`
 }
 
 type Repository struct {
@@ -1891,6 +1895,7 @@ func runGolcInProcess(platform string) {
 		LinesOfCodeLargestRepo: maxTotalCodeLines1,
 		DevOpsPlatform:         platformConfig["DevOps"].(string),
 		NumberRepos:            NumberRepos,
+		ExcludedLanguages:      utils.DefaultLanguageExclusion().Languages(),
 	}
 
 	jsonData, err := json.MarshalIndent(data, "", "    ")

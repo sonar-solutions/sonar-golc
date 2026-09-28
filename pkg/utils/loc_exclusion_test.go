@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jung-kurt/gofpdf"
 )
 
 func TestZeroLanguageExclusionIsTheDefault(t *testing.T) {
@@ -193,5 +195,57 @@ func TestCollectResultTotalsCountsRepositoriesUnderTheSelection(t *testing.T) {
 	}
 	if len(repoTotals) != 1 || repoTotals[0].CodeLines != 300 || repoTotals[0].PrimaryLanguage != "YAML" {
 		t.Errorf("repoTotals = %+v, want 300 with YAML primary once Go is excluded", repoTotals)
+	}
+}
+
+func TestLanguageExclusionMatchesRecordedSelection(t *testing.T) {
+	def := DefaultLanguageExclusion()
+	if def.Matches(nil) {
+		t.Error("a file that does not record its selection must never match - it may predate the YAML default")
+	}
+	if !def.Matches([]string{"YAML", "JSON"}) {
+		t.Error("the recorded defaults, in any order, should match the default selection")
+	}
+	if def.Matches([]string{"JSON"}) || NewLanguageExclusion(nil).Matches([]string{"JSON", "YAML"}) {
+		t.Error("different selections must not match")
+	}
+	if !NewLanguageExclusion(nil).Matches([]string{}) {
+		t.Error("a recorded empty selection should match counting everything")
+	}
+}
+
+func TestAdjustGlobalInfoRecountsLegacyGlobalReport(t *testing.T) {
+	// Written by a scanner that still counted plain YAML: 1000 Go + 300 YAML.
+	legacy := Globalinfo{TotalLinesOfCode: "1.30K", LargestRepository: "svc", LinesOfCodeLargestRepo: "1.30K", NumberRepos: 1}
+	languages := []LanguageData{{Language: "Go", CodeLines: 1000}, {Language: "YAML", CodeLines: 300}}
+	repoTotals := []RepoTotal{{Repo: "svc", CodeLines: 1000}}
+
+	got := AdjustGlobalInfo(legacy, languages, repoTotals, 0, DefaultLanguageExclusion())
+	if got.TotalLinesOfCode != FormatCodeLines(1000) || got.LinesOfCodeLargestRepo != FormatCodeLines(1000) {
+		t.Errorf("got %+v, want the headline recounted to 1.00K like the rows", got)
+	}
+	if strings.Join(got.ExcludedLanguages, ",") != "JSON,YAML" {
+		t.Errorf("ExcludedLanguages = %v, want the selection it was recounted under", got.ExcludedLanguages)
+	}
+}
+
+func TestFooterNoteKeepsTheLanguageListWhole(t *testing.T) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "I", 7)
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
+
+	many := NewLanguageExclusion([]string{"Azure Pipelines", "CloudFormation", "GitHub Actions", "JSON", "Kubernetes", "YAML"})
+	// The real footer is wide enough for the full list.
+	if got := footerNote(pdf, tr, many, 156); got != many.Note() {
+		t.Errorf("footerNote = %q, want the full note when it fits", got)
+	}
+	// Too narrow: a count, never a list cut part-way.
+	got := footerNote(pdf, tr, many, 60)
+	if got != "6 languages are excluded from the total - marked (excl.) in the Language Breakdown." {
+		t.Errorf("footerNote = %q, want the count fallback", got)
+	}
+	if strings.Contains(got, "...") {
+		t.Error("the note must not be truncated")
 	}
 }

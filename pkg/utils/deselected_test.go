@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -306,9 +307,10 @@ func TestAdjustGlobalInfoUntouchedWhenNothingDeselected(t *testing.T) {
 		LargestRepository:      "monolith",
 		LinesOfCodeLargestRepo: "800.00K",
 		NumberRepos:            42,
+		ExcludedLanguages:      DefaultExcludedLanguages,
 	}
 	got := AdjustGlobalInfo(in, []LanguageData{{Language: "Go", CodeLines: 5}}, []RepoTotal{{Repo: "other", CodeLines: 5}}, 0, DefaultLanguageExclusion())
-	if got != in {
+	if !reflect.DeepEqual(got, in) {
 		t.Errorf("AdjustGlobalInfo changed an unfiltered report:\n got %+v\nwant %+v", got, in)
 	}
 }

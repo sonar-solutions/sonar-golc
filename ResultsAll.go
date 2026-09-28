@@ -87,6 +87,9 @@ type Globalinfo struct {
 	LinesOfCodeLargestRepo string `json:"LinesOfCodeLargestRepo"`
 	DevOpsPlatform         string `json:"DevOpsPlatform"`
 	NumberRepos            int    `json:"NumberRepos"`
+	// ExcludedLanguages is the selection the scanner counted TotalLinesOfCode under; nil
+	// in a file from before it was recorded. See utils.LanguageExclusion.Matches.
+	ExcludedLanguages []string `json:"ExcludedLanguages,omitempty"`
 }
 
 type LanguageData struct {
@@ -97,6 +100,9 @@ type LanguageData struct {
 	RelativePct float64 `json:"-"`
 	// Excluded marks a language left out of every total; its Percentage is then zero.
 	Excluded bool `json:"Excluded,omitempty"`
+	// OnlyDeselected marks a language found only in deselected repositories. It is listed
+	// with zero lines so it still has a switch - see withLanguagesOnlyInDeselected.
+	OnlyDeselected bool `json:"OnlyDeselected,omitempty"`
 }
 
 // The repository row, its inventory and the platform naming rules all live in pkg/utils
@@ -801,6 +807,36 @@ func buildLanguageSummary(rawData []LanguageData, excluded utils.LanguageExclusi
 	return languages
 }
 
+// withLanguagesOnlyInDeselected appends a zero-line row for every scanned language that
+// appears only in deselected repositories.
+//
+// Without a row such a language has no switch, and since the page posts the complete
+// selection from its switches, flipping any other one would drop it from the selection:
+// it would silently start counting once its repository is selected again. Listing it keeps
+// the page's view of the selection complete, so a change - or a reset to the defaults -
+// always sets every language deliberately.
+func withLanguagesOnlyInDeselected(languages []LanguageData, excluded utils.LanguageExclusion) ([]LanguageData, error) {
+	all, err := scannedLanguages()
+	if err != nil {
+		return nil, err
+	}
+	listed := make(map[string]bool, len(languages))
+	for _, lang := range languages {
+		listed[lang.Language] = true
+	}
+	for _, lang := range all {
+		if !listed[lang] {
+			languages = append(languages, LanguageData{
+				Language:       lang,
+				CodeLinesF:     utils.FormatCodeLines(0),
+				Excluded:       excluded.Excludes(lang),
+				OnlyDeselected: true,
+			})
+		}
+	}
+	return languages, nil
+}
+
 // applyLanguagePercentages sets the Percentage field for each language entry, as a share
 // of the counted total. Excluded languages get zero.
 func applyLanguagePercentages(languages []LanguageData, countedTotal int) {
@@ -857,6 +893,12 @@ func loadApplicationData() (PageData, error) {
 	}
 
 	languages := buildLanguageSummary(rawLanguages, excluded)
+	if len(deselectedSet) > 0 {
+		languages, err = withLanguagesOnlyInDeselected(languages, excluded)
+		if err != nil {
+			return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
+		}
+	}
 	// The page names only the excluded languages this scan actually found: the selection
 	// also holds defaults with nothing to exclude, and "JSON · 0 LOC" would read as a count.
 	excludedCodeLines := 0
@@ -880,9 +922,9 @@ func loadApplicationData() (PageData, error) {
 		return pageData, fmt.Errorf("error decoding JSON GlobalReport.json file: %v", err)
 	}
 	rawTotalLOC := info.TotalLinesOfCode
-	if !excluded.IsDefault() {
-		// GlobalReport.json was written under the default language selection, so the
-		// whole-scan figure is recounted under the one in force.
+	if !excluded.Matches(info.ExcludedLanguages) {
+		// GlobalReport.json was counted under another language selection - the defaults,
+		// or an older version's - so the whole-scan figure is recounted under this one.
 		allTotals, _, err := utils.CollectResultTotals(resultsBaseDir, nil, excluded)
 		if err != nil {
 			return pageData, fmt.Errorf("error reading per-repository result files: %v", err)
@@ -1021,13 +1063,15 @@ func partitionDeselected(repositories []RepositoryData, deselected utils.Deselec
 
 // adjustGlobalInfo mirrors utils.AdjustGlobalInfo for this page's own types: it
 // re-derives the headline figures from the repositories that survived a deselection,
-// counted under the language selection, and returns ginfo untouched when both
-// selections are untouched so an unfiltered page shows exactly the numbers the scan
-// produced.
+// counted under the language selection, and returns ginfo untouched when nothing is
+// deselected and the scan counted under the same selection, so an unfiltered page shows
+// exactly the numbers the scan produced. See utils.AdjustGlobalInfo for why a file that
+// does not record its selection is recounted.
 func adjustGlobalInfo(ginfo Globalinfo, languages []LanguageData, kept []RepositoryData, deselectedCount int, excluded utils.LanguageExclusion) Globalinfo {
-	if deselectedCount == 0 && excluded.IsDefault() {
+	if deselectedCount == 0 && excluded.Matches(ginfo.ExcludedLanguages) {
 		return ginfo
 	}
+	ginfo.ExcludedLanguages = excluded.Languages()
 
 	total := 0
 	for _, lang := range languages {
@@ -2233,7 +2277,7 @@ const htmlTemplate = `
                           </span>
                           <span class="lang-bar-name" title="{{.Language}}">{{.Language}}</span>
                         </span>
-                        <span class="lang-bar-meta">{{if .Excluded}}<span class="lang-excluded-badge">excluded</span>{{else}}{{printf "%.1f" .Percentage}}% · {{end}}{{.CodeLinesF}} LOC</span>
+                        <span class="lang-bar-meta"{{if .OnlyDeselected}} title="Found only in deselected repositories, so it adds nothing to the current total"{{end}}>{{if .Excluded}}<span class="lang-excluded-badge">excluded</span>{{else if not .OnlyDeselected}}{{printf "%.1f" .Percentage}}% · {{end}}{{if .OnlyDeselected}}only in deselected repositories{{else}}{{.CodeLinesF}} LOC{{end}}</span>
                       </div>
                       <div class="lang-bar-track">
                         <div class="lang-bar-fill" style="width:{{printf "%.1f" .RelativePct}}%;"></div>
@@ -2543,10 +2587,10 @@ const htmlTemplate = `
         var camembertChart = new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: [{{range .Languages}}{{if not .Excluded}}"{{.Language}}",{{end}}{{end}}],
+                labels: [{{range .Languages}}{{if and (not .Excluded) (not .OnlyDeselected)}}"{{.Language}}",{{end}}{{end}}],
                 datasets: [{
                     label: 'LOC ',
-                    data: [{{range .Languages}}{{if not .Excluded}}{{.CodeLines}},{{end}}{{end}}],
+                    data: [{{range .Languages}}{{if and (not .Excluded) (not .OnlyDeselected)}}{{.CodeLines}},{{end}}{{end}}],
                     backgroundColor: [
                         'rgba(255, 99, 132, 0.5)',
                         'rgba(54, 162, 235, 0.5)',

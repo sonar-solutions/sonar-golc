@@ -539,3 +539,135 @@ func TestSelectionLabel(t *testing.T) {
 		}
 	}
 }
+
+// deselectDropWithJSON moves every JSON line of the fixture into repoDrop and deselects
+// it, so JSON is scanned but appears in no counted repository.
+func deselectDropWithJSON(t *testing.T) {
+	t.Helper()
+	data, _ := json.Marshal(map[string]any{"Results": []map[string]any{
+		{"Language": "Java", "CodeLines": 250}, {"Language": "JSON", "CodeLines": 900},
+	}})
+	if err := os.WriteFile("Results/bylanguage-report/Result_acme__drop__main.json", data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyDeselection([]string{keyDrop}); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+}
+
+// pageExclusion is the list the page's JavaScript posts: every row whose switch is off.
+func pageExclusion(pd PageData) []string {
+	var excluded []string
+	for _, lang := range pd.Languages {
+		if lang.Excluded {
+			excluded = append(excluded, lang.Language)
+		}
+	}
+	return excluded
+}
+
+func TestLanguageOnlyInDeselectedReposKeepsItsSwitch(t *testing.T) {
+	setupResultsFixture(t) // Go in keep, Java in drop
+	deselectDropWithJSON(t)
+
+	pd := snapshot()
+	jsonRow := languageRow(t, pd, "JSON")
+	if !jsonRow.OnlyDeselected || !jsonRow.Excluded || jsonRow.CodeLines != 0 {
+		t.Fatalf("JSON row = %+v, want a zero-line, excluded row flagged as only in deselected repos", jsonRow)
+	}
+	out := renderTemplate(t, pd)
+	if !strings.Contains(out, `value="JSON" aria-label="Count JSON in the total">`) ||
+		!strings.Contains(out, "only in deselected repositories") {
+		t.Error("a language found only in deselected repositories should still get a switch")
+	}
+
+	// Switching Java off posts the page's full view - which now includes JSON - so JSON
+	// must stay excluded instead of silently starting to count.
+	if _, err := applyLanguageExclusion(append(pageExclusion(pd), "Java")); err != nil {
+		t.Fatalf(msgApplyLanguages, err)
+	}
+	if !utils.LoadLanguageExclusion(resultsBaseDir).Excludes("JSON") {
+		t.Error("flipping another switch dropped JSON from the selection")
+	}
+
+	// Reselecting drop must not bring JSON's 900 lines into the totals.
+	if _, err := applyDeselection(nil); err != nil {
+		t.Fatalf(msgApplyDeselection, err)
+	}
+	if got := snapshot().GlobalReport.TotalLinesOfCode; got != utils.FormatCodeLines(1000) {
+		t.Errorf("TotalLinesOfCode = %q, want 1.00K (Go only: Java and JSON excluded)", got)
+	}
+	// Such a language is not drawn in the chart: it contributes nothing to the total.
+	chart := out[strings.Index(out, "labels: ["):]
+	if strings.Contains(chart[:strings.Index(chart, "]")], `"JSON"`) {
+		t.Error("a language only in deselected repositories should not appear in the chart")
+	}
+}
+
+func TestResetReachesDefaultsWithLanguagesOnlyInDeselectedRepos(t *testing.T) {
+	setupResultsFixture(t)
+	deselectDropWithJSON(t)
+
+	if _, err := applyLanguageExclusion([]string{}); err != nil {
+		t.Fatalf(msgApplyLanguages, err)
+	}
+	if _, err := applyLanguageExclusion(utils.DefaultExcludedLanguages); err != nil {
+		t.Fatalf(msgApplyLanguages, err)
+	}
+	if !snapshot().ExcludedLanguagesIsDefault {
+		t.Errorf("reset landed on %v, want the defaults", utils.LoadLanguageExclusion(resultsBaseDir).Languages())
+	}
+}
+
+func TestLegacyGlobalReportIsRecounted(t *testing.T) {
+	setupLanguageFixture(t)
+	// Written before the scanner recorded its selection, and while it still counted
+	// plain YAML: 1350 + 300.
+	data, _ := json.Marshal(map[string]any{"Organization": orgAcme, "TotalLinesOfCode": yamlCountedLOC,
+		"LargestRepository": repoKeep, "LinesOfCodeLargestRepo": utils.FormatCodeLines(1400),
+		"DevOpsPlatform": "github", "NumberRepos": 2})
+	if err := os.WriteFile("Results/GlobalReport.json", data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pd, err := loadApplicationData()
+	if err != nil {
+		t.Fatalf("loadApplicationData: %v", err)
+	}
+	if pd.GlobalReport.TotalLinesOfCode != defaultLanguagesLOC {
+		t.Errorf("TotalLinesOfCode = %q, want %q to agree with the rows", pd.GlobalReport.TotalLinesOfCode, defaultLanguagesLOC)
+	}
+	if pd.GlobalReport.LinesOfCodeLargestRepo != utils.FormatCodeLines(1100) {
+		t.Errorf("LinesOfCodeLargestRepo = %q, want 1.10K", pd.GlobalReport.LinesOfCodeLargestRepo)
+	}
+	if pd.RawTotalLinesOfCode != defaultLanguagesLOC {
+		t.Errorf("RawTotalLinesOfCode = %q, want %q", pd.RawTotalLinesOfCode, defaultLanguagesLOC)
+	}
+
+	// The full-scan PDF is recounted the same way.
+	if rec := serveReport(t, reportGlobal); rec.Code != http.StatusOK {
+		t.Fatalf("report request failed: %d", rec.Code)
+	}
+	if text := pdfText(t, fullScanVariant.globalPDFPath()); !strings.Contains(text, defaultLanguagesLOC) || strings.Contains(text, yamlCountedLOC) {
+		t.Errorf("the full-scan PDF should show the recounted %s, not the legacy %s", defaultLanguagesLOC, yamlCountedLOC)
+	}
+}
+
+func TestCurrentGlobalReportIsTrusted(t *testing.T) {
+	setupLanguageFixture(t)
+	// A current scanner records its selection, so its figures are shown verbatim even
+	// where a recount would differ - they stay authoritative.
+	data, _ := json.Marshal(map[string]any{"Organization": orgAcme, "TotalLinesOfCode": "9.99K",
+		"LargestRepository": repoKeep, "LinesOfCodeLargestRepo": "9.00K", "DevOpsPlatform": "github",
+		"NumberRepos": 2, "ExcludedLanguages": utils.DefaultExcludedLanguages})
+	if err := os.WriteFile("Results/GlobalReport.json", data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	pd, err := loadApplicationData()
+	if err != nil {
+		t.Fatalf("loadApplicationData: %v", err)
+	}
+	if pd.GlobalReport.TotalLinesOfCode != "9.99K" {
+		t.Errorf("TotalLinesOfCode = %q, want the scanner's own 9.99K", pd.GlobalReport.TotalLinesOfCode)
+	}
+}

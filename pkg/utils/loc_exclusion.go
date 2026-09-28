@@ -77,6 +77,17 @@ func (e LanguageExclusion) IsDefault() bool {
 	return strings.Join(e.Languages(), "\x00") == strings.Join(DefaultLanguageExclusion().Languages(), "\x00")
 }
 
+// Matches reports whether a total recorded as leaving out the given languages was
+// counted under this selection. A nil record never matches: it is a GlobalReport.json
+// written before the scanner recorded its selection, whose total may still include
+// plain YAML, so its figures have to be recounted rather than trusted.
+func (e LanguageExclusion) Matches(recorded []string) bool {
+	if recorded == nil {
+		return false
+	}
+	return strings.Join(NewLanguageExclusion(recorded).Languages(), "\x00") == strings.Join(e.Languages(), "\x00")
+}
+
 // Note is the sentence shown beside every total, saying which languages it leaves out.
 func (e LanguageExclusion) Note() string {
 	langs := e.Languages()

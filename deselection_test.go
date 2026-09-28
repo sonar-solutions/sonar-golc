@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -1029,8 +1030,9 @@ func TestAdjustGlobalInfoPageUntouchedWhenNothingDeselected(t *testing.T) {
 		LargestRepository:      "mono",
 		LinesOfCodeLargestRepo: "1.00M",
 		NumberRepos:            7,
+		ExcludedLanguages:      utils.DefaultExcludedLanguages,
 	}
-	if got := adjustGlobalInfo(in, []LanguageData{{Language: "Go", CodeLines: 1}}, nil, 0, utils.DefaultLanguageExclusion()); got != in {
+	if got := adjustGlobalInfo(in, []LanguageData{{Language: "Go", CodeLines: 1}}, nil, 0, utils.DefaultLanguageExclusion()); !reflect.DeepEqual(got, in) {
 		t.Errorf("adjustGlobalInfo changed an unfiltered report:\n got %+v\nwant %+v", got, in)
 	}
 }
