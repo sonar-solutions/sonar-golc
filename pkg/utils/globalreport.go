@@ -232,12 +232,6 @@ type RepoTotal struct {
 	Repo      string
 	Branch    string
 	CodeLines int
-	// PrimaryLanguage is the repository's largest language, excluding those held out
-	// of the totals. Empty when the file listed none.
-	PrimaryLanguage string
-	// PrimaryLanguageCodeLines is that language's own code lines, reported alongside it
-	// so a reader can see how much of the repository's total it accounts for.
-	PrimaryLanguageCodeLines int
 	// CountedLanguages is each language's lines that count in this repository: zero for
 	// one excluded globally or by the repository itself.
 	CountedLanguages map[string]int
@@ -298,7 +292,7 @@ func collectResultTotals(directory string, deselected DeselectionSet, excluded L
 
 		// Each repository counts under the global set plus its own exclusions.
 		counted := make(map[string]int)
-		repoLOC, primaryLanguage, topLanguages, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage, counted, excluded.ForRepo(key))
+		repoLOC, topLanguages, err := accumulateLanguageTotalsFromFile(path, ligneDeCodeParLangage, counted, excluded.ForRepo(key))
 		if err != nil {
 			return err
 		}
@@ -309,15 +303,13 @@ func collectResultTotals(directory string, deselected DeselectionSet, excluded L
 			repo = key
 		}
 		repoTotals = append(repoTotals, RepoTotal{
-			Key:                      key,
-			Org:                      org,
-			Repo:                     repo,
-			Branch:                   branch,
-			CodeLines:                repoLOC,
-			PrimaryLanguage:          primaryLanguage.Language,
-			PrimaryLanguageCodeLines: primaryLanguage.CodeLines,
-			CountedLanguages:         counted,
-			TopLanguages:             topLanguages,
+			Key:              key,
+			Org:              org,
+			Repo:             repo,
+			Branch:           branch,
+			CodeLines:        repoLOC,
+			CountedLanguages: counted,
+			TopLanguages:     topLanguages,
 		})
 		return nil
 	})
@@ -407,23 +399,20 @@ func isEligibleResultFile(info os.FileInfo, path string) bool {
 
 // accumulateLanguageTotalsFromFile parses a file and updates the totals map. It returns
 // that single file's contribution to the headline LOC figure — its code lines excluding
-// the languages held out of the total — and its largest counted language with that
-// language's own line count, so a caller tracking per-repository figures does not have to
-// parse the file a second time.
+// the languages held out of the total — and its top languages as the results page lists
+// them, excluded ones flagged, for the reports' language lines; a caller tracking
+// per-repository figures does not have to parse the file a second time.
 //
 // counted receives each language's lines that count under excluded, which is expected to
 // be scoped to this file's repository with ForRepo.
-//
-// It also returns the repository's top languages as the results page lists them, excluded
-// ones flagged, for the reports' language lines.
-func accumulateLanguageTotalsFromFile(path string, totals, counted map[string]int, excluded LanguageExclusion) (int, LanguageShare, []LanguageShare, error) {
+func accumulateLanguageTotalsFromFile(path string, totals, counted map[string]int, excluded LanguageExclusion) (int, []LanguageShare, error) {
 	fileData, err := os.ReadFile(path)
 	if err != nil {
-		return 0, LanguageShare{}, nil, err
+		return 0, nil, err
 	}
 	var data FileData
 	if err := json.Unmarshal(fileData, &data); err != nil {
-		return 0, LanguageShare{}, nil, err
+		return 0, nil, err
 	}
 
 	fileLOC := 0
@@ -441,11 +430,7 @@ func accumulateLanguageTotalsFromFile(path string, totals, counted map[string]in
 		shares = append(shares, LanguageShare{Language: lang, CodeLines: result.CodeLines})
 	}
 
-	var primary LanguageShare
-	if ranked := RankTopLanguages(shares, 1, excluded); len(ranked) > 0 {
-		primary = ranked[0]
-	}
-	return fileLOC, primary, RankLanguageChips(shares, TopLanguagesShown, excluded), nil
+	return fileLOC, RankLanguageChips(shares, TopLanguagesShown, excluded), nil
 }
 
 // writeLanguageTotalsJSON writes the per-language totals to outputFile and returns the

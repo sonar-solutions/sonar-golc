@@ -193,7 +193,7 @@ func TestCollectResultTotalsCountsRepositoriesUnderTheSelection(t *testing.T) {
 	if totals["Go"] != 1000 || totals["YAML"] != 300 {
 		t.Errorf("totals = %v, want every language listed", totals)
 	}
-	if len(repoTotals) != 1 || repoTotals[0].CodeLines != 300 || repoTotals[0].PrimaryLanguage != "YAML" {
+	if len(repoTotals) != 1 || repoTotals[0].CodeLines != 300 || firstCounted(repoTotals[0].TopLanguages) != "YAML" {
 		t.Errorf("repoTotals = %+v, want 300 with YAML primary once Go is excluded", repoTotals)
 	}
 }

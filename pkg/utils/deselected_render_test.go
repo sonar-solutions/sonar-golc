@@ -147,9 +147,9 @@ func TestRenderTopRepositoriesSectionShowsSharesAndLanguages(t *testing.T) {
 	tr := pdf.UnicodeTranslatorFromDescriptor("")
 
 	repoTotals := []RepoTotal{
-		{Repo: "big", Branch: testBranchMain, CodeLines: 900, PrimaryLanguage: "Go",
+		{Repo: "big", Branch: testBranchMain, CodeLines: 900,
 			TopLanguages: []LanguageShare{{Language: "Go", CodeLinesF: "900"}, {Language: "JSON", CodeLinesF: "40", Excluded: true}}},
-		{Repo: "small", Branch: "develop", CodeLines: 100, PrimaryLanguage: testLangJava,
+		{Repo: "small", Branch: "develop", CodeLines: 100,
 			TopLanguages: []LanguageShare{{Language: testLangJava, CodeLinesF: "100"}}},
 	}
 	renderTopRepositoriesSection(pdf, tr, repoTotals, 1000, 15, 180)
@@ -198,7 +198,8 @@ func manyRepoTotals(n int) []RepoTotal {
 	repoTotals := make([]RepoTotal, 0, n)
 	for i := 0; i < n; i++ {
 		repoTotals = append(repoTotals, RepoTotal{
-			Repo: "repo" + string(rune('A'+i%26)), Branch: testBranchMain, CodeLines: (i + 1) * 10, PrimaryLanguage: "Go",
+			Repo: "repo" + string(rune('A'+i%26)), Branch: testBranchMain, CodeLines: (i + 1) * 10,
+			TopLanguages: []LanguageShare{{Language: "Go", CodeLinesF: FormatCodeLines(float64((i + 1) * 10))}},
 		})
 	}
 	return repoTotals
@@ -263,8 +264,8 @@ func TestCollectResultTotalsExported(t *testing.T) {
 	if _, present := totals["Rust"]; present {
 		t.Error("the deselected repository's language must not be counted")
 	}
-	if len(repoTotals) != 1 || repoTotals[0].PrimaryLanguage != "Go" {
-		t.Errorf("repoTotals = %+v, want one entry with Go as primary (JSON held out)", repoTotals)
+	if len(repoTotals) != 1 || firstCounted(repoTotals[0].TopLanguages) != "Go" {
+		t.Errorf("repoTotals = %+v, want one entry whose largest counted language is Go (JSON held out)", repoTotals)
 	}
 }
 
@@ -404,4 +405,14 @@ func TestWriteLanguageTotalsJSONCreatesMissingDirectory(t *testing.T) {
 	if _, err := os.Stat(target); err != nil {
 		t.Errorf("file should have been created: %v", err)
 	}
+}
+
+// firstCounted returns the largest language of a top-languages list that is not excluded.
+func firstCounted(langs []LanguageShare) string {
+	for _, l := range langs {
+		if !l.Excluded {
+			return l.Language
+		}
+	}
+	return ""
 }

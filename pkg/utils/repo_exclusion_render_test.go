@@ -92,14 +92,14 @@ func TestPartlyExcludedLanguagesAreCountedAndLabelled(t *testing.T) {
 
 func TestAccumulateLanguageTotalsFromFileReportsUnreadableFiles(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, _, err := accumulateLanguageTotalsFromFile(filepath.Join(dir, "missing.json"), map[string]int{}, map[string]int{}, DefaultLanguageExclusion()); err == nil {
+	if _, _, err := accumulateLanguageTotalsFromFile(filepath.Join(dir, "missing.json"), map[string]int{}, map[string]int{}, DefaultLanguageExclusion()); err == nil {
 		t.Error("a missing file should be an error")
 	}
 	bad := filepath.Join(dir, "bad.json")
 	if err := os.WriteFile(bad, []byte("{not json"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := accumulateLanguageTotalsFromFile(bad, map[string]int{}, map[string]int{}, DefaultLanguageExclusion()); err == nil {
+	if _, _, err := accumulateLanguageTotalsFromFile(bad, map[string]int{}, map[string]int{}, DefaultLanguageExclusion()); err == nil {
 		t.Error("an unreadable file should be an error")
 	}
 }
