@@ -1,7 +1,6 @@
 package getbibucket
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -71,7 +70,6 @@ type ParamsProjectBitbucket struct {
 	APIVersion       string
 	AccessToken      string
 	Users            string
-	Username         string // Bitbucket username for git operations (different from email)
 	BitbucketURLBase string
 	Organization     string
 	Exclusionlist    *utils.ExclusionList
@@ -130,6 +128,12 @@ type Reposize struct {
 
 const PrefixMsg = "Get Projects..."
 
+// Debug-log formats for the direct HTTP calls.
+const (
+	logRequestFmt  = "GET %s"
+	logResponseFmt = "GET %s → %s"
+)
+
 func isRepoExcluded(exclusionList *utils.ExclusionList, projectKey, repoKey string) bool {
 	_, repoExcluded := exclusionList.Repos[projectKey+"/"+repoKey]
 	return repoExcluded
@@ -183,21 +187,10 @@ func GetProjectBitbucketListCloud(platformConfig map[string]interface{}, exclusi
 	repos := platformConfig["Repos"].(string)
 	bitbucketURLBase := fmt.Sprintf("%s%s/", platformConfig["Url"].(string), platformConfig["Apiver"].(string))
 
-	if len(project) == 0 && len(repos) == 0 {
-		// Get All Project - use direct HTTP with Basic Auth if Users is provided
-		projects, exludedprojects, err = getAllProjectsWithAuth(platformConfig["Workspace"].(string), accessToken, users, bitbucketURLBase, exclusionList)
-		if err != nil {
-			loggers.Errorf("\r❌ Error Get All Projects:%v", err)
-			spin.Stop()
-			return nil, err
-		}
-	} else if len(project) != 0 {
-		//else if len(project) != 0 && len(repos) == 0 {
-		projects, exludedprojects, err = getSepecificProjectsWithAuth(platformConfig["Workspace"].(string), project, accessToken, users, bitbucketURLBase, exclusionList)
-		if err != nil {
-			spin.Stop()
-			return nil, err
-		}
+	projects, exludedprojects, err = getProjectsToAnalyse(platformConfig["Workspace"].(string), project, repos, accessToken, users, bitbucketURLBase, exclusionList)
+	if err != nil {
+		spin.Stop()
+		return nil, err
 	}
 	spin.Stop()
 
@@ -288,49 +281,6 @@ func getAuthHeader(users, accessToken string) string {
 	return "Bearer " + accessToken
 }
 
-// GetBitbucketUsername fetches the Bitbucket username from the API
-// This is needed for git operations, as they require username:token format
-// Returns the username, or empty string if unable to fetch
-func GetBitbucketUsername(users, accessToken, bitbucketURLBase string) string {
-	url := fmt.Sprintf("%suser", bitbucketURLBase)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := utils.HTTPClient.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return ""
-	}
-
-	var userResponse struct {
-		Username string `json:"username"`
-	}
-
-	err = json.Unmarshal(body, &userResponse)
-	if err != nil {
-		return ""
-	}
-
-	return userResponse.Username
-}
-
 func GetSize(parms ParamsProjectBitbucket, repo *bitbucket.Repository) (int, error) {
 
 	url := fmt.Sprintf("%srepositories/%s/%s/?fields=size", parms.BitbucketURLBase, parms.Workspace, repo.Slug)
@@ -373,15 +323,6 @@ func getCommonParams(client *bitbucket.Client, platformConfig map[string]interfa
 		users = usersVal.(string)
 	}
 
-	// Fetch Bitbucket username for git operations
-	// For git clone, we need the username (not email), which may differ from workspace
-	accessToken := platformConfig["AccessToken"].(string)
-	username := GetBitbucketUsername(users, accessToken, bitbucketURLBase)
-	// Fallback to workspace if username fetch fails (workspace is often the same as username)
-	if username == "" {
-		username = platformConfig["Workspace"].(string)
-	}
-
 	return ParamsProjectBitbucket{
 		Client:           client,
 		Projects:         project,
@@ -389,9 +330,8 @@ func getCommonParams(client *bitbucket.Client, platformConfig map[string]interfa
 		URL:              platformConfig["Url"].(string),
 		BaseAPI:          platformConfig["Baseapi"].(string),
 		APIVersion:       platformConfig["Apiver"].(string),
-		AccessToken:      accessToken,
+		AccessToken:      platformConfig["AccessToken"].(string),
 		Users:            users,
-		Username:         username,
 		BitbucketURLBase: bitbucketURLBase,
 		Organization:     platformConfig["Organization"].(string),
 		Exclusionlist:    exclusionList,
@@ -447,13 +387,13 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 	}
 	req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-	loggers.Debugf("GET %s", url)
+	loggers.Debugf(logRequestFmt, url)
 	resp, err := utils.HTTPClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	loggers.Debugf("GET %s → %s", url, resp.Status)
+	loggers.Debugf(logResponseFmt, url, resp.Status)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -534,6 +474,100 @@ func getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase stri
 	return projects, excludedCount, nil
 }
 
+// getProjectsToAnalyse picks the projects to scan: the named project keys, the
+// projects holding the named repositories, or every project in the workspace.
+func getProjectsToAnalyse(workspace, project, repos, accessToken, users, bitbucketURLBase string, exclusionList *utils.ExclusionList) ([]Projectc, int, error) {
+	loggers := utils.SharedLogger()
+
+	switch {
+	case len(project) != 0:
+		return getSepecificProjectsWithAuth(workspace, project, accessToken, users, bitbucketURLBase, exclusionList)
+	case len(repos) != 0:
+		// Specific repositories without a project key: resolve each repository's
+		// project, so the per-project loop reaches it.
+		projects, excluded, err := getProjectsOfReposWithAuth(workspace, repos, accessToken, users, bitbucketURLBase, exclusionList)
+		if err != nil {
+			loggers.Errorf("\r❌ Error Get Projects of Repositories:%v", err)
+		}
+		return projects, excluded, err
+	default:
+		projects, excluded, err := getAllProjectsWithAuth(workspace, accessToken, users, bitbucketURLBase, exclusionList)
+		if err != nil {
+			loggers.Errorf("\r❌ Error Get All Projects:%v", err)
+		}
+		return projects, excluded, err
+	}
+}
+
+// getProjectsOfReposWithAuth returns the distinct projects holding the
+// comma-separated repository slugs. A repository that cannot be fetched is
+// logged and skipped; it is an error only when none of them can be.
+func getProjectsOfReposWithAuth(workspace, repoSlugs, accessToken, users, bitbucketURLBase string, exclusionList *utils.ExclusionList) ([]Projectc, int, error) {
+	var projects []Projectc
+	var excludedCount int
+	seen := make(map[string]bool)
+	found := 0
+	loggers := utils.SharedLogger()
+
+	for _, repoSlug := range strings.Split(repoSlugs, ",") {
+		repoSlug = strings.TrimSpace(repoSlug)
+		if repoSlug == "" {
+			continue
+		}
+
+		url := fmt.Sprintf("%srepositories/%s/%s?fields=project", bitbucketURLBase, workspace, repoSlug)
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		req.Header.Set("Authorization", getAuthHeader(users, accessToken))
+
+		loggers.Debugf(logRequestFmt, url)
+		resp, err := utils.HTTPClient.Do(req)
+		if err != nil {
+			loggers.Errorf("❌ Error fetching repository <%s>: %v", repoSlug, err)
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		loggers.Debugf(logResponseFmt, url, resp.Status)
+
+		if err == nil && resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		if err != nil {
+			loggers.Errorf("❌ Error fetching repository <%s>: %v", repoSlug, err)
+			continue
+		}
+
+		var repo struct {
+			Project Projectc `json:"project"`
+		}
+		if err := json.Unmarshal(body, &repo); err != nil || repo.Project.Key == "" {
+			loggers.Errorf("❌ Error reading the project of repository <%s>", repoSlug)
+			continue
+		}
+		found++
+
+		if seen[repo.Project.Key] {
+			continue
+		}
+		seen[repo.Project.Key] = true
+
+		if isProjectExcluded(exclusionList, repo.Project.Key) {
+			excludedCount++
+			continue
+		}
+		projects = append(projects, repo.Project)
+	}
+
+	if found == 0 {
+		return nil, 0, fmt.Errorf("none of the requested repositories could be fetched: %s", repoSlugs)
+	}
+	return projects, excludedCount, nil
+}
+
 // getSepecificProjectsWithAuth uses direct HTTP calls with Basic Auth support
 func getSepecificProjectsWithAuth(workspace, projectKeys, accessToken, users, bitbucketURLBase string, exclusionList *utils.ExclusionList) ([]Projectc, int, error) {
 	var projects []Projectc
@@ -557,12 +591,12 @@ func getSepecificProjectsWithAuth(workspace, projectKeys, accessToken, users, bi
 		}
 		req.Header.Set("Authorization", getAuthHeader(users, accessToken))
 
-		loggers.Debugf("GET %s", url)
+		loggers.Debugf(logRequestFmt, url)
 		resp, err := utils.HTTPClient.Do(req)
 		if err != nil {
 			continue
 		}
-		loggers.Debugf("GET %s → %s", url, resp.Status)
+		loggers.Debugf(logResponseFmt, url, resp.Status)
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
@@ -748,9 +782,9 @@ func listReposForProject(parms ParamsProjectBitbucket, projectKey string) (int, 
 
 		var reposResponse struct {
 			Values []struct {
-				Type       string `json:"type"`
-				FullName   string `json:"full_name"`
-				Links      struct {
+				Type     string `json:"type"`
+				FullName string `json:"full_name"`
+				Links    struct {
 					Self struct {
 						Href string `json:"href"`
 					} `json:"self"`

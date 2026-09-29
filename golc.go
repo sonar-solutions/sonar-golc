@@ -893,10 +893,10 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 	folderKeywords := getStringSliceConfig(platformConfig, "FolderKeywords")
 	fileNamePatterns := getStringSliceConfig(platformConfig, "FileNamePatterns")
 
-	// Determine git clone URL format
-	// For git operations with API tokens, use x-bitbucket-api-token-auth (static username for API tokens)
-	// For API calls, we use email:token (Basic Auth)
-	// For git clone, we use x-bitbucket-api-token-auth:token format for API tokens
+	// Determine git clone URL format. The REST API authenticates an API token
+	// with email:token, but git needs the static username
+	// x-bitbucket-api-token-auth instead. Without an email, the token is a
+	// workspace/project/repository access token, which clones as x-token-auth.
 	workspace := platformConfig["Workspace"].(string)
 	users := ""
 	if usersVal, ok := platformConfig["Users"]; ok && usersVal != nil {
@@ -905,12 +905,9 @@ func analyseBitCRepo(project interface{}, DestinationResult string, platformConf
 
 	var pathToScan string
 	if users != "" && users != "XXXXX" {
-		// For git operations with API tokens, use x-bitbucket-api-token-auth as the username
-		// This is a static username that Bitbucket provides for API token authentication
-		// The actual Bitbucket username field in the API is the workspace ID, not suitable for git
 		pathToScan = fmt.Sprintf("%s://x-bitbucket-api-token-auth:%s@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), platformConfig["Baseapi"].(string), workspace, p.RepoSlug)
 	} else {
-		// Use x-token-auth format for App Passwords (legacy)
+		// Access tokens (workspace, project or repository) use x-token-auth
 		pathToScan = fmt.Sprintf("%s://x-token-auth:%s@%s/%s/%s.git", platformConfig["Protocol"].(string), platformConfig["AccessToken"].(string), platformConfig["Baseapi"].(string), workspace, p.RepoSlug)
 	}
 
