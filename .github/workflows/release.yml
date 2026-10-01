@@ -16,6 +16,7 @@ on:
 permissions:
   contents: write
   packages: write
+  pull-requests: read
 
 concurrency:
   group: release
@@ -69,11 +70,17 @@ jobs:
 
       # Commit the README's version references to main, so the zips, the tag and the
       # repo all show the version being released. The tag goes on this commit.
-      # Re-running after a later step failed finds nothing to change and moves on.
+      # A re-run checks out the original commit again, so first pick up the bump commit
+      # an earlier attempt of this run already pushed instead of committing a second one.
       - name: Update version in README
         id: bump
         run: |
           set -euo pipefail
+          git fetch -q origin main
+          if [ "$(git rev-parse origin/main^ 2>/dev/null)" = "$(git rev-parse HEAD)" ] && \
+             [ "$(git log -1 --format=%s origin/main)" = "chore(release): V$VERSION" ]; then
+            git reset -q --hard origin/main
+          fi
           sed -i -E \
             -e "s/^> Current version: \*\*v[0-9.]+\*\*/> Current version: **v$VERSION**/" \
             -e "s/(for example) \`V[0-9.]+\`/\1 \`V$VERSION\`/" \
@@ -104,7 +111,7 @@ jobs:
           fi
           python3 -m venv "$RUNNER_TEMP/notes-venv"
           "$RUNNER_TEMP/notes-venv/bin/pip" install --quiet anthropic==1.11.0
-          "$RUNNER_TEMP/notes-venv/bin/python" .github/scripts/release_notes.py "$RUNNER_TEMP/release-notes.md"
+          "$RUNNER_TEMP/notes-venv/bin/python" .github/scripts/release_notes.py
 
       - name: Build platform zips
         run: |
@@ -167,7 +174,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          notes_file="$RUNNER_TEMP/release-notes.md"
+          notes_file="release-notes.md"
           if [ -s "$notes_file" ]; then
             notes=(--notes-file "$notes_file")
             notes_source="written by Claude"
