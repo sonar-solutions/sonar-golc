@@ -61,17 +61,17 @@ If it doesn't open, copy the URL printed in the terminal. Then:
 Each release is also published as a container image for `linux/amd64` and `linux/arm64`:
 
 ```
-docker run --rm -p 8091:8091 -p 8090:8090 -v golc-data:/data ghcr.io/sonar-solutions/sonar-golc:latest
+docker run --rm -p 8091:8091 -p 8090:8090 ghcr.io/sonar-solutions/sonar-golc:latest
 ```
 
 Open `http://localhost:8091` and continue from step 1 above. Replace `latest` with a release tag (for example `V2.1.2`) to pin a version.
 
-The `golc-data` volume keeps your settings and results between runs. Download reports (PDF, JSON, CSV) from the results dashboard.
+> **Download your reports before stopping the container.** Nothing is kept after it stops, including your settings and tokens. Get the PDF, JSON and CSV reports from the results dashboard first.
 
 To count **local files/directories**, mount the folder into the container and enter its container path (here `/src`) in the UI:
 
 ```
-docker run --rm -p 8091:8091 -p 8090:8090 -v golc-data:/data -v /path/to/code:/src:ro ghcr.io/sonar-solutions/sonar-golc:latest
+docker run --rm -p 8091:8091 -p 8090:8090 -v /path/to/code:/src:ro ghcr.io/sonar-solutions/sonar-golc:latest
 ```
 
 ---

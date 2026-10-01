@@ -1,9 +1,10 @@
 # GoLC container image. Built and pushed to ghcr.io by .github/workflows/release.yml.
 #
-#   docker run -p 8091:8091 -p 8090:8090 -v golc-data:/data ghcr.io/sonar-solutions/sonar-golc
+#   docker run --rm -p 8091:8091 -p 8090:8090 ghcr.io/sonar-solutions/sonar-golc
 #
 # The binaries live in /app; /data is the working directory, where GoLC reads
-# config.json and writes Results/ and Logs/.
+# config.json and writes Results/ and Logs/. GoLC is run once per report, so
+# nothing is meant to outlive the container (see AGENTS.md).
 
 # Cross-compile on the build host's architecture instead of emulating the target.
 FROM --platform=$BUILDPLATFORM golang:1.25 AS build
