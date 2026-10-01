@@ -1,0 +1,141 @@
+"""Write release notes for the Release workflow with Claude, through the Portkey gateway.
+
+Reads the commits and merged PRs since the previous release tag, shows Claude the most
+recent hand-written release notes as examples of tone and structure, and writes the
+result to the file given as the first argument. Exits non-zero on any failure so the
+workflow can fall back to GitHub's generated notes.
+
+Environment: VERSION (e.g. 2.2.1), GITHUB_REPOSITORY, PORTKEY_API_KEY, GH_TOKEN, and
+optionally PREV_TAG and PORTKEY_PROVIDER.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+import anthropic
+
+MODEL = "claude-opus-5-5"
+PORTKEY_URL = "https://api.portkey.ai"
+EXAMPLE_COUNT = 3
+
+SYSTEM_PROMPT = """You write the GitHub release notes for GoLC, a tool that counts lines of \
+code across a company's repositories (GitHub, GitLab, Bitbucket, Azure DevOps or local \
+folders) so they can size a SonarQube licence. Users download a release, run it once, take \
+the report, and are done. They are not developers of GoLC.
+
+Write for those users:
+- Group changes under bold headings by the area a user cares about (for example "Counting \
+accuracy", "GitHub Enterprise", "Reports", "Docker"). Use only the areas this release touches.
+- Start each item with **Fixed:**, **New:** or **Changed:** and say what is different for \
+the user and why it matters: which counts change, which platforms or setups are affected, \
+what now works that didn't. Name the concrete case (file types, hosts, error messages).
+- Leave out changes users never see: CI, tests, refactors, internal docs, tooling for \
+contributors. If a release has nothing user-visible, say so in one sentence.
+- Don't invent anything. Use only what the commits and pull requests say. If the effect on \
+users is unclear, describe the change plainly rather than guessing.
+- Match the tone and formatting of the example release notes. Output only the release \
+notes in GitHub Markdown, with no title, preamble, or "Full Changelog" link."""
+
+
+def run(*args: str) -> str:
+    return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def gh_api(path: str):
+    return json.loads(run("gh", "api", path))
+
+
+def previous_tag() -> str:
+    return os.environ.get("PREV_TAG") or run("git", "describe", "--tags", "--abbrev=0", "HEAD")
+
+
+def commit_messages(prev: str) -> str:
+    log = run("git", "log", f"{prev}..HEAD", "--no-merges", "--format=--- %h%n%B")
+    # The workflow's own version-bump commit carries no information for users.
+    entries = [e for e in log.split("--- ") if e.strip() and "chore(release):" not in e]
+    return "\n".join("--- " + e.strip() for e in entries)
+
+
+def pull_requests(prev: str, repo: str) -> str:
+    merges = run("git", "log", f"{prev}..HEAD", "--merges", "--format=%s")
+    numbers = re.findall(r"Merge pull request #(\d+)", merges)
+    parts = []
+    for number in numbers:
+        pr = gh_api(f"repos/{repo}/pulls/{number}")
+        parts.append(f"### PR #{number}: {pr['title']}\n\n{pr.get('body') or ''}".strip())
+    return "\n\n".join(parts)
+
+
+def example_notes(repo: str) -> str:
+    """The most recent hand-written release notes, skipping GitHub's generated ones."""
+    examples = []
+    for release in gh_api(f"repos/{repo}/releases?per_page=20"):
+        body = release.get("body") or ""
+        if "## What's Changed" in body or "**" not in body:
+            continue
+        body = re.sub(r"\n*\*\*Full Changelog\*\*:.*$", "", body.strip(), flags=re.S)
+        examples.append(f"<example tag=\"{release['tag_name']}\">\n{body}\n</example>")
+        if len(examples) == EXAMPLE_COUNT:
+            break
+    return "\n\n".join(examples)
+
+
+def main() -> int:
+    out_path = sys.argv[1]
+    version = os.environ["VERSION"]
+    repo = os.environ["GITHUB_REPOSITORY"]
+    key = os.environ["PORTKEY_API_KEY"]
+    provider = os.environ.get("PORTKEY_PROVIDER", "@claude-code")
+
+    prev = previous_tag()
+    commits = commit_messages(prev)
+    prs = pull_requests(prev, repo)
+    if not commits and not prs:
+        print(f"No changes since {prev}.", file=sys.stderr)
+        return 1
+
+    prompt = (
+        f"Previous release notes, as examples of tone and structure:\n\n{example_notes(repo)}\n\n"
+        f"Write the release notes for V{version}. Everything merged since {prev}:\n\n"
+        f"<pull_requests>\n{prs}\n</pull_requests>\n\n<commits>\n{commits}\n</commits>"
+    )
+
+    client = anthropic.Anthropic(
+        base_url=PORTKEY_URL,
+        auth_token=key,
+        default_headers={"x-portkey-api-key": key, "x-portkey-provider": provider},
+    )
+    response = client.beta.messages.create(
+        model=MODEL,
+        max_tokens=16000,
+        output_config={"effort": "medium"},
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    if response.stop_reason != "end_turn":
+        print(f"Model stopped with {response.stop_reason}; not using its output.", file=sys.stderr)
+        return 1
+
+    notes = "".join(block.text for block in response.content if block.type == "text").strip()
+    if not notes:
+        print("Model returned no text.", file=sys.stderr)
+        return 1
+
+    changelog = f"https://github.com/{repo}/compare/{prev}...V{version}"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(f"{notes}\n\n**Full Changelog**: {changelog}\n")
+    print(f"Wrote release notes for V{version} ({prev}..HEAD) to {out_path}.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (anthropic.APIError, subprocess.CalledProcessError, KeyError) as err:
+        print(f"Could not write release notes: {err}", file=sys.stderr)
+        sys.exit(1)
