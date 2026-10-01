@@ -12,7 +12,7 @@ It connects to your DevOps platform, counts one branch per repository, and prese
 
 **Supported platforms:** GitHub.com · GitHub Enterprise Server · GitHub Enterprise Cloud (including data residency) · GitLab Cloud · GitLab Self-Managed · Bitbucket Cloud · Bitbucket Data Center · Azure DevOps Services · Azure DevOps Server · Local files/directories
 
-> Current version: **v2.1**
+> Current version: **v2.2**
 
 ---
 
