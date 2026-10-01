@@ -13,7 +13,7 @@ build_platform() {
   local GOOS="$2"
 
   export GOARCH GOOS
-  export DEST=${buildpath}${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
+  export DEST=${buildpath%/}/${Release1}/${GOARCH}/${GOOS}/golc_${Release1}_${GOOS}_${GOARCH}
   export FILE_DEST=golc_${Release1}_${GOOS}_${GOARCH}
 
   mkdir -p "$DEST"
@@ -32,7 +32,7 @@ build_platform() {
   cp -r imgs    "${DEST}/"
   cp config_sample.json "${DEST}/config.json"
 
-  cd "${buildpath}${Release1}/${GOARCH}/${GOOS}/"
+  cd "${buildpath%/}/${Release1}/${GOARCH}/${GOOS}/"
   zip -r "${FILE_DEST}.zip" "${FILE_DEST}"
   cd "$CMD"
   return 0
@@ -50,7 +50,7 @@ build_platform amd64 windows
 # Create source code archives
 echo "Creating source code archives..."
 
-SOURCE_DIR="${buildpath}${Release1}/source"
+SOURCE_DIR="${buildpath%/}/${Release1}/source"
 mkdir -p ${SOURCE_DIR}
 
 # Use git archive for clean source (excludes .gitignore files)
@@ -73,4 +73,4 @@ else
 fi
 
 echo ""
-echo "Build complete. Archives written to: ${buildpath}${Release1}/"
+echo "Build complete. Archives written to: ${buildpath%/}/${Release1}/"
