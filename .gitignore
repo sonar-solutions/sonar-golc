@@ -42,7 +42,7 @@ dist-local/
 # Config files
 config.json
 create_release.sh
-CLAUDE.md
+CLAUDE.local.md
 
 # Coverage files
 coverage.*

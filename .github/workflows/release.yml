@@ -1,0 +1,137 @@
+name: Release
+
+# Run by hand from the Actions tab (Run workflow) on main, once a version is ready.
+# Builds the six platform zips, pushes the container image to ghcr.io, then tags the
+# commit and publishes the GitHub release with the zips attached.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the V (e.g. 2.1.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version }}
+  MODULE: github.com/SonarSource-Demos/sonar-golc
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Fail before building anything if the release can't be made as asked.
+      - name: Check version
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          [ "$GITHUB_REF" = "refs/heads/main" ] || fail "Run this workflow from main, not $GITHUB_REF."
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || fail "Version must look like 2.1.2 (no V prefix), got '$VERSION'."
+          ! git rev-parse -q --verify "refs/tags/V$VERSION" >/dev/null || fail "Tag V$VERSION already exists."
+
+          # A build refuses any config.json whose major version differs from version1,
+          # so a major bump must update both before it can ship.
+          major="${VERSION%%.*}"
+          code_version=$(sed -n 's/^var version1 = "\(.*\)"/\1/p' golc.go)
+          config_version=$(jq -r '.Release.Version' config_sample.json)
+          [ "${code_version%%.*}" = "$major" ] || fail "version1 in golc.go is $code_version; set it to $major.x before releasing $VERSION."
+          [ "${config_version%%.*}" = "$major" ] || fail "Release.Version in config_sample.json is $config_version; set it to $major.x before releasing $VERSION."
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25'
+
+      - name: Run tests
+        run: |
+          cp config_sample.json config.json
+          go test ./pkg/...
+          go test -tags=engine .
+          go test -tags=resultsall .
+          rm config.json
+
+      - name: Build platform zips
+        run: |
+          set -euo pipefail
+          ldflags="-X $MODULE/assets.Version=ver$VERSION"
+          mkdir -p dist-release
+
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/arm64 windows/amd64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            ext=""
+            [ "$goos" = "windows" ] && ext=".exe"
+            name="golc_ver${VERSION}_${goos}_${goarch}"
+            out="build/$name"
+            mkdir -p "$out"
+
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -tags=launcher -ldflags "$ldflags" -o "$out/golc-launcher$ext" golc-launcher.go golc.go
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -tags=resultsall -ldflags "$ldflags" -o "$out/ResultsAll$ext" ResultsAll.go
+
+            cp README.md LICENSE "$out/"
+            cp -r imgs "$out/"
+            cp config_sample.json "$out/config.json"
+
+            (cd build && zip -qr "../dist-release/$name.zip" "$name")
+          done
+          ls -l dist-release
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=V${{ inputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=ver${{ inputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "V$VERSION" dist-release/*.zip \
+            --target "$GITHUB_SHA" \
+            --title "V$VERSION" \
+            --generate-notes \
+            --latest
+          echo "### Released V$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/V$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: \`docker pull $IMAGE:V$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
