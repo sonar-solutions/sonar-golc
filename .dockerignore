@@ -1,0 +1,13 @@
+.git
+.github
+.claude
+dist-local
+Results
+Results.zip
+Saves
+Logs
+golc-launcher
+ResultsAll
+config.json
+coverage*
+*.out

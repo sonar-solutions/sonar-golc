@@ -19,6 +19,7 @@ It connects to your DevOps platform, counts one branch per repository, and prese
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+  - [Run with Docker](#run-with-docker)
 - [Configuration](#configuration)
   - [Required token permissions](#required-token-permissions)
   - [Azure DevOps Server](#azure-devops-server)
@@ -54,6 +55,24 @@ If it doesn't open, copy the URL printed in the terminal. Then:
 4. **View Results** — click "View Results" when complete. The results dashboard opens automatically.
 
 > **Ports are managed automatically.** If the default port is in use, GoLC picks the next free one. The actual URL is always printed on startup.
+
+### Run with Docker
+
+Each release is also published as a container image for `linux/amd64` and `linux/arm64`:
+
+```
+docker run --rm -p 8091:8091 -p 8090:8090 -v golc-data:/data ghcr.io/sonar-solutions/sonar-golc:latest
+```
+
+Open `http://localhost:8091` and continue from step 1 above. Replace `latest` with a release tag (for example `V2.1.2`) to pin a version.
+
+The `golc-data` volume keeps your settings and results between runs. Download reports (PDF, JSON, CSV) from the results dashboard.
+
+To count **local files/directories**, mount the folder into the container and enter its container path (here `/src`) in the UI:
+
+```
+docker run --rm -p 8091:8091 -p 8090:8090 -v golc-data:/data -v /path/to/code:/src:ro ghcr.io/sonar-solutions/sonar-golc:latest
+```
 
 ---
 
