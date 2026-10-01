@@ -1,8 +1,9 @@
 name: Release
 
 # Run by hand from the Actions tab (Run workflow) on main, once a version is ready.
-# Builds the six platform zips, pushes the container image to ghcr.io, then tags the
-# commit and publishes the GitHub release with the zips attached.
+# Commits the README version bump to main, builds the six platform zips, pushes the
+# container image to ghcr.io, then tags that commit and publishes the GitHub release
+# with the zips attached.
 
 on:
   workflow_dispatch:
@@ -66,6 +67,27 @@ jobs:
           go test -tags=resultsall .
           rm config.json
 
+      # Commit the README's version references to main, so the zips, the tag and the
+      # repo all show the version being released. The tag goes on this commit.
+      # Re-running after a later step failed finds nothing to change and moves on.
+      - name: Update version in README
+        id: bump
+        run: |
+          set -euo pipefail
+          sed -i -E \
+            -e "s/^> Current version: \*\*v[0-9.]+\*\*/> Current version: **v$VERSION**/" \
+            -e "s/(for example) \`V[0-9.]+\`/\1 \`V$VERSION\`/" \
+            README.md
+          grep -q "^> Current version: \*\*v$VERSION\*\*" README.md || { echo "::error::README.md has no '> Current version: **v...**' line to update."; exit 1; }
+
+          if ! git diff --quiet README.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore(release): V$VERSION" README.md
+            git push origin HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Build platform zips
         run: |
           set -euo pipefail
@@ -128,7 +150,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "V$VERSION" dist-release/*.zip \
-            --target "$GITHUB_SHA" \
+            --target "${{ steps.bump.outputs.sha }}" \
             --title "V$VERSION" \
             --generate-notes \
             --latest
