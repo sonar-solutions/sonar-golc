@@ -121,10 +121,16 @@ def is_pr_list(body: str) -> bool:
     )
 
 
-def example_notes(repo: str) -> str:
-    """The most recent hand-written release notes, skipping GitHub's generated ones."""
+def example_notes(repo: str, version: str) -> str:
+    """The most recent hand-written release notes older than V<version>, skipping GitHub's
+    generated ones. Previewing an existing release must not show the model its own notes,
+    or any newer ones, which the workflow couldn't have seen when it ran."""
+    releases = gh_api(f"repos/{repo}/releases?per_page=50")  # newest first
+    tags = [release["tag_name"] for release in releases]
+    if f"V{version}" in tags:
+        releases = releases[tags.index(f"V{version}") + 1:]
     examples = []
-    for release in gh_api(f"repos/{repo}/releases?per_page=50"):
+    for release in releases:
         body = release.get("body") or ""
         if GENERATED_MARKER in body or is_pr_list(body):
             continue
@@ -182,7 +188,7 @@ def main() -> int:
         return 1
 
     prompt = (
-        f"Previous release notes, as examples of tone and structure:\n\n{example_notes(repo)}\n\n"
+        f"Previous release notes, as examples of tone and structure:\n\n{example_notes(repo, version)}\n\n"
         f"Write the release notes for V{version}. Everything merged since {prev}:\n\n"
         f"{merged}"
     )

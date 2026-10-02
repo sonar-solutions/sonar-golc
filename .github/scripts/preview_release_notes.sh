@@ -13,7 +13,7 @@ set -euo pipefail
 repo_root=$(git rev-parse --show-toplevel)
 ref="${1:-origin/main}"
 key="${PORTKEY_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}}"
-[ -n "$key" ] || { echo "Set PORTKEY_API_KEY (or ANTHROPIC_AUTH_TOKEN) to your Portkey key." >&2; exit 1; }
+[[ -n "$key" ]] || { echo "Set PORTKEY_API_KEY (or ANTHROPIC_AUTH_TOKEN) to your Portkey key." >&2; exit 1; }
 
 git -C "$repo_root" fetch -q --tags origin
 commit=$(git -C "$repo_root" rev-parse --verify "$ref^{commit}")
@@ -28,7 +28,7 @@ else
 fi
 
 venv="${XDG_CACHE_HOME:-$HOME/.cache}/golc-release-notes-venv"
-if [ ! -x "$venv/bin/python" ]; then
+if [[ ! -x "$venv/bin/python" ]]; then
   python3 -m venv "$venv"
 fi
 "$venv/bin/pip" install --quiet --disable-pip-version-check -r "$repo_root/.github/scripts/requirements.txt"

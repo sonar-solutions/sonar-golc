@@ -24,8 +24,10 @@ permissions:
   packages: write
   pull-requests: read
 
+# Real releases queue one at a time. Each dry run gets its own group, so it never makes a
+# release wait or replaces a queued one.
 concurrency:
-  group: release
+  group: ${{ inputs.dry_run && format('release-dry-run-{0}', github.run_id) || 'release' }}
   cancel-in-progress: false
 
 env:
