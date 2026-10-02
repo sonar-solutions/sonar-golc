@@ -4,6 +4,8 @@ name: Release
 # Commits the version bump (README, Sonar properties) to main, builds the six platform
 # zips, pushes the container image to ghcr.io, then tags that commit and publishes the
 # GitHub release with the zips attached.
+# A dry run, from any branch, only writes the release notes and shows them in the run
+# summary: no version bump, build, image, tag or release.
 
 on:
   workflow_dispatch:
@@ -12,6 +14,10 @@ on:
         description: "Version to release, without the V (e.g. 2.1.2)"
         required: true
         type: string
+      dry_run:
+        description: "Dry run: only write the release notes and show them in the run summary"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,6 +30,7 @@ concurrency:
 
 env:
   VERSION: ${{ inputs.version }}
+  DRY_RUN: ${{ inputs.dry_run }}
   MODULE: github.com/SonarSource-Demos/sonar-golc
   IMAGE: ghcr.io/${{ github.repository }}
 
@@ -43,8 +50,10 @@ jobs:
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
 
-          [ "$GITHUB_REF" = "refs/heads/main" ] || fail "Run this workflow from main, not $GITHUB_REF."
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || fail "Version must look like 2.1.2 (no V prefix), got '$VERSION'."
+          # A dry run releases nothing, so it may run from any branch and reuse a version.
+          [ "$DRY_RUN" = "true" ] && exit 0
+          [ "$GITHUB_REF" = "refs/heads/main" ] || fail "Run this workflow from main, not $GITHUB_REF."
           ! git rev-parse -q --verify "refs/tags/V$VERSION" >/dev/null || fail "Tag V$VERSION already exists."
 
           # A build refuses any config.json whose major version differs from version1,
@@ -56,11 +65,13 @@ jobs:
           [ "${config_version%%.*}" = "$major" ] || fail "Release.Version in config_sample.json is $config_version; set it to $major.x before releasing $VERSION."
 
       - name: Set up Go
+        if: ${{ !inputs.dry_run }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25'
 
       - name: Run tests
+        if: ${{ !inputs.dry_run }}
         run: |
           cp config_sample.json config.json
           go test ./pkg/...
@@ -75,6 +86,7 @@ jobs:
       # an earlier attempt of this run already pushed instead of committing a second one.
       - name: Update version in README and Sonar properties
         id: bump
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           git fetch -q origin main
@@ -102,7 +114,8 @@ jobs:
       # style of earlier hand-written notes (.github/scripts/release_notes.py). If this
       # step fails for any reason, the release falls back to GitHub's generated notes.
       - name: Write release notes
-        continue-on-error: true
+        # A dry run exists to test this step, so there it fails the run instead.
+        continue-on-error: ${{ !inputs.dry_run }}
         env:
           PORTKEY_API_KEY: ${{ secrets.PORTKEY_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -116,7 +129,17 @@ jobs:
           "$RUNNER_TEMP/notes-venv/bin/pip" install --quiet -r .github/scripts/requirements.txt
           "$RUNNER_TEMP/notes-venv/bin/python" .github/scripts/release_notes.py
 
+      - name: Show release notes (dry run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### Release notes for V$VERSION (dry run, nothing released)"
+            echo
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build platform zips
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           ldflags="-X $MODULE/assets.Version=ver$VERSION"
@@ -143,9 +166,11 @@ jobs:
           ls -l dist-release
 
       - name: Set up Docker Buildx
+        if: ${{ !inputs.dry_run }}
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
+        if: ${{ !inputs.dry_run }}
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -154,6 +179,7 @@ jobs:
 
       - name: Image tags and labels
         id: meta
+        if: ${{ !inputs.dry_run }}
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
@@ -162,6 +188,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push image
+        if: ${{ !inputs.dry_run }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -174,6 +201,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Publish release
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
