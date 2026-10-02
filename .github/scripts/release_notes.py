@@ -26,6 +26,8 @@ OUT_FILE = "release-notes.md"
 # Written into every generated release body so later runs never use it as a style example.
 GENERATED_MARKER = "<!-- release notes written by Claude -->"
 HEADING = "## What's Changed"
+# GitHub links "#117" to the PR, so notes cite PRs without containing a URL.
+PR_REF = re.compile(r"\(?#\d+[,)]?\.?")
 # Notes never need a link of their own; the compare link is appended by this script.
 LINK = re.compile(r"https?://|www\.|\]\(", re.IGNORECASE)
 
@@ -42,6 +44,9 @@ Leave smaller changes out; the "Full Changelog" link below the notes covers them
 "Counting accuracy", "Results page", "Bitbucket", "Docker"), with at most three items each.
 - Each item is one sentence, starting with **Fixed:**, **New:** or **Changed:**, that says \
 what is different for the user. Fold related changes into one item. No sub-bullets.
+- End each item with the pull request it came from as a number in parentheses, for example \
+(#117), or (#117, #118) for a folded item. Use only the numbers of the <pull_request> \
+entries. A change that came only from <direct_commits> gets no number.
 - Leave out changes users never see: CI, tests, refactors, internal docs, tooling for \
 contributors, caching, and settings or environment variables a user doesn't need to set. \
 If a release has nothing user-visible, say so in one sentence.
@@ -71,21 +76,42 @@ def previous_tag() -> str:
     return os.environ.get("PREV_TAG") or run("git", "describe", "--tags", "--abbrev=0", "HEAD")
 
 
-def commit_messages(prev: str) -> str:
-    log = run("git", "log", f"{prev}..HEAD", "--no-merges", "--format=--- %h%n%B")
+def commit_log(*args: str) -> str:
+    log = run("git", "log", "--no-merges", "--format=--- %h%n%B", *args)
     # The workflow's own version-bump commit carries no information for users.
     entries = [e for e in log.split("--- ") if e.strip() and "chore(release):" not in e]
     return "\n".join("--- " + e.strip() for e in entries)
 
 
-def pull_requests(prev: str, repo: str) -> str:
-    merges = run("git", "log", f"{prev}..HEAD", "--merges", "--format=%s")
-    numbers = re.findall(r"Merge pull request #(\d+)", merges)
-    parts = []
-    for number in numbers:
+def changes(prev: str, repo: str) -> tuple[str, set[str]]:
+    """Each PR merged since prev with its own commits, then commits pushed straight to main.
+
+    Returns the text for the prompt and the PR numbers, which are the only references
+    the notes may contain.
+    """
+    parts, numbers = [], set()
+    merges = run("git", "log", "--first-parent", "--merges", "--format=%H %s", f"{prev}..HEAD")
+    for line in merges.splitlines():
+        sha, subject = line.split(" ", 1)
+        match = re.match(r"Merge pull request #(\d+)", subject)
+        if not match:
+            continue
+        number = match.group(1)
+        numbers.add(number)
         pr = gh_api(f"repos/{repo}/pulls/{number}")
-        parts.append(f"### PR #{number}: {pr['title']}\n\n{pr.get('body') or ''}".strip())
-    return "\n\n".join(parts)
+        parts.append(
+            f'<pull_request number="{number}">\nTitle: {pr["title"]}\n\n{pr.get("body") or ""}\n\n'
+            f"Commits:\n{commit_log(f'{sha}^1..{sha}^2')}\n</pull_request>"
+        )
+    direct = commit_log("--first-parent", f"{prev}..HEAD")
+    if direct:
+        parts.append(f"<direct_commits>\n{direct}\n</direct_commits>")
+    return "\n\n".join(parts), numbers
+
+
+def word_count(notes: str) -> int:
+    """Words in the notes, not counting PR references such as "(#117," or "#118)."."""
+    return sum(1 for word in notes.split() if not PR_REF.fullmatch(word))
 
 
 def is_pr_list(body: str) -> bool:
@@ -140,16 +166,15 @@ def main() -> int:
     provider = os.environ.get("PORTKEY_PROVIDER", "@claude-code")
 
     prev = previous_tag()
-    commits = commit_messages(prev)
-    prs = pull_requests(prev, repo)
-    if not commits and not prs:
+    merged, numbers = changes(prev, repo)
+    if not merged:
         print(f"No changes since {prev}.", file=sys.stderr)
         return 1
 
     prompt = (
         f"Previous release notes, as examples of tone and structure:\n\n{example_notes(repo)}\n\n"
         f"Write the release notes for V{version}. Everything merged since {prev}:\n\n"
-        f"<pull_requests>\n{prs}\n</pull_requests>\n\n<commits>\n{commits}\n</commits>"
+        f"{merged}"
     )
 
     client = anthropic.Anthropic(
@@ -159,13 +184,14 @@ def main() -> int:
     )
     messages = [{"role": "user", "content": prompt}]
     notes = ask(client, messages)
-    if notes and len(notes.split()) > MAX_WORDS:
+    if notes and word_count(notes) > MAX_WORDS:
         # One rewrite when the first draft runs long; the prompt alone doesn't always hold.
-        print(f"First draft is {len(notes.split())} words; asking for a shorter one.")
+        print(f"First draft is {word_count(notes)} words; asking for a shorter one.")
         messages.append({
             "role": "user",
-            "content": f"That is {len(notes.split())} words. Rewrite it in at most {MAX_WORDS} "
-            "words: keep the changes that matter most to users and drop the rest.",
+            "content": f"That is {word_count(notes)} words. Rewrite it in at most {MAX_WORDS} "
+            "words: keep the changes that matter most to users and drop the rest, and keep "
+            "each item's pull request number.",
         })
         # A failed or longer rewrite keeps the first draft: long notes beat no notes.
         try:
@@ -173,18 +199,22 @@ def main() -> int:
         except anthropic.APIError as err:
             print(f"Rewrite failed ({err}); keeping the first draft.", file=sys.stderr)
             shorter = ""
-        if shorter and len(shorter.split()) < len(notes.split()):
+        if shorter and word_count(shorter) < word_count(notes):
             notes = shorter
     if not notes:
         return 1
     if LINK.search(notes):
         print("Model output contains a link; not publishing it.", file=sys.stderr)
         return 1
+    unknown = set(re.findall(r"#(\d+)", notes)) - numbers
+    if unknown:
+        print(f"Model cited PRs not in this release ({', '.join(sorted(unknown))}); not publishing it.", file=sys.stderr)
+        return 1
 
     changelog = f"https://github.com/{repo}/compare/{prev}...V{version}"
     with open(OUT_FILE, "w", encoding="utf-8") as f:
         f.write(f"{HEADING}\n\n{notes}\n\n**Full Changelog**: {changelog}\n\n{GENERATED_MARKER}\n")
-    print(f"Wrote release notes for V{version} ({prev}..HEAD), {len(notes.split())} words, to {OUT_FILE}.")
+    print(f"Wrote release notes for V{version} ({prev}..HEAD), {word_count(notes)} words, to {OUT_FILE}.")
     return 0
 
 
