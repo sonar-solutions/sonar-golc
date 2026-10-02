@@ -106,11 +106,15 @@ func settleTies(dirs []FileModeDir) {
 	}
 }
 
-// pathElements splits a cleaned absolute path into its non-empty elements. A volume
-// name such as "C:" is kept as an element of its own.
+// pathElements splits a cleaned absolute path into its non-empty elements. A Windows
+// volume name becomes an element of its own, without its colon: a name is used as a file
+// name, and NTFS reads "Result_C:_app.json" as a stream of a file called Result_C, so
+// C:\app beside D:\app would lose its results the way this naming exists to prevent. They
+// are named C_app and D_app instead.
 func pathElements(path string) []string {
 	var elements []string
 	for _, e := range strings.Split(filepath.ToSlash(path), "/") {
+		e = strings.ReplaceAll(e, ":", "")
 		if e != "" {
 			elements = append(elements, e)
 		}

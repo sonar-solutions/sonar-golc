@@ -3,6 +3,7 @@ package utils
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -80,5 +81,30 @@ func TestSettleTiesMakesEveryNameUnique(t *testing.T) {
 func TestFileModeDirsEmpty(t *testing.T) {
 	if got := FileModeDirs(nil); len(got) != 0 {
 		t.Errorf("got %v, want nothing", got)
+	}
+}
+
+// A drive letter must not carry its colon into a name, because the name becomes a file
+// name and Windows does not allow ":" in one.
+func TestPathElementsDropVolumeColon(t *testing.T) {
+	got := pathElements("C:/srv/app")
+	want := []string{"C", "srv", "app"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("pathElements = %v, want %v", got, want)
+	}
+}
+
+func TestFileModeDirsNamesAreValidFileNames(t *testing.T) {
+	// The drive letter sits beneath / here so the test runs on every OS; on Windows
+	// C:\app and D:\app reach the same naming step with the same elements.
+	got := FileModeDirs([]string{"/C:/app", "/D:/app"})
+	want := []string{"C_app", "D_app"}
+	if !reflect.DeepEqual(names(got), want) {
+		t.Errorf("names = %v, want %v", names(got), want)
+	}
+	for _, d := range got {
+		if strings.ContainsAny(d.Name, `:\/`) {
+			t.Errorf("name %q contains a character that is not valid in a file name", d.Name)
+		}
 	}
 }
