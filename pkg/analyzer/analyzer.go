@@ -73,14 +73,43 @@ func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 	return files, err
 }
 
+// dockerfileNames are the exact file names SonarQube's Docker analysis recognises. The
+// match is case-sensitive: DOCKERFILE is not one of them.
+var dockerfileNames = []string{"Dockerfile", "dockerfile", "Containerfile", "containerfile"}
+
 func (a *Analyzer) getFileExtension(path string) string {
+	base := filepath.Base(path)
 	extension := filepath.Ext(path)
 
+	// A variant such as Dockerfile.prod has an extension of its own (".prod"), so it is
+	// treated as the Docker file it is - unless that extension already belongs to another
+	// language, which then keeps it.
+	if _, known := a.SupportedExtensions[extension]; !known {
+		if name, ok := dockerfileVariant(base); ok {
+			return name
+		}
+	}
+
 	if extension == "" {
-		extension = filepath.Base(path)
+		extension = base
 	}
 
 	return extension
+}
+
+// dockerfileVariant reports whether base is a Docker file name followed by nothing or by
+// a ".", "-" or "_" and anything, returning the name it starts with. Measured against
+// SonarQube: Dockerfile.prod, Dockerfile-dev, Dockerfile_dev and Containerfile.ci all
+// count towards ncloc, while MyDockerfile and DOCKERFILE do not.
+func dockerfileVariant(base string) (string, bool) {
+	for _, name := range dockerfileNames {
+		rest, found := strings.CutPrefix(base, name)
+		if found && (rest == "" || strings.ContainsRune(".-_", rune(rest[0]))) {
+			return name, true
+		}
+	}
+
+	return "", false
 }
 
 func (a *Analyzer) canAdd(path string, extension string) bool {

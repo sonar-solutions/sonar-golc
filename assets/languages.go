@@ -2,6 +2,10 @@ package assets
 
 import "github.com/SonarSource-Demos/sonar-golc/pkg/goloc/language"
 
+// pythonMultiLineComments is shared by Python and IPython Notebooks, whose code cells are
+// Python.
+var pythonMultiLineComments = [][]string{{`"""`, `"""`}, {"'''", "'''"}}
+
 var Languages = language.Languages{
 	"ActionScript": {
 		LineComments:      []string{"//"},
@@ -43,6 +47,14 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{},
 		Extensions:        []string{".cbl", ".CBL", ".ccp", ".cob", ".COB", ".cobol", ".cpy"},
 	},
+	// SonarQube reports Bicep under azureresourcemanager (sonar.azureresourcemanager.file.suffixes
+	// is .bicep), but it cannot share GoLC's Azure Resource Manager entry: that one is
+	// content-detected from JSON, which has no comment syntax, while Bicep has // and /* */.
+	"Bicep": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".bicep"},
+	},
 	"C#": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
@@ -58,10 +70,19 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".dart"},
 	},
+	// sonar.dataweave.file.suffixes (dwl). SonarQube counts .dwl files whether or not the
+	// project has a mule-artifact.json; the Mule XML configuration stays plain XML.
+	"DataWeave": {
+		LineComments:      []string{"//"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".dwl"},
+	},
+	// sonar.docker.file.patterns. Variants such as Dockerfile.prod or Dockerfile-dev have
+	// no suffix of their own; analyzer.getFileExtension maps them onto these names.
 	"Docker": {
 		LineComments:      []string{"#"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{"Dockerfile", "dockerfile", ".dockerfile"},
+		Extensions:        []string{"Dockerfile", "dockerfile", ".dockerfile", "Containerfile", "containerfile", ".containerfile"},
 	},
 	"Flex": {
 		LineComments:      []string{"//"},
@@ -91,6 +112,14 @@ var Languages = language.Languages{
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
 		Extensions:        []string{".html", ".htm", ".cshtml", ".vbhtml", ".aspx", ".ascx", ".rhtml", ".erb", ".shtml", ".shtm", ".cmp"},
+	},
+	// sonar.ipynb.file.suffixes (ipynb). Only the code cells of a Python notebook count;
+	// see scanner.notebookCodeCells. The comment syntax is Python's, applied to those cells.
+	"IPython Notebooks": {
+		LineComments:      []string{"#"},
+		MultiLineComments: pythonMultiLineComments,
+		Extensions:        []string{".ipynb"},
+		JupyterNotebook:   true,
 	},
 	"JCL": {
 		LineComments:      []string{"//*"},
@@ -152,6 +181,13 @@ var Languages = language.Languages{
 		// counted, while a tag sharing a line with code is.
 		NonCodeLines: []string{"<?php", "<?", "?>"},
 	},
+	// sonar.postgres.file.suffixes (pgsql,psql). .sql stays with the SQL entry, as it does
+	// with SonarQube, where PL/SQL owns it by default.
+	"PostgreSQL": {
+		LineComments:      []string{"--"},
+		MultiLineComments: [][]string{{"/*", "*/"}},
+		Extensions:        []string{".pgsql", ".psql"},
+	},
 	"PL/I": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"/*", "*/"}},
@@ -165,7 +201,7 @@ var Languages = language.Languages{
 	},
 	"Python": {
 		LineComments:      []string{"#"},
-		MultiLineComments: [][]string{{"\"\"\"", "\"\"\""}, {"'''", "'''"}},
+		MultiLineComments: pythonMultiLineComments,
 		Extensions:        []string{".py"},
 	},
 	"RPG": {
@@ -174,6 +210,14 @@ var Languages = language.Languages{
 		// sonar.rpg.file.suffixes lists the RPG IV suffixes and their uppercase spellings;
 		// extension lookup here is case-sensitive, so both cases are needed.
 		Extensions: []string{".rpg", ".rpgle", ".sqlrpgle", ".RPG", ".RPGLE", ".SQLRPGLE"},
+	},
+	// sonar.r.file.suffixes also lists Rmd and rmd, but SonarQube reports no lines of code
+	// for R Markdown - not even its R chunks - so those are deliberately left out. Extension
+	// lookup here is case-sensitive, so both spellings of .r are needed.
+	"R": {
+		LineComments:      []string{"#"},
+		MultiLineComments: [][]string{},
+		Extensions:        []string{".r", ".R"},
 	},
 	"Ruby": {
 		LineComments:      []string{"#"},
