@@ -58,26 +58,28 @@ If it doesn't open, copy the URL printed in the terminal. Then:
 
 ### Run with Docker
 
-Each release is also published as a container image for `linux/amd64` and `linux/arm64`:
+Each release from `V2.2` onwards is also published as a container image for `linux/amd64` and `linux/arm64`:
 
 ```
-docker run --rm -p 8091:8091 -p 8090:8090 ghcr.io/sonar-solutions/sonar-golc:latest
+docker run --rm --name golc -p 127.0.0.1:8091:8091 -p 127.0.0.1:8090:8090 ghcr.io/sonar-solutions/sonar-golc:latest
 ```
 
-Open `http://localhost:8091` and continue from step 1 above. Replace `latest` with a release tag (for example `V2.1.2`) to pin a version.
+Open `http://localhost:8091` and continue from step 1 above. Port 8091 is the setup UI and 8090 the results dashboard, so publish both. Each container starts with empty settings. Replace `latest` with a release tag (for example `V2.2`) to pin a version.
 
-If a port is already in use on your machine, change the number before the colon. The container can't see which host port you picked for the results dashboard, so tell it with `GOLC_RESULTS_PUBLIC_PORT`, or "View Results" will open the wrong port:
+The `127.0.0.1:` prefix keeps GoLC reachable only from your machine, since the UI holds your access token. To run it on a remote host, keep it and connect through an SSH tunnel: `ssh -L 8091:localhost:8091 -L 8090:localhost:8090 <host>`.
+
+If Docker reports `port is already allocated`, change the number before the colon and pass the new dashboard port in `GOLC_RESULTS_PUBLIC_PORT`:
 
 ```
-docker run --rm -p 9091:8091 -p 9090:8090 -e GOLC_RESULTS_PUBLIC_PORT=9090 ghcr.io/sonar-solutions/sonar-golc:latest
+docker run --rm --name golc -p 127.0.0.1:9091:8091 -p 127.0.0.1:9090:8090 -e GOLC_RESULTS_PUBLIC_PORT=9090 ghcr.io/sonar-solutions/sonar-golc:latest
 ```
 
-> **Download your reports before stopping the container.** Nothing is kept after it stops, including your settings and tokens. Get the PDF, JSON and CSV reports from the results dashboard first.
+> **Download your reports before stopping the container.** Nothing is kept after it stops, including your settings and tokens. On the results dashboard, **Download All ZIP** saves every report, or run `docker cp golc:/data/Results ./Results` while the container is running.
 
 To count **local files/directories**, mount the folder into the container and enter its container path (here `/src`) in the UI:
 
 ```
-docker run --rm -p 8091:8091 -p 8090:8090 -v /path/to/code:/src:ro ghcr.io/sonar-solutions/sonar-golc:latest
+docker run --rm --name golc -p 127.0.0.1:8091:8091 -p 127.0.0.1:8090:8090 -v /path/to/code:/src:ro ghcr.io/sonar-solutions/sonar-golc:latest
 ```
 
 ---
