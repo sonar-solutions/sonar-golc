@@ -16,6 +16,10 @@ type LanguageInfo struct {
 	// YAML and JSON, which SonarQube analyses by default while plain YAML and JSON are
 	// opt-in. Such a language has no Extensions.
 	ContentDetected bool
+
+	// JupyterNotebook marks a language whose files are notebooks: JSON documents in which
+	// only the source of the code cells is counted, never the JSON itself.
+	JupyterNotebook bool
 }
 
 type Languages map[string]LanguageInfo

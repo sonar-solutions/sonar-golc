@@ -378,6 +378,7 @@ Language           | Extensions                               | Single Comments 
 Abap               | .abap, .ab4, .flow, .asprog              | *, "            |
 ActionScript       | .as                                      | //              | /* */
 Apex               | .cls, .trigger                           | //              | /* */
+Bicep              | .bicep                                   | //              | /* */
 C                  | .c                                       | //              | /* */
 C Header           | .h                                       | //              | /* */
 C++                | .cpp, .cc, .cxx, .c++, .ipp, .ixx, ...   | //              | /* */
@@ -386,12 +387,14 @@ C#                 | .cs, .razor                              | //              
 COBOL              | .cbl, .ccp, .cob, .cobol, .cpy           | *               |
 CSS                | .css                                     |                 | /* */
 Dart               | .dart                                    | //              | /* */
-Docker             | Dockerfile, dockerfile                   | #               |
+DataWeave          | .dwl                                     | //              | /* */
+Docker             | Dockerfile, Containerfile, ... (below)   | #               |
 Flex               | .as                                      | //              | /* */
 Golang             | .go                                      | //              | /* */
 Gosu               | .gs, .gsx, .gsp                          | //              | /* */
 Groovy             | .groovy, .gvy, .gy, .gsh, Jenkinsfile    | //              | /* */
 HTML               | .html, .htm, .cshtml, .vbhtml, ...       |                 | <!-- -->
+IPython Notebooks  | .ipynb (code cells only, below)          | #               | """ """, ''' '''
 Java               | .java, .jav                              | //              | /* */
 JavaScript         | .js, .jsx, .cjs, .mjs                    | //              | /* */
 JCL                | .jcl, .JCL                               | //*             |
@@ -403,8 +406,10 @@ Objective-C        | .m, .mm                                  | //              
 Oracle PL/SQL      | .pkb, .pks                               | --              | /* */
 PHP                | .php, .php3, .php4, .php5, .phtml, .inc  | //, #           | /* */
 PL/I               | .pl1, .pli                               |                 | /* */
+PostgreSQL         | .pgsql, .psql                            | --              | /* */
 PowerShell         | .ps1, .psm1, .psd1                       | #               | <# #>
 Python             | .py                                      | #               | """ """, ''' '''
+R                  | .r, .R                                   | #               |
 RPG                | .rpg, .rpgle, .sqlrpgle (+ uppercase)    | *               |
 Ruby               | .rb                                      | #               | =begin =end
 Rust               | .rs                                      | //              | /* */
@@ -425,6 +430,18 @@ XHTML              | .xhtml                                   |                 
 XML                | .xml, .XML, .xsd, .xsl, .config          |                 | <!-- -->
 YAML               | .yaml, .yml                              | #               |
 ```
+
+> **Docker files are matched by name.** `Dockerfile`, `dockerfile`, `Containerfile` and
+> `containerfile` count, as do variants that add a `.`, `-` or `_` suffix
+> (`Dockerfile.prod`, `Dockerfile-dev`) and files ending in `.dockerfile` or
+> `.containerfile` — the same files SonarQube counts.
+>
+> **Notebooks count only their code cells.** A `.ipynb` file is JSON; GoLC counts the
+> lines in its code cells, as SonarQube does, and nothing for markdown, outputs or a
+> notebook in a language other than Python.
+>
+> **R Markdown (`.Rmd`) is not counted**, because SonarQube reports no lines of code for
+> it either.
 
 > **ActionScript and Flex both use `.as`**, so a report shows your `.as` files under one
 > label or the other, and it may differ between runs. The line count is the same either

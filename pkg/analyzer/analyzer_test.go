@@ -178,3 +178,48 @@ func TestCanAdd_GeneratedCodeDefaultPatterns(t *testing.T) {
 		})
 	}
 }
+
+// Docker file variants carry no Docker suffix of their own, so they are matched by name.
+// The cases are the ones measured against SonarQube 2026.5: counted where want is set,
+// not counted where it is empty.
+func TestGetFileExtension_DockerfileVariants(t *testing.T) {
+	extensions := map[string]string{
+		"Dockerfile": "Docker", "dockerfile": "Docker", ".dockerfile": "Docker",
+		"Containerfile": "Docker", "containerfile": "Docker", ".containerfile": "Docker",
+		".yaml": "YAML",
+	}
+	a := NewAnalyzer("/repo", nil, nil, nil, extensions, nil, nil)
+
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"Dockerfile", "Dockerfile"},
+		{"Dockerfile.prod", "Dockerfile"},
+		{"Dockerfile.prod.bak", "Dockerfile"},
+		{"Dockerfile.", "Dockerfile"},
+		{"Dockerfile-dev", "Dockerfile"},
+		{"Dockerfile_dev", "Dockerfile"},
+		{"dockerfile.dev", "dockerfile"},
+		{"Containerfile", "Containerfile"},
+		{"Containerfile.prod", "Containerfile"},
+		{"containerfile.ci", "containerfile"},
+		{"app.dockerfile", ".dockerfile"},
+		{"app.containerfile", ".containerfile"},
+		// An extension another language claims keeps the file in that language.
+		{"Dockerfile.yaml", ".yaml"},
+		// Not Docker files: the name must start the file name, with its exact case, and be
+		// followed by a separator.
+		{"MyDockerfile", "MyDockerfile"},
+		{"DOCKERFILE", "DOCKERFILE"},
+		{"Dockerfiles", "Dockerfiles"},
+		{"api.Dockerfile.j2", ".j2"},
+	}
+
+	for _, tc := range tests {
+		got := a.getFileExtension(filepath.Join("/repo", "svc", tc.name))
+		if got != tc.want {
+			t.Errorf("getFileExtension(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

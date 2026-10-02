@@ -182,9 +182,11 @@ func (sc *Scanner) createProgressbar(max int) *progressbar.ProgressBar {
 }*/
 
 func (sc *Scanner) scanFile(file analyzer.FileMetadata) (scanResult, error) {
+	if sc.SupportedLanguages[file.Language].JupyterNotebook {
+		return sc.scanNotebook(file)
+	}
+
 	result := scanResult{Metadata: file}
-	isInBlockComment := false
-	var closeBlockCommentToken string
 
 	f, err := os.Open(file.FilePath)
 	if err != nil {
@@ -192,12 +194,27 @@ func (sc *Scanner) scanFile(file analyzer.FileMetadata) (scanResult, error) {
 	}
 	defer f.Close()
 
-	reader := bufio.NewReader(f)
+	if err := sc.countLines(file, f, &result); err != nil {
+		return result, err
+	}
+
+	result.Lines = result.CodeLines + result.BlankLines + result.Comments
+
+	return result, nil
+}
+
+// countLines classifies every line read from r as code, comment or blank and adds the
+// counts to result, using the comment syntax of the file's language.
+func (sc *Scanner) countLines(file analyzer.FileMetadata, r io.Reader, result *scanResult) error {
+	isInBlockComment := false
+	var closeBlockCommentToken string
+
+	reader := bufio.NewReader(r)
 	firstLine := true
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil && err != io.EOF {
-			return result, err
+			return err
 		}
 
 		// ReadString returns the final chunk together with io.EOF when a file does not end
@@ -260,9 +277,7 @@ func (sc *Scanner) scanFile(file analyzer.FileMetadata) (scanResult, error) {
 		result.CodeLines++
 	}
 
-	result.Lines = result.CodeLines + result.BlankLines + result.Comments
-
-	return result, nil
+	return nil
 }
 
 // isNonCodeLine reports whether the whole trimmed line is a markup delimiter that

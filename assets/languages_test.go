@@ -47,6 +47,13 @@ func TestLanguagesCoverSonarQubeDefaults(t *testing.T) {
 		"RPG":           {".rpg", ".rpgle", ".sqlrpgle", ".RPG", ".RPGLE", ".SQLRPGLE"},
 		"VB6":           {".bas", ".frm", ".ctl"},
 		"XML":           {".xml", ".xsd", ".xsl", ".config"},
+		// Added for SonarQube 2026.5, which analyses each of these by default.
+		"R":                 {".r", ".R"},
+		"DataWeave":         {".dwl"},
+		"PostgreSQL":        {".pgsql", ".psql"},
+		"Bicep":             {".bicep"},
+		"Docker":            {"Dockerfile", "dockerfile", ".dockerfile", "Containerfile", "containerfile", ".containerfile"},
+		"IPython Notebooks": {".ipynb"},
 	}
 
 	for lang, extensions := range want {
@@ -200,5 +207,25 @@ func TestTemplateAndPreprocessorCommentSyntax(t *testing.T) {
 	if !hasTwigComment {
 		t.Errorf("Twig should recognise {# #} comments, got %v",
 			Languages["Twig"].MultiLineComments)
+	}
+}
+
+// sonar.r.file.suffixes lists Rmd and rmd, yet SonarQube reports no lines of code for R
+// Markdown, so claiming those suffixes would over-count.
+func TestRMarkdownIsNotCounted(t *testing.T) {
+	for extension, langs := range extensionOwners() {
+		if extension == ".Rmd" || extension == ".rmd" {
+			t.Errorf("%q is claimed by %v; SonarQube counts no lines for R Markdown", extension, langs)
+		}
+	}
+}
+
+// Notebooks are the only language counted from inside a JSON document; any other language
+// flagged as one would have its source files parsed as JSON and counted as empty.
+func TestOnlyNotebooksAreJupyterNotebooks(t *testing.T) {
+	for lang, info := range Languages {
+		if info.JupyterNotebook != (lang == "IPython Notebooks") {
+			t.Errorf("%q has JupyterNotebook = %v", lang, info.JupyterNotebook)
+		}
 	}
 }
