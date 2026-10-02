@@ -39,6 +39,7 @@ type Params struct {
 	Order             string
 	OutputName        string
 	OutputPath        string
+	Name              string // report name appended to OutputName when Branch is empty; empty => the analysed directory's name
 	ReportFormats     []string
 	Branch            string
 	Token             string
@@ -155,7 +156,11 @@ func NewGCloc(params Params, languages language.Languages) (*GCloc, error) {
 	}
 
 	if params.Branch == "" {
-		if lastPart := filepath.Base(path); lastPart != "" {
+		lastPart := params.Name
+		if lastPart == "" {
+			lastPart = filepath.Base(path)
+		}
+		if lastPart != "" {
 			params.OutputName = fmt.Sprintf("%s%s", params.OutputName, lastPart)
 		} else {
 			utils.SharedLogger().Errorf("❌ Failed to create OutputName")

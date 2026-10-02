@@ -1269,12 +1269,12 @@ type fileAnalysisResult struct {
 	ProjectBranches []fileProjectBranch `json:"ProjectBranches"`
 }
 
-func saveFileAnalysisResult(destDir, org string, dirs []string) error {
+func saveFileAnalysisResult(destDir, org string, dirs []utils.FileModeDir) error {
 	result := fileAnalysisResult{}
 	for _, d := range dirs {
 		result.ProjectBranches = append(result.ProjectBranches, fileProjectBranch{
 			Org:        org,
-			RepoSlug:   filepath.Base(d),
+			RepoSlug:   d.Name,
 			MainBranch: "file",
 		})
 	}
@@ -1294,12 +1294,13 @@ func saveFileAnalysisResult(destDir, org string, dirs []string) error {
 
 /* ---------------- Analyse Directory ---------------- */
 
-// analyseDirectory runs the goloc analysis for a single directory entry.
-// opts carries the exclusions/keyword filters and report-mode flags (ExcludePaths
-// holds the file-exclusion list for the File platform).
-func analyseDirectory(dir string, opts analysisOptions, destDir string, count *atomic.Int64) {
+// analyseDirectory runs the goloc analysis for a single directory entry, reporting it
+// under dir.Name. opts carries the exclusions/keyword filters and report-mode flags
+// (ExcludePaths holds the file-exclusion list for the File platform).
+func analyseDirectory(dir utils.FileModeDir, opts analysisOptions, destDir string, count *atomic.Int64) {
 	params := goloc.Params{
-		Path:              dir,
+		Path:              dir.Path,
+		Name:              dir.Name,
 		ByFile:            opts.ResultByFile,
 		ByAll:             opts.ResultAll,
 		ExcludePaths:      opts.ExcludePaths,
@@ -1348,7 +1349,7 @@ func analyseDirectory(dir string, opts analysisOptions, destDir string, count *a
 		return
 	}
 
-	logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", count.Add(1), dir)
+	logger.Infof("\t✅ %d The directory <%s> has been analyzed\n", count.Add(1), dir.Path)
 }
 
 // runGlocPasses executes either a dual-pass (ResultAll) or single-pass analysis.
@@ -1389,7 +1390,9 @@ func runGlocPasses(gc *goloc.GCloc, params goloc.Params, ResultAll bool) error {
 	return nil
 }
 
-func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion, folderKeywords, fileNamePatterns []string, ResultByFile bool, ResultAll bool, destDir string) {
+// AnalyseReposListFile analyses each directory concurrently. opts.ExcludePaths holds the
+// File platform's file-exclusion list.
+func AnalyseReposListFile(Listdirectorie []utils.FileModeDir, opts analysisOptions, destDir string) {
 	logger.Infof("🔎 Analysis of Directories ...\n")
 
 	var wg sync.WaitGroup
@@ -1397,16 +1400,8 @@ func AnalyseReposListFile(Listdirectorie, fileexclusionEX []string, extexclusion
 	// Shared across the per-directory goroutines below; atomic to avoid a data race.
 	var count atomic.Int64
 
-	opts := analysisOptions{
-		ExcludeExtensions: extexclusion,
-		ExcludePaths:      fileexclusionEX,
-		FolderKeywords:    folderKeywords,
-		FileNamePatterns:  fileNamePatterns,
-		ResultByFile:      ResultByFile,
-		ResultAll:         ResultAll,
-	}
 	for _, Listdirectories := range Listdirectorie {
-		go func(dir string) {
+		go func(dir utils.FileModeDir) {
 			defer wg.Done()
 			analyseDirectory(dir, opts, destDir, &count)
 		}(Listdirectories)
@@ -1816,14 +1811,24 @@ func runGolcInProcess(platform string) {
 				logger.Debugf("→ file mode: ScanSubDirs expanded to %d director(ies)", len(ListDirectory))
 			}
 		}
-		for _, d := range ListDirectory {
-			logger.Debugf("→ directory %s: analyzing", d)
+		// Each directory needs a report name of its own: two sharing one would write the
+		// same result files, and the second would silently replace the first.
+		fileDirs := utils.FileModeDirs(ListDirectory)
+		for _, d := range fileDirs {
+			logger.Debugf("→ directory %s: analyzing as %s", d.Path, d.Name)
 		}
 		startTime = time.Now()
-		AnalyseReposListFile(ListDirectory, ListExclusion, excludeExtensions, getStringSliceConfig(platformConfig, "FolderKeywords"), getStringSliceConfig(platformConfig, "FileNamePatterns"), platformConfig["ResultByFile"].(bool), platformConfig["ResultAll"].(bool), DestinationResult)
+		AnalyseReposListFile(fileDirs, analysisOptions{
+			ExcludeExtensions: excludeExtensions,
+			ExcludePaths:      ListExclusion,
+			FolderKeywords:    getStringSliceConfig(platformConfig, "FolderKeywords"),
+			FileNamePatterns:  getStringSliceConfig(platformConfig, "FileNamePatterns"),
+			ResultByFile:      platformConfig["ResultByFile"].(bool),
+			ResultAll:         platformConfig["ResultAll"].(bool),
+		}, DestinationResult)
 
 		// Write analysis_result_file.json so ResultsAll can list the repos
-		if err := saveFileAnalysisResult(DestinationResult, platformConfig["Organization"].(string), ListDirectory); err != nil {
+		if err := saveFileAnalysisResult(DestinationResult, platformConfig["Organization"].(string), fileDirs); err != nil {
 			logger.Errorf("❌ Failed to write analysis_result_file.json: %v", err)
 		}
 	}

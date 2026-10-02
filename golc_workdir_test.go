@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/briandowns/spinner"
 )
 
@@ -150,7 +151,7 @@ func TestAnalyseDirectoryLocal(t *testing.T) {
 	var count atomic.Int64
 
 	// Should analyse the directory in place without panicking or deleting it.
-	analyseDirectory(src, analysisOptions{}, dest, &count)
+	analyseDirectory(utils.FileModeDir{Path: src, Name: filepath.Base(src)}, analysisOptions{}, dest, &count)
 
 	if _, err := os.Stat(src); err != nil {
 		t.Errorf("source dir should be preserved, stat err=%v", err)

@@ -80,6 +80,10 @@ To count **local files/directories**, mount the folder into the container and en
 docker run --rm -p 8091:8091 -p 8090:8090 -v /path/to/code:/src:ro ghcr.io/sonar-solutions/sonar-golc:latest
 ```
 
+Each directory is reported as one repository, named after its folder. When two folders
+share a name, as `team-a/app` and `team-b/app` do, the report adds the parent folders it
+needs to tell them apart (`team-a_app`, `team-b_app`). A directory listed twice is counted once.
+
 ---
 
 ## Configuration
