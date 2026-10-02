@@ -158,7 +158,14 @@ def main() -> int:
             "content": f"That is {len(notes.split())} words. Rewrite it in at most {MAX_WORDS} "
             "words: keep the changes that matter most to users and drop the rest.",
         })
-        notes = ask(client, messages)
+        # A failed or longer rewrite keeps the first draft: long notes beat no notes.
+        try:
+            shorter = ask(client, messages)
+        except anthropic.APIError as err:
+            print(f"Rewrite failed ({err}); keeping the first draft.", file=sys.stderr)
+            shorter = ""
+        if shorter and len(shorter.split()) < len(notes.split()):
+            notes = shorter
     if not notes:
         return 1
     if LINK.search(notes):
