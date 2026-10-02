@@ -66,6 +66,12 @@ docker run --rm -p 8091:8091 -p 8090:8090 ghcr.io/sonar-solutions/sonar-golc:lat
 
 Open `http://localhost:8091` and continue from step 1 above. Replace `latest` with a release tag (for example `V2.1.2`) to pin a version.
 
+If a port is already in use on your machine, change the number before the colon. The container can't see which host port you picked for the results dashboard, so tell it with `GOLC_RESULTS_PUBLIC_PORT`, or "View Results" will open the wrong port:
+
+```
+docker run --rm -p 9091:8091 -p 9090:8090 -e GOLC_RESULTS_PUBLIC_PORT=9090 ghcr.io/sonar-solutions/sonar-golc:latest
+```
+
 > **Download your reports before stopping the container.** Nothing is kept after it stops, including your settings and tokens. Get the PDF, JSON and CSV reports from the results dashboard first.
 
 To count **local files/directories**, mount the folder into the container and enter its container path (here `/src`) in the UI:
