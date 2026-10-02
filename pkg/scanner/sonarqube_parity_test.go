@@ -65,6 +65,10 @@ resource sa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   kind: 'StorageV2'
 }
 `
+	parityShell  = "#!/bin/bash\n# comment\necho hi\nls -la\n"
+	parityJCL    = "//JOB1 JOB (ACCT),'NAME'\n//STEP1 EXEC PGM=IEFBR14\n//* comment\n"
+	parityPLI    = " HELLO: PROC OPTIONS(MAIN);\n   PUT LIST('HI');\n END HELLO;\n"
+	parityApex   = "public class Foo {\n  Integer x = 1;\n}\n"
 	parityDocker = "# comment\nFROM alpine:3.20\n\nRUN apk add --no-cache curl\nCOPY . /app\nCMD [\"sh\"]\n"
 
 	parityMuleXML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -112,7 +116,7 @@ func pythonMetadata(language string) map[string]any {
 	}
 }
 
-func TestNewLanguagesMatchSonarQubeNcloc(t *testing.T) {
+func TestCountsMatchSonarQubeNcloc(t *testing.T) {
 	analysis := parityNotebook(t, pythonMetadata("python"),
 		markdownCell([]string{"# Title\n", "\n", "Some prose.\n"}),
 		codeCell([]string{"# comment\n", "import os\n", "\n", "x = 1\n", "print(x)"}),
@@ -155,6 +159,27 @@ func TestNewLanguagesMatchSonarQubeNcloc(t *testing.T) {
 			codeCell([]string{"x <- 1\n", "print(x)"})), "IPython Notebooks", 0},
 		{"nb/julia.ipynb", parityNotebook(t, pythonMetadata("julia"), codeCell(twoLines)), "IPython Notebooks", 0},
 		{"nb/broken.ipynb", `{"cells": [`, "IPython Notebooks", 0},
+
+		// SonarQube matches suffixes regardless of case.
+		{"case/Upper.PY", "x = 1\nprint(x)\n", "Python", 2},
+		{"case/Upper.GO", "package main\n\nfunc main() {}\n", "Golang", 2},
+		{"case/c.PGSQL", parityPostgreSQL, "PostgreSQL", 5},
+		{"case/Upper.BICEP", parityBicep, "Bicep", 9},
+		{"case/CASE.DWL", parityDataWeave, "DataWeave", 7},
+		{"case/Upper.IPYNB", analysis, "IPython Notebooks", 8},
+		{"case/UPPER.SH", parityShell, "Shell", 2},
+		{"case/b.JCL", parityJCL, "JCL", 2},
+		{"case1/app.Containerfile", parityDocker, "Docker", 4},
+		{"case2/app.Dockerfile", parityDocker, "Docker", 4},
+
+		// The suffixes SonarQube's defaults keep, beside the ones they drop below.
+		{"shell/t.sh", parityShell, "Shell", 2},
+		{"shell/t.bash", parityShell, "Shell", 2},
+		{"jcl/a.jcl", parityJCL, "JCL", 2},
+		{"pli/a.pli", parityPLI, "PL/I", 3},
+		{"apex/Foo.apex", parityApex, "Apex", 3},
+		{"apex/Bar.cls", parityApex, "Apex", 3},
+		{"vb6/Mod.bas", "Attribute VB_Name = \"Mod\"\nSub Main()\n  MsgBox \"hi\"\nEnd Sub\n", "VB6", 4},
 	}
 	// SonarQube counts no lines for these, so GoLC must not pick them up at all.
 	ignored := []parityFile{
@@ -163,6 +188,14 @@ func TestNewLanguagesMatchSonarQubeNcloc(t *testing.T) {
 		{path: "docker11/MyDockerfile", content: parityDocker},
 		{path: "docker12/api.Dockerfile.j2", content: parityDocker},
 		{path: "docker13/DOCKERFILE", content: parityDocker},
+		{path: "case/upper.RMD", content: parityRMarkdown},
+		// Not in SonarQube's default suffixes.
+		{path: "shell/t.zsh", content: parityShell},
+		{path: "shell/t.ksh", content: parityShell},
+		{path: "shell/t.fish", content: parityShell},
+		{path: "jcl/c.job", content: parityJCL},
+		{path: "jcl/d.jjob", content: parityJCL},
+		{path: "pli/b.pl1", content: parityPLI},
 	}
 
 	dir := t.TempDir()

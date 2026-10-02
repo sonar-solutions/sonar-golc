@@ -223,3 +223,55 @@ func TestGetFileExtension_DockerfileVariants(t *testing.T) {
 		}
 	}
 }
+
+// SonarQube analyses Foo.PY, c.PGSQL and b.JCL like their lower-case spellings, so suffixes
+// are matched regardless of case - in the language table and in the user's include and
+// exclude lists alike. Exact file names keep their case: DOCKERFILE is not a Docker file.
+func TestExtensionsMatchRegardlessOfCase(t *testing.T) {
+	extensions := map[string]string{".py": "Python", ".R": "R", "Dockerfile": "Docker", ".dockerfile": "Docker"}
+	a := NewAnalyzer("/repo", nil, nil, nil, extensions, nil, nil)
+
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"main.py", ".py"},
+		{"Main.PY", ".py"},
+		{"script.r", ".r"},
+		{"script.R", ".r"},
+		{"app.Dockerfile", ".dockerfile"},
+		{"Dockerfile", "Dockerfile"},
+		{"DOCKERFILE", "DOCKERFILE"},
+	}
+	for _, tc := range tests {
+		path := filepath.Join("/repo", tc.name)
+		got := a.getFileExtension(path)
+		if got != tc.want {
+			t.Errorf("getFileExtension(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+		_, counted := a.SupportedExtensions[got]
+		if wantCounted := tc.name != "DOCKERFILE"; counted != wantCounted {
+			t.Errorf("%q: counted = %v, want %v", tc.name, counted, wantCounted)
+		}
+	}
+}
+
+func TestExtensionFiltersMatchRegardlessOfCase(t *testing.T) {
+	extensions := map[string]string{".js": "JavaScript", ".go": "Golang"}
+
+	excluding := NewAnalyzer("/repo", nil, map[string]bool{".JS": true}, nil, extensions, nil, nil)
+	if excluding.canAdd(filepath.Join("/repo", "app.js"), ".js") {
+		t.Error("an exclusion of .JS should exclude app.js")
+	}
+	if excluding.canAdd(filepath.Join("/repo", "APP.JS"), ".js") {
+		t.Error("an exclusion of .JS should exclude APP.JS")
+	}
+
+	including := NewAnalyzer("/repo", nil, nil, map[string]bool{".Go": true}, extensions, nil, nil)
+	if !including.canAdd(filepath.Join("/repo", "MAIN.GO"), ".go") {
+		t.Error("an inclusion of .Go should include MAIN.GO")
+	}
+	if including.canAdd(filepath.Join("/repo", "app.js"), ".js") {
+		t.Error("an inclusion of .Go alone should leave app.js out")
+	}
+}
