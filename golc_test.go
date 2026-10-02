@@ -19,6 +19,7 @@ import (
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgithub"
 	"github.com/SonarSource-Demos/sonar-golc/pkg/devops/getgitlab"
 
+	"github.com/SonarSource-Demos/sonar-golc/pkg/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -614,7 +615,7 @@ func TestAnalysisListFunctions(t *testing.T) {
 
 	t.Run("AnalyseReposListFile function", func(t *testing.T) {
 		// Test with empty directory list
-		emptyDirs := []string{}
+		emptyDirs := []utils.FileModeDir{}
 		emptyExclusions := []string{}
 		emptyExtensions := []string{}
 
@@ -625,7 +626,7 @@ func TestAnalysisListFunctions(t *testing.T) {
 					t.Errorf("AnalyseReposListFile panicked: %v", r)
 				}
 			}()
-			AnalyseReposListFile(emptyDirs, emptyExclusions, emptyExtensions, []string{}, []string{}, false, false, "Results")
+			AnalyseReposListFile(emptyDirs, analysisOptions{ExcludePaths: emptyExclusions, ExcludeExtensions: emptyExtensions}, "Results")
 		}()
 	})
 }
