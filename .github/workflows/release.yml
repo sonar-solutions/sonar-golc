@@ -1,9 +1,9 @@
 name: Release
 
 # Run by hand from the Actions tab (Run workflow) on main, once a version is ready.
-# Commits the README version bump to main, builds the six platform zips, pushes the
-# container image to ghcr.io, then tags that commit and publishes the GitHub release
-# with the zips attached.
+# Commits the version bump (README, Sonar properties) to main, builds the six platform
+# zips, pushes the container image to ghcr.io, then tags that commit and publishes the
+# GitHub release with the zips attached.
 
 on:
   workflow_dispatch:
@@ -68,11 +68,12 @@ jobs:
           go test -tags=resultsall .
           rm config.json
 
-      # Commit the README's version references to main, so the zips, the tag and the
-      # repo all show the version being released. The tag goes on this commit.
+      # Commit the version references in README.md and sonar-project.properties to main,
+      # so the zips, the tag, the repo and SonarCloud all show the version being released.
+      # The tag goes on this commit.
       # A re-run checks out the original commit again, so first pick up the bump commit
       # an earlier attempt of this run already pushed instead of committing a second one.
-      - name: Update version in README
+      - name: Update version in README and Sonar properties
         id: bump
         run: |
           set -euo pipefail
@@ -86,11 +87,13 @@ jobs:
             -e "s/(for example) \`V[0-9.]+\`/\1 \`V$VERSION\`/" \
             README.md
           grep -q "^> Current version: \*\*v$VERSION\*\*" README.md || { echo "::error::README.md has no '> Current version: **v...**' line to update."; exit 1; }
+          sed -i -E "s/^sonar\.projectVersion=.*/sonar.projectVersion=$VERSION/" sonar-project.properties
+          grep -qx "sonar.projectVersion=$VERSION" sonar-project.properties || { echo "::error::sonar-project.properties has no 'sonar.projectVersion=' line to update."; exit 1; }
 
-          if ! git diff --quiet README.md; then
+          if ! git diff --quiet README.md sonar-project.properties; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore(release): V$VERSION" README.md
+            git commit -m "chore(release): V$VERSION" README.md sonar-project.properties
             git push origin HEAD:main
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
