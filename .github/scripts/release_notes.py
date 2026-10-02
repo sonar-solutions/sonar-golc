@@ -25,6 +25,7 @@ MAX_WORDS = 180
 OUT_FILE = "release-notes.md"
 # Written into every generated release body so later runs never use it as a style example.
 GENERATED_MARKER = "<!-- release notes written by Claude -->"
+HEADING = "## What's Changed"
 # Notes never need a link of their own; the compare link is appended by this script.
 LINK = re.compile(r"https?://|www\.|\]\(", re.IGNORECASE)
 
@@ -87,14 +88,22 @@ def pull_requests(prev: str, repo: str) -> str:
     return "\n\n".join(parts)
 
 
+def is_pr_list(body: str) -> bool:
+    """True for GitHub's generated notes: lines like "* Title by @user in https://.../pull/1"."""
+    return any(
+        line.startswith("* ") and " by @" in line and "/pull/" in line for line in body.splitlines()
+    )
+
+
 def example_notes(repo: str) -> str:
     """The most recent hand-written release notes, skipping GitHub's generated ones."""
     examples = []
     for release in gh_api(f"repos/{repo}/releases?per_page=50"):
         body = release.get("body") or ""
-        if "## What's Changed" in body or GENERATED_MARKER in body:
+        if GENERATED_MARKER in body or is_pr_list(body):
             continue
-        body = body.split("**Full Changelog**", 1)[0].strip()
+        # The script adds the heading itself, so examples shouldn't teach the model to.
+        body = body.split("**Full Changelog**", 1)[0].replace(HEADING, "", 1).strip()
         if "**" not in body:
             continue
         examples.append(f"<example tag=\"{release['tag_name']}\">\n{body}\n</example>")
@@ -174,7 +183,7 @@ def main() -> int:
 
     changelog = f"https://github.com/{repo}/compare/{prev}...V{version}"
     with open(OUT_FILE, "w", encoding="utf-8") as f:
-        f.write(f"{notes}\n\n**Full Changelog**: {changelog}\n\n{GENERATED_MARKER}\n")
+        f.write(f"{HEADING}\n\n{notes}\n\n**Full Changelog**: {changelog}\n\n{GENERATED_MARKER}\n")
     print(f"Wrote release notes for V{version} ({prev}..HEAD), {len(notes.split())} words, to {OUT_FILE}.")
     return 0
 
