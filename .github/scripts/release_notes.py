@@ -138,6 +138,16 @@ def example_notes(repo: str) -> str:
     return "\n\n".join(examples)
 
 
+def problem(notes: str, numbers: set[str]) -> str:
+    """Why the notes can't be published, or "" if they can."""
+    if LINK.search(notes):
+        return "contains a link"
+    unknown = set(re.findall(r"#(\d+)", notes)) - numbers
+    if unknown:
+        return f"cites PRs not in this release ({', '.join(sorted(unknown, key=int))})"
+    return ""
+
+
 def ask(client: anthropic.Anthropic, messages: list) -> str:
     """Send the conversation, append the reply to it, and return the reply's text ("" on failure)."""
     response = client.beta.messages.create(
@@ -193,22 +203,24 @@ def main() -> int:
             "words: keep the changes that matter most to users and drop the rest, and keep "
             "each item's pull request number.",
         })
-        # A failed or longer rewrite keeps the first draft: long notes beat no notes.
+        # A rewrite that fails, runs longer or doesn't pass the checks keeps the first
+        # draft: long notes beat no notes.
         try:
             shorter = ask(client, messages)
         except anthropic.APIError as err:
             print(f"Rewrite failed ({err}); keeping the first draft.", file=sys.stderr)
             shorter = ""
         if shorter and word_count(shorter) < word_count(notes):
-            notes = shorter
+            reason = problem(shorter, numbers)
+            if reason:
+                print(f"Rewrite {reason}; keeping the first draft.", file=sys.stderr)
+            else:
+                notes = shorter
     if not notes:
         return 1
-    if LINK.search(notes):
-        print("Model output contains a link; not publishing it.", file=sys.stderr)
-        return 1
-    unknown = set(re.findall(r"#(\d+)", notes)) - numbers
-    if unknown:
-        print(f"Model cited PRs not in this release ({', '.join(sorted(unknown))}); not publishing it.", file=sys.stderr)
+    reason = problem(notes, numbers)
+    if reason:
+        print(f"Draft {reason}; not publishing it.", file=sys.stderr)
         return 1
 
     changelog = f"https://github.com/{repo}/compare/{prev}...V{version}"
