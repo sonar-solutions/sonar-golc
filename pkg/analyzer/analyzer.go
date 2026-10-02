@@ -32,11 +32,11 @@ func NewAnalyzer(
 	excludeFilePatterns []string,
 ) *Analyzer {
 	return &Analyzer{
-		SupportedExtensions:   extensions,
+		SupportedExtensions:   NormalizeExtensions(extensions),
 		path:                  path,
 		excludePaths:          excludePaths,
-		excludeExtensions:     excludeExtensions,
-		includeExtensions:     includeExtensions,
+		excludeExtensions:     NormalizeExtensions(excludeExtensions),
+		includeExtensions:     NormalizeExtensions(includeExtensions),
 		excludeFolderKeywords: excludeFolderKeywords,
 		excludeFilePatterns:   excludeFilePatterns,
 	}
@@ -73,13 +73,40 @@ func (a *Analyzer) MatchingFiles() ([]FileMetadata, error) {
 	return files, err
 }
 
+// ExtensionKey returns the form in which an extension is looked up. SonarQube matches file
+// suffixes regardless of case - Foo.PY, c.PGSQL and b.JCL are all analysed - so a suffix
+// is compared in lower case. An exact file name such as Dockerfile or Jenkinsfile is kept
+// as it is: SonarQube matches those with their case, and does not count DOCKERFILE.
+func ExtensionKey(extension string) string {
+	if strings.HasPrefix(extension, ".") {
+		return strings.ToLower(extension)
+	}
+
+	return extension
+}
+
+// NormalizeExtensions rewrites the keys of an extension map with ExtensionKey, so a
+// lookup by a file's extension finds them whatever their case.
+func NormalizeExtensions[V any](extensions map[string]V) map[string]V {
+	if extensions == nil {
+		return nil
+	}
+
+	normalized := make(map[string]V, len(extensions))
+	for extension, value := range extensions {
+		normalized[ExtensionKey(extension)] = value
+	}
+
+	return normalized
+}
+
 // dockerfileNames are the exact file names SonarQube's Docker analysis recognises. The
 // match is case-sensitive: DOCKERFILE is not one of them.
 var dockerfileNames = []string{"Dockerfile", "dockerfile", "Containerfile", "containerfile"}
 
 func (a *Analyzer) getFileExtension(path string) string {
 	base := filepath.Base(path)
-	extension := filepath.Ext(path)
+	extension := ExtensionKey(filepath.Ext(path))
 
 	// A variant such as Dockerfile.prod has an extension of its own (".prod"), so it is
 	// treated as the Docker file it is - unless that extension already belongs to another

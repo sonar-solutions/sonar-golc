@@ -311,7 +311,7 @@ func getExtensionsMap(languages language.Languages) map[string]string {
 
 	for language, languageInfo := range languages {
 		for _, extension := range languageInfo.Extensions {
-			extensions[extension] = language
+			extensions[analyzer.ExtensionKey(extension)] = language
 		}
 	}
 

@@ -377,7 +377,7 @@ Language           | Extensions                               | Single Comments 
 -------------------+------------------------------------------+-----------------+--------------------
 Abap               | .abap, .ab4, .flow, .asprog              | *, "            |
 ActionScript       | .as                                      | //              | /* */
-Apex               | .cls, .trigger                           | //              | /* */
+Apex               | .cls, .trigger, .apex                    | //              | /* */
 Bicep              | .bicep                                   | //              | /* */
 C                  | .c                                       | //              | /* */
 C Header           | .h                                       | //              | /* */
@@ -397,40 +397,46 @@ HTML               | .html, .htm, .cshtml, .vbhtml, ...       |                 
 IPython Notebooks  | .ipynb (code cells only, below)          | #               | """ """, ''' '''
 Java               | .java, .jav                              | //              | /* */
 JavaScript         | .js, .jsx, .cjs, .mjs                    | //              | /* */
-JCL                | .jcl, .JCL                               | //*             |
+JCL                | .jcl                                     | //*             |
 JSON               | .json                                    |                 |
 JSP                | .jsp, .jspf, .jspx                       |                 | <%-- --%>, <!-- -->
 Kotlin             | .kt, .kts                                | //              | /* */
 Less               | .less                                    | //              | /* */
-Objective-C        | .m, .mm                                  | //              | /* */
+Objective-C        | .m                                       | //              | /* */
 Oracle PL/SQL      | .pkb, .pks                               | --              | /* */
 PHP                | .php, .php3, .php4, .php5, .phtml, .inc  | //, #           | /* */
-PL/I               | .pl1, .pli                               |                 | /* */
+PL/I               | .pli                                     |                 | /* */
 PostgreSQL         | .pgsql, .psql                            | --              | /* */
 PowerShell         | .ps1, .psm1, .psd1                       | #               | <# #>
 Python             | .py                                      | #               | """ """, ''' '''
-R                  | .r, .R                                   | #               |
-RPG                | .rpg, .rpgle, .sqlrpgle (+ uppercase)    | *               |
+R                  | .r                                       | #               |
+RPG                | .rpg, .rpgle, .sqlrpgle                  | *               |
 Ruby               | .rb                                      | #               | =begin =end
 Rust               | .rs                                      | //              | /* */
 Sass               | .sass                                    | //              | /* */
 Scala              | .scala                                   | //              | /* */
 Scss               | .scss                                    | //              | /* */
-Shell              | .sh, .bash, .zsh, .ksh                   | #               |
+Shell              | .sh, .bash                               | #               |
 SQL                | .sql                                     | --              | /* */
 Swift              | .swift                                   | //              | /* */
 Terraform          | .tf                                      | #, //           | /* */
 T-SQL              | .tsql                                    | --              | /* */
 Twig               | .twig                                    |                 | {# #}, <!-- -->
 TypeScript         | .ts, .tsx, .cts, .mts                    | //              | /* */
-VB6                | .bas, .frm, .cls, .ctl                   | '               |
+VB6                | .bas, .frm, .ctl                         | '               |
 Visual Basic .NET  | .vb                                      | '               |
 Vue                | .vue                                     |                 | <!-- -->
 XHTML              | .xhtml                                   |                 | <!-- -->
-XML                | .xml, .XML, .xsd, .xsl, .config          |                 | <!-- -->
+XML                | .xml, .xsd, .xsl, .config                |                 | <!-- -->
 YAML               | .yaml, .yml                              | #               |
 ```
 
+> **Extensions match regardless of case**, as in SonarQube: `Main.PY` counts as Python and
+> `c.PGSQL` as PostgreSQL. Exact file names such as `Dockerfile` and `Jenkinsfile` keep
+> their case, so `DOCKERFILE` is not counted. The extension lists follow SonarQube's
+> default file suffixes, so a file SonarQube leaves out by default (`.zsh`, `.mm`, ...) is
+> left out here too.
+>
 > **Docker files are matched by name.** `Dockerfile`, `dockerfile`, `Containerfile` and
 > `containerfile` count, as do variants that add a `.`, `-` or `_` suffix
 > (`Dockerfile.prod`, `Dockerfile-dev`) and files ending in `.dockerfile` or

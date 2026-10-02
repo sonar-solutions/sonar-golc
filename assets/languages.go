@@ -2,6 +2,12 @@ package assets
 
 import "github.com/SonarSource-Demos/sonar-golc/pkg/goloc/language"
 
+// Suffixes are listed in lower case once: the analyzer compares them regardless of case, as
+// SonarQube does (see analyzer.ExtensionKey). Exact file names such as Dockerfile keep
+// their case. Each list follows the sonar.<lang>.file.suffixes default of SonarQube
+// 2026.5; a suffix SonarQube does not analyse by default is left out, because counting
+// it would over-report.
+
 // pythonMultiLineComments is shared by Python and IPython Notebooks, whose code cells are
 // Python.
 var pythonMultiLineComments = [][]string{{`"""`, `"""`}, {"'''", "'''"}}
@@ -20,7 +26,7 @@ var Languages = language.Languages{
 	"Apex": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".cls", ".trigger"},
+		Extensions:        []string{".cls", ".trigger", ".apex"},
 	},
 	"C": {
 		LineComments:      []string{"//"},
@@ -42,10 +48,12 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".hh", ".hpp", ".hxx", ".h++"},
 	},
+	// SonarQube ships sonar.cobol.file.suffixes empty, so a stock instance counts no COBOL
+	// until it is configured. Anyone with COBOL configures it, so these common suffixes stay.
 	"COBOL": {
 		LineComments:      []string{"*"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".cbl", ".CBL", ".ccp", ".cob", ".COB", ".cobol", ".cpy"},
+		Extensions:        []string{".cbl", ".ccp", ".cob", ".cobol", ".cpy"},
 	},
 	// SonarQube reports Bicep under azureresourcemanager (sonar.azureresourcemanager.file.suffixes
 	// is .bicep), but it cannot share GoLC's Azure Resource Manager entry: that one is
@@ -124,7 +132,7 @@ var Languages = language.Languages{
 	"JCL": {
 		LineComments:      []string{"//*"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".jcl", ".JCL", ".jjob", ".job"},
+		Extensions:        []string{".jcl"},
 	},
 	"Java": {
 		LineComments:      []string{"//"},
@@ -166,7 +174,8 @@ var Languages = language.Languages{
 	"Objective-C": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".m", ".mm"},
+		// sonar.objc.file.suffixes is .m alone; Objective-C++ .mm is not analysed by default.
+		Extensions: []string{".m"},
 	},
 	"Oracle PL/SQL": {
 		LineComments:      []string{"--"},
@@ -191,7 +200,7 @@ var Languages = language.Languages{
 	"PL/I": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".pl1", ".pli"},
+		Extensions:        []string{".pli"},
 	},
 	// Suffixes follow sonar.powershell.file.suffixes (ps1,psm1,psd1).
 	"PowerShell": {
@@ -207,17 +216,14 @@ var Languages = language.Languages{
 	"RPG": {
 		LineComments:      []string{"*"},
 		MultiLineComments: [][]string{},
-		// sonar.rpg.file.suffixes lists the RPG IV suffixes and their uppercase spellings;
-		// extension lookup here is case-sensitive, so both cases are needed.
-		Extensions: []string{".rpg", ".rpgle", ".sqlrpgle", ".RPG", ".RPGLE", ".SQLRPGLE"},
+		Extensions:        []string{".rpg", ".rpgle", ".sqlrpgle"},
 	},
 	// sonar.r.file.suffixes also lists Rmd and rmd, but SonarQube reports no lines of code
-	// for R Markdown - not even its R chunks - so those are deliberately left out. Extension
-	// lookup here is case-sensitive, so both spellings of .r are needed.
+	// for R Markdown - not even its R chunks - so those are deliberately left out.
 	"R": {
 		LineComments:      []string{"#"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".r", ".R"},
+		Extensions:        []string{".r"},
 	},
 	"Ruby": {
 		LineComments:      []string{"#"},
@@ -247,7 +253,7 @@ var Languages = language.Languages{
 	"Shell": {
 		LineComments:      []string{"#"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".sh", ".bash", ".zsh", ".fish", ".ksh"},
+		Extensions:        []string{".sh", ".bash"},
 	},
 	"SQL": {
 		LineComments:      []string{"--"},
@@ -282,10 +288,11 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{{"/*", "*/"}},
 		Extensions:        []string{".ts", ".tsx", ".cts", ".mts"},
 	},
+	// .cls is a VB6 class module too, but SonarQube gives it to Apex, so VB6 leaves it.
 	"VB6": {
 		LineComments:      []string{"'"},
 		MultiLineComments: [][]string{},
-		Extensions:        []string{".bas", ".frm", ".cls", ".ctl"},
+		Extensions:        []string{".bas", ".frm", ".ctl"},
 	},
 	"Visual Basic .NET": {
 		LineComments:      []string{"'"},
@@ -300,7 +307,7 @@ var Languages = language.Languages{
 	"XML": {
 		LineComments:      []string{},
 		MultiLineComments: [][]string{{"<!--", "-->"}},
-		Extensions:        []string{".xml", ".XML", ".xsd", ".xsl", ".config"},
+		Extensions:        []string{".xml", ".xsd", ".xsl", ".config"},
 	},
 	"XHTML": {
 		LineComments:      []string{},

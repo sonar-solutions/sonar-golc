@@ -2,7 +2,10 @@ package assets
 
 import (
 	"sort"
+	"strings"
 	"testing"
+
+	"github.com/SonarSource-Demos/sonar-golc/pkg/analyzer"
 )
 
 // extensionOwners maps each configured extension to the language(s) claiming it.
@@ -10,7 +13,8 @@ func extensionOwners() map[string][]string {
 	owners := map[string][]string{}
 	for lang, info := range Languages {
 		for _, extension := range info.Extensions {
-			owners[extension] = append(owners[extension], lang)
+			key := analyzer.ExtensionKey(extension)
+			owners[key] = append(owners[key], lang)
 		}
 	}
 	for _, langs := range owners {
@@ -44,11 +48,12 @@ func TestLanguagesCoverSonarQubeDefaults(t *testing.T) {
 		"JavaScript":    {".js", ".jsx", ".cjs", ".mjs"},
 		"TypeScript":    {".ts", ".tsx", ".cts", ".mts"},
 		"Oracle PL/SQL": {".pkb", ".pks"},
-		"RPG":           {".rpg", ".rpgle", ".sqlrpgle", ".RPG", ".RPGLE", ".SQLRPGLE"},
+		"RPG":           {".rpg", ".rpgle", ".sqlrpgle"},
 		"VB6":           {".bas", ".frm", ".ctl"},
 		"XML":           {".xml", ".xsd", ".xsl", ".config"},
 		// Added for SonarQube 2026.5, which analyses each of these by default.
-		"R":                 {".r", ".R"},
+		"R":                 {".r"},
+		"Apex":              {".cls", ".trigger", ".apex"},
 		"DataWeave":         {".dwl"},
 		"PostgreSQL":        {".pgsql", ".psql"},
 		"Bicep":             {".bicep"},
@@ -102,12 +107,11 @@ func TestJSPIsNotJavaScript(t *testing.T) {
 }
 
 // An extension claimed by two languages is resolved by iterating a Go map, so the label
-// GoLC reports for it is not deterministic. Two such collisions predate this test and
-// are accepted; the point is to stop new ones being introduced unnoticed.
+// GoLC reports for it is not deterministic. One such collision predates this test and is
+// accepted; the point is to stop new ones being introduced unnoticed.
 func TestNoNewExtensionCollisions(t *testing.T) {
 	accepted := map[string]bool{
-		".as":  true, // ActionScript / Flex
-		".cls": true, // Apex / VB6
+		".as": true, // ActionScript / Flex
 	}
 
 	for extension, langs := range extensionOwners() {
@@ -227,5 +231,43 @@ func TestOnlyNotebooksAreJupyterNotebooks(t *testing.T) {
 		if info.JupyterNotebook != (lang == "IPython Notebooks") {
 			t.Errorf("%q has JupyterNotebook = %v", lang, info.JupyterNotebook)
 		}
+	}
+}
+
+// Suffixes are looked up in lower case, so an uppercase spelling in the table could never
+// match anything; listing one would only suggest that case still matters.
+func TestSuffixesAreLowerCase(t *testing.T) {
+	for lang, info := range Languages {
+		for _, extension := range info.Extensions {
+			if strings.HasPrefix(extension, ".") && extension != strings.ToLower(extension) {
+				t.Errorf("%q lists %q; suffixes are matched regardless of case, so list it "+
+					"in lower case", lang, extension)
+			}
+		}
+	}
+}
+
+// These suffixes were counted by GoLC but are not in SonarQube's defaults, so a stock
+// SonarQube reports no lines for them. Counting them over-reported the repositories that
+// have them.
+func TestSuffixesSonarQubeDoesNotAnalyseAreNotCounted(t *testing.T) {
+	notAnalysed := map[string]string{
+		".zsh": "Shell", ".ksh": "Shell", ".fish": "Shell",
+		".job": "JCL", ".jjob": "JCL",
+		".pl1": "PL/I",
+		".mm":  "Objective-C",
+	}
+
+	owners := extensionOwners()
+	for extension, was := range notAnalysed {
+		if langs, ok := owners[extension]; ok {
+			t.Errorf("%q is claimed by %v (formerly %s); SonarQube does not analyse it by default",
+				extension, langs, was)
+		}
+	}
+
+	// .cls belongs to Apex alone: SonarQube's VB6 suffixes are .bas, .frm and .ctl.
+	if langs := owners[".cls"]; len(langs) != 1 || langs[0] != "Apex" {
+		t.Errorf(".cls is claimed by %v, want [Apex]", langs)
 	}
 }
