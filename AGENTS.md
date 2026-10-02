@@ -20,3 +20,11 @@ Review and design against that, not against a long-lived application:
 - **The report is the product.** Counting accuracy, report correctness and a first run
   that just works matter most. Operational concerns from long-running services (uptime,
   rolling upgrades, schema evolution, data retention) don't apply.
+
+## Release notes
+
+The Release workflow writes each release's notes with `.github/scripts/release_notes.py`. To
+see what it would write without releasing, run `.github/scripts/preview_release_notes.sh`
+(the next release from `origin/main`) or `.github/scripts/preview_release_notes.sh V2.2` (an
+existing release). It uses this checkout's script, so prompt changes can be tried before
+they are merged, and it never pushes or publishes anything.

@@ -113,7 +113,7 @@ jobs:
             exit 1
           fi
           python3 -m venv "$RUNNER_TEMP/notes-venv"
-          "$RUNNER_TEMP/notes-venv/bin/pip" install --quiet anthropic==1.11.0
+          "$RUNNER_TEMP/notes-venv/bin/pip" install --quiet -r .github/scripts/requirements.txt
           "$RUNNER_TEMP/notes-venv/bin/python" .github/scripts/release_notes.py
 
       - name: Build platform zips
