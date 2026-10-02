@@ -831,7 +831,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
-	_ = tmpl.Execute(w, map[string]interface{}{"ResultsAllPort": resultsAllPort})
+	_ = tmpl.Execute(w, map[string]interface{}{"ResultsAllPort": utils.ResultsPublicPort(resultsAllPort)})
 }
 
 func handleGetConfig(w http.ResponseWriter, r *http.Request) {
@@ -1004,11 +1004,7 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 			port = resultsAllPort
 		}
 		appState.mu.Unlock()
-		w.Header().Set(contentTypeHeader, contentTypeJSON)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"url":  fmt.Sprintf("http://localhost:%d", port),
-			"note": "ResultsAll binary not found",
-		})
+		writeResultsLocation(w, port, "ResultsAll binary not found")
 		return
 	}
 
@@ -1028,8 +1024,20 @@ func handleOpenResults(w http.ResponseWriter, r *http.Request) {
 	// Give ResultsAll a moment to bind the port.
 	time.Sleep(800 * time.Millisecond)
 
+	writeResultsLocation(w, port, "")
+}
+
+// writeResultsLocation tells the page where the dashboard is. The page opens it
+// on the host it was itself loaded from, so only the port comes from here: the
+// bound port, or GOLC_RESULTS_PUBLIC_PORT when Docker publishes it elsewhere.
+func writeResultsLocation(w http.ResponseWriter, boundPort int, note string) {
+	port := utils.ResultsPublicPort(boundPort)
+	resp := map[string]interface{}{"url": fmt.Sprintf("http://localhost:%d", port), "port": port}
+	if note != "" {
+		resp["note"] = note
+	}
 	w.Header().Set(contentTypeHeader, contentTypeJSON)
-	_ = json.NewEncoder(w).Encode(map[string]string{"url": fmt.Sprintf("http://localhost:%d", port)})
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func handleDownloadDebug(w http.ResponseWriter, r *http.Request) {
@@ -2205,13 +2213,20 @@ function showComplete(isError, msg) {
 }
 
 // ─── View Results ──────────────────────────────────────────────────────────
+// The dashboard runs beside this page, so open it on the host this page came
+// from: "localhost" would point at the user's own machine when GoLC runs
+// elsewhere, such as in Docker on a remote host.
+function resultsURL(port) {
+  return 'http://' + location.hostname + ':' + port;
+}
+
 async function viewResults() {
   try {
     const res = await fetch('/api/open-results', {method:'POST'});
     const data = await res.json();
-    window.open(data.url, '_blank');
+    window.open(resultsURL(data.port || {{.ResultsAllPort}}), '_blank');
   } catch(e) {
-    window.open('http://localhost:{{.ResultsAllPort}}', '_blank');
+    window.open(resultsURL({{.ResultsAllPort}}), '_blank');
   }
 }
 

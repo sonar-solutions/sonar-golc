@@ -27,6 +27,28 @@ func TestChdirToBinaryDir(t *testing.T) {
 	})
 }
 
+func TestResultsPublicPort(t *testing.T) {
+	cases := []struct {
+		name, env string
+		want      int
+	}{
+		{"unset keeps the bound port", "", 8090},
+		{"valid port overrides", "9090", 9090},
+		{"not a number is ignored", "abc", 8090},
+		{"zero is ignored", "0", 8090},
+		{"out of range is ignored", "65536", 8090},
+		{"negative is ignored", "-1", 8090},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(ResultsPublicPortEnvVar, tc.env)
+			if got := ResultsPublicPort(8090); got != tc.want {
+				t.Errorf("ResultsPublicPort(8090) = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func assertCwd(t *testing.T, want string) {
 	t.Helper()
 	got, err := os.Getwd()
