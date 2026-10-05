@@ -118,10 +118,24 @@ func (a *Analyzer) getFileExtension(path string) string {
 	}
 
 	if extension == "" {
+		if jenkinsfileVariant(base) {
+			return jenkinsfileName
+		}
 		extension = base
 	}
 
 	return extension
+}
+
+// jenkinsfileName is the name sonar.groovy.file.patterns (*Jenkinsfile) is built on.
+const jenkinsfileName = "Jenkinsfile"
+
+// jenkinsfileVariant reports whether an extensionless base name ends in Jenkinsfile.
+// Measured against SonarQube: myJenkinsfile, my-Jenkinsfile and my_Jenkinsfile count as
+// Groovy, while build.Jenkinsfile, Jenkinsfile.prod, jenkinsfile and JENKINSFILE do not -
+// the * in the pattern does not cross a dot, and the name keeps its case.
+func jenkinsfileVariant(base string) bool {
+	return strings.HasSuffix(base, jenkinsfileName)
 }
 
 // dockerfileVariant reports whether base is a Docker file name followed by nothing or by
