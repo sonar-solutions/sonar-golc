@@ -107,15 +107,12 @@ func TestJSPIsNotJavaScript(t *testing.T) {
 }
 
 // An extension claimed by two languages is resolved by iterating a Go map, so the label
-// GoLC reports for it is not deterministic. One such collision predates this test and is
-// accepted; the point is to stop new ones being introduced unnoticed.
-func TestNoNewExtensionCollisions(t *testing.T) {
-	accepted := map[string]bool{
-		".as": true, // ActionScript / Flex
-	}
-
+// GoLC reports for it would not be deterministic. The last two collisions - .cls
+// (Apex / VB6) and .as (ActionScript / Flex) - were resolved the way SonarQube resolves
+// them, and none may come back.
+func TestNoExtensionCollisions(t *testing.T) {
 	for extension, langs := range extensionOwners() {
-		if len(langs) > 1 && !accepted[extension] {
+		if len(langs) > 1 {
 			t.Errorf("extension %q is claimed by %v; the reported language would be "+
 				"whichever wins the map iteration", extension, langs)
 		}

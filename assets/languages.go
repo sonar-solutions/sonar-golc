@@ -13,11 +13,6 @@ import "github.com/SonarSource-Demos/sonar-golc/pkg/goloc/language"
 var pythonMultiLineComments = [][]string{{`"""`, `"""`}, {"'''", "'''"}}
 
 var Languages = language.Languages{
-	"ActionScript": {
-		LineComments:      []string{"//"},
-		MultiLineComments: [][]string{{"/*", "*/"}},
-		Extensions:        []string{".as"},
-	},
 	"Abap": {
 		LineComments:      []string{"*", "\""},
 		MultiLineComments: [][]string{},
@@ -92,6 +87,8 @@ var Languages = language.Languages{
 		MultiLineComments: [][]string{},
 		Extensions:        []string{"Dockerfile", "dockerfile", ".dockerfile", "Containerfile", "containerfile", ".containerfile"},
 	},
+	// sonar.flex.file.suffixes (as). SonarQube has no separate ActionScript language: it
+	// reports every .as file as Flex, and so does GoLC.
 	"Flex": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},
@@ -109,8 +106,8 @@ var Languages = language.Languages{
 		Extensions:        []string{".gs", ".gsx", ".gsp"},
 	},
 	// Suffixes follow sonar.groovy.file.suffixes (groovy,gvy,gy,gsh). SonarQube also
-	// claims *Jenkinsfile via sonar.groovy.file.patterns; an extensionless path falls
-	// back to its base name here, so the bare name matches the common case.
+	// claims *Jenkinsfile via sonar.groovy.file.patterns; analyzer.getFileExtension maps
+	// variants such as myJenkinsfile onto the bare name listed here.
 	"Groovy": {
 		LineComments:      []string{"//"},
 		MultiLineComments: [][]string{{"/*", "*/"}},

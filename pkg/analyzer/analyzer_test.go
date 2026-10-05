@@ -275,3 +275,28 @@ func TestExtensionFiltersMatchRegardlessOfCase(t *testing.T) {
 		t.Error("an inclusion of .Go alone should leave app.js out")
 	}
 }
+
+// sonar.groovy.file.patterns is *Jenkinsfile. The cases are the ones measured against
+// SonarQube 2026.5: the * does not cross a dot and the name keeps its case.
+func TestGetFileExtension_JenkinsfileVariants(t *testing.T) {
+	extensions := map[string]string{".groovy": "Groovy", "Jenkinsfile": "Groovy"}
+	a := NewAnalyzer("/repo", nil, nil, nil, extensions, nil, nil)
+
+	counted := []string{"Jenkinsfile", "myJenkinsfile", "my-Jenkinsfile", "my_Jenkinsfile"}
+	notCounted := []string{
+		"build.Jenkinsfile", "a.b.Jenkinsfile", "Jenkinsfile.prod", "Jenkinsfile-dev",
+		"Jenkinsfile_dev", "jenkinsfile", "JENKINSFILE", "myjenkinsfile",
+	}
+
+	for _, name := range counted {
+		if got := a.getFileExtension(filepath.Join("/repo", "ci", name)); got != "Jenkinsfile" {
+			t.Errorf("getFileExtension(%q) = %q, want Jenkinsfile", name, got)
+		}
+	}
+	for _, name := range notCounted {
+		got := a.getFileExtension(filepath.Join("/repo", "ci", name))
+		if _, ok := extensions[got]; ok {
+			t.Errorf("getFileExtension(%q) = %q, which counts as Groovy; SonarQube does not count it", name, got)
+		}
+	}
+}

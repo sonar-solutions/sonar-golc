@@ -380,7 +380,6 @@ remain selected.
 Language           | Extensions                               | Single Comments | Multi-line Comments
 -------------------+------------------------------------------+-----------------+--------------------
 Abap               | .abap, .ab4, .flow, .asprog              | *, "            |
-ActionScript       | .as                                      | //              | /* */
 Apex               | .cls, .trigger, .apex                    | //              | /* */
 Bicep              | .bicep                                   | //              | /* */
 C                  | .c                                       | //              | /* */
@@ -396,7 +395,7 @@ Docker             | Dockerfile, Containerfile, ... (below)   | #               
 Flex               | .as                                      | //              | /* */
 Golang             | .go                                      | //              | /* */
 Gosu               | .gs, .gsx, .gsp                          | //              | /* */
-Groovy             | .groovy, .gvy, .gy, .gsh, Jenkinsfile    | //              | /* */
+Groovy             | .groovy, .gvy, .gy, .gsh, *Jenkinsfile   | //              | /* */
 HTML               | .html, .htm, .cshtml, .vbhtml, ...       |                 | <!-- -->
 IPython Notebooks  | .ipynb (code cells only, below)          | #               | """ """, ''' '''
 Java               | .java, .jav                              | //              | /* */
@@ -452,10 +451,12 @@ YAML               | .yaml, .yml                              | #               
 >
 > **R Markdown (`.Rmd`) is not counted**, because SonarQube reports no lines of code for
 > it either.
-
-> **ActionScript and Flex both use `.as`**, so a report shows your `.as` files under one
-> label or the other, and it may differ between runs. The line count is the same either
-> way — only the name changes.
+>
+> **Jenkins pipelines count as Groovy**: `Jenkinsfile` and names ending in it with no dot,
+> such as `myJenkinsfile` or `release-Jenkinsfile`. As in SonarQube, `build.Jenkinsfile`
+> and `Jenkinsfile.prod` are not counted.
+>
+> **`.as` files are reported as Flex**, the only ActionScript language SonarQube has.
 
 ### Infrastructure-as-code, detected by content
 

@@ -65,11 +65,12 @@ resource sa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   kind: 'StorageV2'
 }
 `
-	parityShell  = "#!/bin/bash\n# comment\necho hi\nls -la\n"
-	parityJCL    = "//JOB1 JOB (ACCT),'NAME'\n//STEP1 EXEC PGM=IEFBR14\n//* comment\n"
-	parityPLI    = " HELLO: PROC OPTIONS(MAIN);\n   PUT LIST('HI');\n END HELLO;\n"
-	parityApex   = "public class Foo {\n  Integer x = 1;\n}\n"
-	parityDocker = "# comment\nFROM alpine:3.20\n\nRUN apk add --no-cache curl\nCOPY . /app\nCMD [\"sh\"]\n"
+	parityShell   = "#!/bin/bash\n# comment\necho hi\nls -la\n"
+	parityJCL     = "//JOB1 JOB (ACCT),'NAME'\n//STEP1 EXEC PGM=IEFBR14\n//* comment\n"
+	parityPLI     = " HELLO: PROC OPTIONS(MAIN);\n   PUT LIST('HI');\n END HELLO;\n"
+	parityApex    = "public class Foo {\n  Integer x = 1;\n}\n"
+	parityJenkins = "pipeline {\n  agent any\n}\n"
+	parityDocker  = "# comment\nFROM alpine:3.20\n\nRUN apk add --no-cache curl\nCOPY . /app\nCMD [\"sh\"]\n"
 
 	parityMuleXML = `<?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
@@ -179,6 +180,12 @@ func TestCountsMatchSonarQubeNcloc(t *testing.T) {
 		{"pli/a.pli", parityPLI, "PL/I", 3},
 		{"apex/Foo.apex", parityApex, "Apex", 3},
 		{"apex/Bar.cls", parityApex, "Apex", 3},
+		// sonar.groovy.file.patterns (*Jenkinsfile) and sonar.flex.file.suffixes (as).
+		{"ci1/Jenkinsfile", parityJenkins, "Groovy", 3},
+		{"ci2/myJenkinsfile", parityJenkins, "Groovy", 3},
+		{"ci3/my-Jenkinsfile", parityJenkins, "Groovy", 3},
+		{"ci4/my_Jenkinsfile", parityJenkins, "Groovy", 3},
+		{"as/Main.as", "// comment\npackage {\n  public class Main {}\n}\n", "Flex", 3},
 		{"vb6/Mod.bas", "Attribute VB_Name = \"Mod\"\nSub Main()\n  MsgBox \"hi\"\nEnd Sub\n", "VB6", 4},
 	}
 	// SonarQube counts no lines for these, so GoLC must not pick them up at all.
@@ -196,6 +203,11 @@ func TestCountsMatchSonarQubeNcloc(t *testing.T) {
 		{path: "jcl/c.job", content: parityJCL},
 		{path: "jcl/d.jjob", content: parityJCL},
 		{path: "pli/b.pl1", content: parityPLI},
+		{path: "ci5/build.Jenkinsfile", content: parityJenkins},
+		{path: "ci6/Jenkinsfile.prod", content: parityJenkins},
+		{path: "ci7/Jenkinsfile-dev", content: parityJenkins},
+		{path: "ci8/jenkinsfile", content: parityJenkins},
+		{path: "ci9/myjenkinsfile", content: parityJenkins},
 	}
 
 	dir := t.TempDir()
